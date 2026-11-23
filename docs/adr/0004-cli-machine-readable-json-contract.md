@@ -232,3 +232,14 @@ source-only routing must be reconciled before the epic can claim complete CLI JS
 
 Documentation and pull requests for later slices should trace their evidence back to this ADR, #274, the recorded
 inventory SHA-256, and the final inventory counts recorded when the epic closes.
+
+## Update: Inventory Taxonomy Retired (#1099)
+
+The inventory categories above (common renderer, human/progress-only, manual JSON, source-only, and the rest) guided the
+migration. Once most routed commands reached the common envelope, the registry no longer needed them. As of #1099 the
+registry records only what `--schema`, `--examples`, and `--select` enforce: whether a command's JSON output is
+`Supported`, `Conditional`, or `MigrationRequired`, whether it accepts `--select`, and its declared `ReturnValue`
+contract. `--schema` reports these facts in a `Support` block instead of the earlier `Registry` block. The commands that
+still need migration are named in one explicit list, and tests no longer pin inventory counts.
+
+This update does not change the decision above. The envelope, stdout, option, and schema rules still apply.

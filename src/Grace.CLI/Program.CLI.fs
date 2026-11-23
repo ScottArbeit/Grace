@@ -280,13 +280,9 @@ module GraceCommand =
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
-            match entry.RouteDisposition with
-            | CommandOutputContract.Routed ->
-                let document = CommandOutputContract.introspectionDocument kind entry
-                Common.writeJsonStdout document
-                0
-            | CommandOutputContract.SourceOnlyUnrouted reason ->
-                writeIntrospectionError parseResult $"Command '{identity.CommandId}' is not routed for CLI introspection. {reason}"
+            let document = CommandOutputContract.introspectionDocument kind entry
+            Common.writeJsonStdout document
+            0
         | None -> writeIntrospectionError parseResult $"Command '{identity.CommandId}' does not have CLI output contract metadata."
 
     /// Evaluates is json output requested from tokens against parsed options and command state.
@@ -380,7 +376,7 @@ module GraceCommand =
                 let identity = commandIdentityFromCommandResult parseResult.CommandResult
 
                 match CommandOutputContract.tryFind identity with
-                | Some entry when entry.Features.Select = CommandOutputContract.ExistingBehavior -> None
+                | Some entry when entry.SupportsSelect -> None
                 | Some _ -> Some(GraceError.Create $"Command '{identity.CommandId}' does not support --select in this release." correlationId)
                 | None -> Some(GraceError.Create $"Command '{identity.CommandId}' does not have CLI output contract metadata for --select." correlationId)
 

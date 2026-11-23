@@ -86,10 +86,9 @@ module CommandParsingTests =
     /// Verifies that SDK POST requests can resolve Grace Server without repository configuration.
     [<Test>]
     let ``SDK server URI prefers GRACE_SERVER_URI`` () =
-        withEnvironmentVariable
-            Constants.EnvironmentVariables.GraceServerUri
-            (Some "https://grace.example.test")
-            (fun () -> Grace.SDK.Common.resolveGraceServerUri () |> should equal "https://grace.example.test")
+        withEnvironmentVariable Constants.EnvironmentVariables.GraceServerUri (Some "https://grace.example.test") (fun () ->
+            Grace.SDK.Common.resolveGraceServerUri ()
+            |> should equal "https://grace.example.test")
 
     /// Verifies that resolve invocation source prefers explicit source over environment.
     [<Test>]
@@ -1000,10 +999,22 @@ module HelpDoesNotReadConfigTests =
             |> should equal "repository.init"
 
             rootElement
-                .GetProperty("Registry")
-                .GetProperty("CurrentJsonBehavior")
+                .GetProperty("Support")
+                .GetProperty("JsonOutput")
                 .GetString()
-            |> should equal "CommonRenderOutputEnvelope"
+            |> should equal "Supported"
+
+            rootElement
+                .GetProperty("Support")
+                .GetProperty("Select")
+                .GetBoolean()
+            |> should equal true
+
+            /// Captures whether the retired audit-era registry block is still emitted.
+            let mutable registry = Unchecked.defaultof<JsonElement>
+
+            rootElement.TryGetProperty("Registry", &registry)
+            |> should equal false
 
             rootElement
                 .GetProperty("Schema")
@@ -1025,6 +1036,52 @@ module HelpDoesNotReadConfigTests =
 
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
+
+    /// Verifies that schema reports migration-required commands as lacking a stable envelope and --select support.
+    [<Test>]
+    let ``schema reports migration-required command support`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "branch"
+                                         "switch"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = JsonDocument.Parse(output)
+            let support = document.RootElement.GetProperty("Support")
+
+            support.GetProperty("JsonOutput").GetString()
+            |> should equal "MigrationRequired"
+
+            support.GetProperty("Select").GetBoolean()
+            |> should equal false
+
+            document
+                .RootElement
+                .GetProperty("Schema")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "metadata-incomplete")
+
+    /// Verifies that schema reports watch as conditional JSON output that still accepts --select.
+    [<Test>]
+    let ``schema reports watch as conditional JSON output`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = JsonDocument.Parse(output)
+            let support = document.RootElement.GetProperty("Support")
+
+            support.GetProperty("JsonOutput").GetString()
+            |> should equal "Conditional"
+
+            support.GetProperty("Select").GetBoolean()
+            |> should equal true)
 
     /// Verifies that examples emit registry derived json and ignore output mode.
     [<Test>]

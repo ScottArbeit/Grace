@@ -28,89 +28,37 @@ module CommandOutputContract =
         /// Runs the asynchronous command identity action when System.CommandLine dispatches the parsed command.
         override this.ToString() = String.Join(" ", this.CommandPath)
 
-    /// Models route disposition values passed between the parser and command output contract handlers.
-    type RouteDisposition =
-        | Routed
-        | SourceOnlyUnrouted of disposition: string
+    /// Describes how much of the Grace JSON contract a live leaf command honors under `--output Json`.
+    type JsonOutputSupport =
+        /// Emits `GraceReturnValue<T>` on success and `GraceError` on failure.
+        | Supported
+        /// Emits `GraceReturnValue<T>` only on the path the condition names; other paths return `GraceError`.
+        | Conditional of condition: string
+        /// Success output is not yet a stable `GraceReturnValue<T>`, so `--schema` cannot describe it and `--select` is rejected.
+        | MigrationRequired
 
-    /// Models current json behavior values passed between the parser and command output contract handlers.
-    type CurrentJsonBehavior =
-        | CommonRenderOutputEnvelope
-        | ImmediateJsonErrorOnly
-        | ConditionalCheckStatusEnvelope
-        | HumanProgressOnlySuccess
-        | PartialManualSuccess
-        | ManualJsonUnenveloped
-        | HumanProcOnly
-        | HumanOnly
-        | UnroutedSourceOnly
-
-    /// Models command category values passed between the parser and command output contract handlers.
-    type CommandCategory =
-        | ProgressLocalWorkflow
-        | MutatingStateTransition
-        | ReadOrMutatingVerify
-        | ReadListSearch
-        | Mutating
-        | FireAndForgetProgress
-        | WorkflowAcceptedOperation
-        | HelpIntrospection
-
-    /// Models execution scope values passed between the parser and command output contract handlers.
-    type ExecutionScope =
-        | CompositeLocalAndServer
-        | LocalClient
-        | ServerViaSdk
-        | Verify
-        | ServerViaSdkDefinedButNotRootRouted
-
-    /// Models output dto disposition values passed between the parser and command output contract handlers.
-    type OutputDtoDisposition =
-        | ReuseExistingApiOrSdkDto
-        | RequiresCliDto
-        | NoServerDto
-
-    /// Models envelope contract values passed between the parser and command output contract handlers.
-    type EnvelopeContract =
-        | ExistingGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
-        | ConditionalGraceResultEnvelope of dtoDisposition: OutputDtoDisposition * condition: string
-        | MigrationRequiredToGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
-        | JsonModeErrorOnly of reason: string
-        | SourceOnlyUnsupported of disposition: string
-
-    /// Models feature state values passed between the parser and command output contract handlers.
-    type FeatureState =
-        | ExistingBehavior
-        | FutureInertIntrospection
-        | FutureReturnValueProjection
-        | UnsupportedUntilRouted
-        | RequiresMigration
-
-    /// Defines structured data exchanged by CLI helpers.
-    type MachineReadableFeatures = { JsonMode: FeatureState; Schema: FeatureState; Examples: FeatureState; Select: FeatureState }
-
-    /// Models return value metadata status values passed between the parser and command output contract handlers.
+    /// Reports whether `--schema` and `--examples` can describe a command's `ReturnValue`.
     type ReturnValueMetadataStatus =
         | SchemaReady
         | MetadataIncomplete
-        | ContractUnsupported
 
-    /// Defines structured data exchanged by CLI helpers.
+    /// Describes the `ReturnValue` payload that `--schema` and `--examples` publish for one command.
     type ReturnValueContract = { Name: string; Provenance: string; Status: ReturnValueMetadataStatus; Schema: obj; Example: obj; Notes: string list }
 
-    /// Models command contract entry values passed between the parser and command output contract handlers.
+    /// Holds the facts `--schema`, `--examples`, and `--select` rely on for one live leaf command.
     type CommandContractEntry =
         {
             Identity: CommandIdentity
-            RouteDisposition: RouteDisposition
-            CurrentJsonBehavior: CurrentJsonBehavior
-            Category: CommandCategory
-            ExecutionScope: ExecutionScope
-            Mutating: bool
-            EnvelopeContract: EnvelopeContract
-            Features: MachineReadableFeatures
+            JsonOutput: JsonOutputSupport
             ReturnValueContract: ReturnValueContract
         }
+
+        /// Gets whether `--select` may project this command's `ReturnValue`; only stable success envelopes qualify.
+        member this.SupportsSelect =
+            match this.JsonOutput with
+            | Supported
+            | Conditional _ -> true
+            | MigrationRequired -> false
 
     /// Models introspection kind values passed between the parser and command output contract handlers.
     type IntrospectionKind =
@@ -120,20 +68,8 @@ module CommandOutputContract =
     /// Defines structured data exchanged by CLI helpers.
     type CommandIdentityDocument = { Id: string; Path: string list; GroupPath: string list; Name: string }
 
-    /// Models command registry document values passed between the parser and command output contract handlers.
-    type CommandRegistryDocument =
-        {
-            RouteDisposition: string
-            CurrentJsonBehavior: string
-            Category: string
-            ExecutionScope: string
-            Mutating: bool
-            EnvelopeContract: string
-            JsonMode: string
-            Schema: string
-            Examples: string
-            Select: string
-        }
+    /// Tells callers whether a command emits the Grace JSON envelope and whether it accepts `--select`.
+    type CommandSupportDocument = { JsonOutput: string; Select: bool }
 
     /// Models command schema document values passed between the parser and command output contract handlers.
     type CommandSchemaDocument =
@@ -141,7 +77,6 @@ module CommandOutputContract =
             Status: string
             Source: string
             Envelope: string
-            ReturnValueDisposition: string
             ReturnValueContract: string
             SuccessSchema: obj
             ErrorSchema: obj
@@ -163,14 +98,11 @@ module CommandOutputContract =
             Kind: string
             ContractVersion: string
             Command: CommandIdentityDocument
-            Registry: CommandRegistryDocument
+            Support: CommandSupportDocument
             Input: CommandInputDocument option
             Schema: CommandSchemaDocument option
             Examples: CommandExampleDocument list
         }
-
-    /// Converts a union-case value into the stable case name emitted in command-output metadata.
-    let private unionName value = $"{value}"
 
     /// Constructs a draft 2020-12 object schema with the supplied title, properties, and required field list.
     let private schemaObject (title: string) (properties: (string * obj) list) (required: string array) =
@@ -225,18 +157,18 @@ module CommandOutputContract =
             {| Key = "cli.introspectionSource"; Value = provenance |}
         |]
 
-    /// Builds command-output contract metadata for unsupported return value schema so automation can rely on stable JSON shapes.
-    let private unsupportedReturnValueSchema reason =
+    /// Describes the placeholder `ReturnValue` published for a command whose success output still needs migration.
+    let private incompleteReturnValueSchema reason =
         schemaObject
-            "Unsupported command output contract"
+            "Incomplete command output contract"
             [
                 "Status", scalarSchema "string"
                 "Reason", scalarSchema "string"
             ]
             [| "Status"; "Reason" |]
 
-    /// Builds command-output contract metadata for unsupported return value example so automation can rely on stable JSON shapes.
-    let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
+    /// Builds the placeholder example that explains why a migration-required command has no `ReturnValue` example.
+    let private incompleteReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
 
     let private reflectionFlags = BindingFlags.Public ||| BindingFlags.NonPublic
 
@@ -549,265 +481,250 @@ module CommandOutputContract =
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
 
-    /// Builds command-output contract metadata for incomplete return value contract so automation can rely on stable JSON shapes.
+    /// Builds the explicit metadata gap that `--schema` reports for a command whose success output still needs migration.
     let private incompleteReturnValueContract name reason =
         {
             Name = name
             Provenance = "CommandOutputContract"
             Status = MetadataIncomplete
-            Schema = unsupportedReturnValueSchema reason
-            Example = unsupportedReturnValueExample reason
+            Schema = incompleteReturnValueSchema reason
+            Example = incompleteReturnValueExample reason
             Notes = [ reason ]
         }
 
-    /// Builds command-output contract metadata for unsupported return value contract so automation can rely on stable JSON shapes.
-    let private unsupportedReturnValueContract name reason =
-        {
-            Name = name
-            Provenance = "CommandOutputContract"
-            Status = ContractUnsupported
-            Schema = unsupportedReturnValueSchema reason
-            Example = unsupportedReturnValueExample reason
-            Notes = [ reason ]
-        }
+    /// Declares the exact `ReturnValue` type each envelope-emitting command produces, keyed by dotted command ID.
+    /// `--schema` and `--examples` derive their documents from these types. The registry tests require every live leaf
+    /// command to appear exactly once across this list, `migrationRequiredCommandIds`, and the owner observation entry.
+    let private declaredResultTypes: (string * Type) list =
+        [
+            "authorize.can", typeof<Grace.Types.Authorization.PermissionCheckResult>
+            "authorize.check", typeof<Grace.Types.Authorization.PermissionCheckResult>
+            "authorize.grant-role", typeof<Grace.Types.Authorization.RoleAssignment list>
+            "authorize.list-role-assignments", typeof<Grace.Types.Authorization.RoleAssignment list>
+            "authorize.revoke-role", typeof<Grace.Types.Authorization.RoleAssignment list>
+            "authorize.show", typeof<Grace.Types.Authorization.RoleAssignment list>
+            "authorize.list-path-permissions", typeof<Grace.Types.Common.PathPermission list>
+            "authorize.remove-path-permission", typeof<Grace.Types.Common.PathPermission list>
+            "authorize.upsert-path-permission", typeof<Grace.Types.Common.PathPermission list>
+            "authorize.list-roles", typeof<Grace.Types.Authorization.RoleDefinition list>
+            "admin.reminder.list", typeof<IEnumerable<Grace.Types.Reminder.ReminderDto>>
+            "admin.reminder.get", typeof<Grace.Types.Reminder.ReminderDto>
+            "admin.reminder.create", typeof<string>
+            "admin.reminder.delete", typeof<string>
+            "admin.reminder.reschedule", typeof<string>
+            "admin.reminder.update-time", typeof<string>
+            "agent.add-summary", cliLocalResultType "Grace.CLI.Command.AgentCommand+AddSummaryResult"
+            "agent.bootstrap", typeof<Grace.Types.Automation.AgentSessionOperationResult>
+            "agent.work.start", typeof<Grace.Types.Automation.AgentSessionOperationResult>
+            "agent.work.status", typeof<Grace.Types.Automation.AgentSessionOperationResult>
+            "agent.work.stop", typeof<Grace.Types.Automation.AgentSessionOperationResult>
+            "alias.list", typeof<Grace.CLI.Common.LocalOutputDto.AliasListDto>
+            "approval.policy.create", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.delete", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.disable", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.enable", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.show", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.update", typeof<Grace.Types.Webhooks.ApprovalPolicy>
+            "approval.policy.evaluate", typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalPolicy>>
+            "approval.policy.list", typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalPolicy>>
+            "approval.request.approve", typeof<Grace.Types.Webhooks.ApprovalRequest>
+            "approval.request.reject", typeof<Grace.Types.Webhooks.ApprovalRequest>
+            "approval.request.show", typeof<Grace.Types.Webhooks.ApprovalRequest>
+            "approval.request.wait", typeof<Grace.Types.Webhooks.ApprovalRequest>
+            "approval.request.history", typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalRequest>>
+            "approval.request.list", typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalRequest>>
+            "authenticate.login", typeof<string>
+            "authenticate.logout", typeof<string>
+            "authenticate.token.clear", typeof<string>
+            "authenticate.token.set", typeof<string>
+            "authenticate.token.status", typeof<string>
+            "authenticate.status", typeof<Grace.CLI.Command.Auth.AuthStatusOutput>
+            "authenticate.token.create", typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenCreated>
+            "authenticate.token.list", typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary list>
+            "authenticate.token.revoke", typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary>
+            "authenticate.whoami", typeof<Grace.CLI.Command.Auth.AuthInfo>
+            "branch.annotate", typeof<Grace.Types.Annotation.BranchAnnotationDto>
+            "branch.assign", typeof<string>
+            "branch.checkpoint", typeof<string>
+            "branch.commit", typeof<string>
+            "branch.create", typeof<string>
+            "branch.create-external", typeof<string>
+            "branch.delete", typeof<string>
+            "branch.enable-assign", typeof<string>
+            "branch.enable-auto-rebase", typeof<string>
+            "branch.enable-checkpoints", typeof<string>
+            "branch.enable-commit", typeof<string>
+            "branch.enable-external", typeof<string>
+            "branch.enable-promotion", typeof<string>
+            "branch.enable-save", typeof<string>
+            "branch.enable-tag", typeof<string>
+            "branch.promote", typeof<string>
+            "branch.save", typeof<string>
+            "branch.set-name", typeof<string>
+            "branch.set-promotion-mode", typeof<string>
+            "branch.tag", typeof<string>
+            "branch.update-parent-branch", typeof<string>
+            "branch.get", typeof<Grace.Types.Branch.BranchDto>
+            "branch.get-checkpoints", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-commits", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-externals", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-promotions", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-references", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-saves", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-tags", typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
+            "branch.get-recursive-size", typeof<int64>
+            "branch.list-contents", typeof<IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>>
+            "candidate.attestations", typeof<Grace.Shared.Parameters.Review.CandidateAttestationsResult>
+            "candidate.cancel", typeof<Grace.Shared.Parameters.Review.CandidateActionResult>
+            "candidate.gate.rerun", typeof<Grace.Shared.Parameters.Review.CandidateActionResult>
+            "candidate.retry", typeof<Grace.Shared.Parameters.Review.CandidateActionResult>
+            "candidate.get", typeof<Grace.Shared.Parameters.Review.CandidateProjectionSnapshotResult>
+            "candidate.required-actions", typeof<Grace.Shared.Parameters.Review.CandidateRequiredActionsResult>
+            "config.write", typeof<unit>
+            "connect", typeof<Grace.CLI.Common.LocalOutputDto.ConnectDto>
+            "diff.blake3", typeof<Grace.Types.Diff.DiffDto>
+            "directory-version.get-zip-file", typeof<Uri>
+            "history.delete", typeof<Grace.CLI.Common.LocalOutputDto.HistoryDeleteDto>
+            "history.off", typeof<Grace.CLI.Common.LocalOutputDto.HistoryRecordingDto>
+            "history.on", typeof<Grace.CLI.Common.LocalOutputDto.HistoryRecordingDto>
+            "history.search", typeof<Grace.CLI.Common.LocalOutputDto.HistoryEntriesDto>
+            "history.show", typeof<Grace.CLI.Common.LocalOutputDto.HistoryEntriesDto>
+            "doctor", typeof<Grace.CLI.Common.LocalOutputDto.DoctorReportDto>
+            "maintenance.check-ignore-entries", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceIgnoreEntriesDto>
+            "maintenance.clear-journal", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceClearJournalDto>
+            "maintenance.list-contents", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceListContentsDto>
+            "maintenance.scan", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceScanDto>
+            "maintenance.show-journal", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceShowJournalDto>
+            "maintenance.stats", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceStatsDto>
+            "maintenance.update-index", typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceStatsDto>
+            "organization.create", typeof<string>
+            "organization.delete", typeof<string>
+            "organization.set-description", typeof<string>
+            "organization.set-name", typeof<string>
+            "organization.set-search-visibility", typeof<string>
+            "organization.set-type", typeof<string>
+            "organization.undelete", typeof<string>
+            "organization.get", typeof<Grace.Types.Organization.OrganizationDto>
+            "owner.create", typeof<string>
+            "owner.delete", typeof<string>
+            "owner.set-description", typeof<string>
+            "owner.set-name", typeof<string>
+            "owner.set-search-visibility", typeof<string>
+            "owner.set-type", typeof<string>
+            "owner.undelete", typeof<string>
+            "owner.get", typeof<Grace.Types.Owner.OwnerDto>
+            "promotion-set.apply", typeof<string>
+            "promotion-set.conflicts.resolve", typeof<string>
+            "promotion-set.create", typeof<string>
+            "promotion-set.delete", typeof<string>
+            "promotion-set.recompute", typeof<string>
+            "promotion-set.request-approval", typeof<string>
+            "promotion-set.update-input-promotions", typeof<string>
+            "promotion-set.conflicts.show", cliLocalResultType "Grace.CLI.Command.PromotionSetCommand+ConflictShowResult"
+            "promotion-set.get", typeof<Grace.Types.PromotionSet.PromotionSetDto>
+            "promotion-set.show", typeof<Grace.Types.PromotionSet.PromotionSetDto>
+            "promotion-set.get-events", typeof<IReadOnlyList<Grace.Types.PromotionSet.PromotionSetEvent>>
+            "promotion-set.list", typeof<(Grace.Types.PromotionSet.PromotionSetDto * Grace.Types.Webhooks.PromotionSetApprovalSummary option) list>
+            "queue.dequeue", typeof<string>
+            "queue.enqueue", typeof<string>
+            "queue.pause", typeof<string>
+            "queue.resume", typeof<string>
+            "queue.status", typeof<Grace.Types.Queue.PromotionQueue>
+            "repository.create", typeof<string>
+            "repository.delete", typeof<string>
+            "repository.set-allows-large-files", typeof<string>
+            "repository.set-anonymous-access", typeof<string>
+            "repository.set-checkpoint-days", typeof<string>
+            "repository.set-conflict-resolution-policy", typeof<string>
+            "repository.set-default-server-api-version", typeof<string>
+            "repository.set-description", typeof<string>
+            "repository.set-diff-cache-days", typeof<string>
+            "repository.set-directory-version-cache-days", typeof<string>
+            "repository.set-logical-delete-days", typeof<string>
+            "repository.set-name", typeof<string>
+            "repository.set-record-saves", typeof<string>
+            "repository.set-save-days", typeof<string>
+            "repository.set-status", typeof<string>
+            "repository.set-visibility", typeof<string>
+            "repository.undelete", typeof<string>
+            "repository.get", typeof<Grace.Types.Repository.RepositoryDto>
+            "repository.get-branches", typeof<IEnumerable<Grace.Types.Branch.BranchDto>>
+            "repository.init", typeof<Grace.CLI.Common.LocalOutputDto.RepositoryInitDto>
+            "library.get", typeof<Grace.Types.Library.LibraryCatalogDto>
+            "library.list", typeof<Grace.Types.Library.LibraryCatalogDto>
+            "library.add", typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
+            "library.remove", typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
+            "library.rename", typeof<Grace.CLI.Command.LibraryCommand.RenameOutput>
+            "library.sync.enable", typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
+            "library.sync.run", typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
+            "library.sync.pause", typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
+            "library.sync.resume", typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
+            "library.sync.status", typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
+            "review.checkpoint", typeof<string>
+            "review.deepen", typeof<string>
+            "review.resolve", typeof<string>
+            "review.inbox", typeof<obj>
+            "review.open", typeof<Grace.Types.Review.ReviewNotes option>
+            "review.report.export", typeof<Grace.CLI.Common.LocalOutputDto.ReviewReportExportDto>
+            "review.report.show", typeof<Grace.SDK.ReviewReportResult>
+            "watch", cliLocalResultType "Grace.CLI.Command.Watch+WatchCheckStatusDto"
+            "webhook.create", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.delete", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.disable", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.enable", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.show", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.update", typeof<Grace.Types.Webhooks.WebhookRule>
+            "webhook.deliveries", typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookDelivery>>
+            "webhook.delivery.show", typeof<Grace.Types.Webhooks.WebhookDelivery>
+            "webhook.test", typeof<Grace.Types.Webhooks.WebhookDelivery>
+            "webhook.list", typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookRule>>
+            "workitem.attachments.add", cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
+            "workitem.attachments.download", cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentDownloadResult"
+            "workitem.attachments.delete", typeof<Grace.Types.Artifact.ArtifactDeletionResult>
+            "workitem.attachments.list", typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
+            "workitem.attachments.show", typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
+            "workitem.attachments.undelete", typeof<string>
+            "workitem.description.clear", typeof<string>
+            "workitem.description.set", typeof<string>
+            "workitem.create", typeof<string>
+            "workitem.link.prset", typeof<string>
+            "workitem.link.ref", typeof<string>
+            "workitem.links.remove.prset", typeof<string>
+            "workitem.links.remove.ref", typeof<string>
+            "workitem.set-status", typeof<string>
+            "workitem.links.list", typeof<Grace.Types.WorkItem.WorkItemLinksDto>
+            "workitem.show", typeof<Grace.Types.WorkItem.WorkItemDto>
+        ]
 
-    /// Builds command-output contract metadata for route disposition text so automation can rely on stable JSON shapes.
-    let private routeDispositionText (disposition: RouteDisposition) =
-        match disposition with
-        | Routed -> "Routed"
-        | SourceOnlyUnrouted reason -> $"SourceOnlyUnrouted: {reason}"
+    /// Names the routed commands whose success output is not yet a stable `GraceReturnValue<T>` envelope.
+    /// Adding a command here is a deliberate, reviewable choice to ship it without a describable JSON success contract.
+    let private migrationRequiredCommandIds =
+        [
+            "branch.rebase"
+            "branch.status"
+            "branch.switch"
+            "diff.checkpoint"
+            "diff.commit"
+            "diff.directoryid"
+            "diff.promotion"
+            "diff.save"
+            "diff.sha"
+            "diff.tag"
+            "history.run"
+        ]
 
-    /// Builds command-output contract metadata for output dto disposition text so automation can rely on stable JSON shapes.
-    let private outputDtoDispositionText (disposition: OutputDtoDisposition) =
-        match disposition with
-        | ReuseExistingApiOrSdkDto -> "ReuseExistingApiOrSdkDto"
-        | RequiresCliDto -> "RequiresCliDto"
-        | NoServerDto -> "NoServerDto"
+    /// Names the condition under which `grace watch` emits its status envelope instead of a JSON error.
+    let private watchCheckCondition =
+        "`grace watch --check` supports JSON and --select status output; foreground `grace watch` still returns a JSON error because it is a continuous workflow."
 
-    /// Builds command-output contract metadata for envelope contract text so automation can rely on stable JSON shapes.
-    let private envelopeContractText (contract: EnvelopeContract) =
-        match contract with
-        | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
-        | ConditionalGraceResultEnvelope (disposition, condition) -> $"ConditionalGraceResultEnvelope: {outputDtoDispositionText disposition}; {condition}"
-        | MigrationRequiredToGraceResultEnvelope disposition -> $"MigrationRequiredToGraceResultEnvelope: {outputDtoDispositionText disposition}"
-        | JsonModeErrorOnly reason -> $"JsonModeErrorOnly: {reason}"
-        | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
-
-    /// Builds command-output contract metadata for return value disposition text so automation can rely on stable JSON shapes.
-    let private returnValueDispositionText (contract: EnvelopeContract) =
-        match contract with
-        | ExistingGraceResultEnvelope disposition
-        | ConditionalGraceResultEnvelope (disposition, _)
-        | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
-        | JsonModeErrorOnly reason -> $"Unsupported: {reason}"
-        | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
-
-    /// Maps each JSON-success command to the exact result type declared by its current handler or SDK call.
-    let private declaredResultTypeFor commandId =
+    /// Selects the JSON-output support level for a command that declares a result type.
+    let private jsonOutputForDeclared commandId =
         match commandId with
-        | "authorize.can"
-        | "authorize.check" -> typeof<Grace.Types.Authorization.PermissionCheckResult>
-        | "authorize.grant-role"
-        | "authorize.list-role-assignments"
-        | "authorize.revoke-role"
-        | "authorize.show" -> typeof<Grace.Types.Authorization.RoleAssignment list>
-        | "authorize.list-path-permissions"
-        | "authorize.remove-path-permission"
-        | "authorize.upsert-path-permission" -> typeof<Grace.Types.Common.PathPermission list>
-        | "authorize.list-roles" -> typeof<Grace.Types.Authorization.RoleDefinition list>
-        | "admin.reminder.list" -> typeof<IEnumerable<Grace.Types.Reminder.ReminderDto>>
-        | "admin.reminder.get" -> typeof<Grace.Types.Reminder.ReminderDto>
-        | "admin.reminder.create"
-        | "admin.reminder.delete"
-        | "admin.reminder.reschedule"
-        | "admin.reminder.update-time" -> typeof<string>
-        | "agent.add-summary" -> cliLocalResultType "Grace.CLI.Command.AgentCommand+AddSummaryResult"
-        | "agent.bootstrap"
-        | "agent.work.start"
-        | "agent.work.status"
-        | "agent.work.stop" -> typeof<Grace.Types.Automation.AgentSessionOperationResult>
-        | "alias.list" -> typeof<Grace.CLI.Common.LocalOutputDto.AliasListDto>
-        | "approval.policy.create"
-        | "approval.policy.delete"
-        | "approval.policy.disable"
-        | "approval.policy.enable"
-        | "approval.policy.show"
-        | "approval.policy.update" -> typeof<Grace.Types.Webhooks.ApprovalPolicy>
-        | "approval.policy.evaluate"
-        | "approval.policy.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalPolicy>>
-        | "approval.request.approve"
-        | "approval.request.reject"
-        | "approval.request.show"
-        | "approval.request.wait" -> typeof<Grace.Types.Webhooks.ApprovalRequest>
-        | "approval.request.history"
-        | "approval.request.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.ApprovalRequest>>
-        | "authenticate.login"
-        | "authenticate.logout"
-        | "authenticate.token.clear"
-        | "authenticate.token.set"
-        | "authenticate.token.status" -> typeof<string>
-        | "authenticate.status" -> typeof<Grace.CLI.Command.Auth.AuthStatusOutput>
-        | "authenticate.token.create" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenCreated>
-        | "authenticate.token.list" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary list>
-        | "authenticate.token.revoke" -> typeof<Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary>
-        | "authenticate.whoami" -> typeof<Grace.CLI.Command.Auth.AuthInfo>
-        | "branch.annotate" -> typeof<Grace.Types.Annotation.BranchAnnotationDto>
-        | "branch.assign"
-        | "branch.checkpoint"
-        | "branch.commit"
-        | "branch.create"
-        | "branch.create-external"
-        | "branch.delete"
-        | "branch.enable-assign"
-        | "branch.enable-auto-rebase"
-        | "branch.enable-checkpoints"
-        | "branch.enable-commit"
-        | "branch.enable-external"
-        | "branch.enable-promotion"
-        | "branch.enable-save"
-        | "branch.enable-tag"
-        | "branch.promote"
-        | "branch.save"
-        | "branch.set-name"
-        | "branch.set-promotion-mode"
-        | "branch.tag"
-        | "branch.update-parent-branch" -> typeof<string>
-        | "branch.get" -> typeof<Grace.Types.Branch.BranchDto>
-        | "branch.get-checkpoints"
-        | "branch.get-commits"
-        | "branch.get-externals"
-        | "branch.get-promotions"
-        | "branch.get-references"
-        | "branch.get-saves"
-        | "branch.get-tags" -> typeof<Grace.Types.Branch.BranchDto * Grace.Types.Reference.ReferenceDto array>
-        | "branch.get-recursive-size" -> typeof<int64>
-        | "branch.list-contents" -> typeof<IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>>
-        | "candidate.attestations" -> typeof<Grace.Shared.Parameters.Review.CandidateAttestationsResult>
-        | "candidate.cancel"
-        | "candidate.gate.rerun"
-        | "candidate.retry" -> typeof<Grace.Shared.Parameters.Review.CandidateActionResult>
-        | "candidate.get" -> typeof<Grace.Shared.Parameters.Review.CandidateProjectionSnapshotResult>
-        | "candidate.required-actions" -> typeof<Grace.Shared.Parameters.Review.CandidateRequiredActionsResult>
-        | "config.write" -> typeof<unit>
-        | "connect" -> typeof<Grace.CLI.Common.LocalOutputDto.ConnectDto>
-        | "diff.blake3" -> typeof<Grace.Types.Diff.DiffDto>
-        | "directory-version.get-zip-file" -> typeof<Uri>
-        | "history.delete" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryDeleteDto>
-        | "history.off"
-        | "history.on" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryRecordingDto>
-        | "history.search"
-        | "history.show" -> typeof<Grace.CLI.Common.LocalOutputDto.HistoryEntriesDto>
-        | "doctor" -> typeof<Grace.CLI.Common.LocalOutputDto.DoctorReportDto>
-        | "maintenance.check-ignore-entries" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceIgnoreEntriesDto>
-        | "maintenance.clear-journal" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceClearJournalDto>
-        | "maintenance.list-contents" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceListContentsDto>
-        | "maintenance.scan" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceScanDto>
-        | "maintenance.show-journal" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceShowJournalDto>
-        | "maintenance.stats"
-        | "maintenance.update-index" -> typeof<Grace.CLI.Common.LocalOutputDto.MaintenanceStatsDto>
-        | "organization.create"
-        | "organization.delete"
-        | "organization.set-description"
-        | "organization.set-name"
-        | "organization.set-search-visibility"
-        | "organization.set-type"
-        | "organization.undelete" -> typeof<string>
-        | "organization.get" -> typeof<Grace.Types.Organization.OrganizationDto>
-        | "owner.create"
-        | "owner.delete"
-        | "owner.set-description"
-        | "owner.set-name"
-        | "owner.set-search-visibility"
-        | "owner.set-type"
-        | "owner.undelete" -> typeof<string>
-        | "owner.get" -> typeof<Grace.Types.Owner.OwnerDto>
-        | "promotion-set.apply"
-        | "promotion-set.conflicts.resolve"
-        | "promotion-set.create"
-        | "promotion-set.delete"
-        | "promotion-set.recompute"
-        | "promotion-set.request-approval"
-        | "promotion-set.update-input-promotions" -> typeof<string>
-        | "promotion-set.conflicts.show" -> cliLocalResultType "Grace.CLI.Command.PromotionSetCommand+ConflictShowResult"
-        | "promotion-set.get"
-        | "promotion-set.show" -> typeof<Grace.Types.PromotionSet.PromotionSetDto>
-        | "promotion-set.get-events" -> typeof<IReadOnlyList<Grace.Types.PromotionSet.PromotionSetEvent>>
-        | "promotion-set.list" -> typeof<(Grace.Types.PromotionSet.PromotionSetDto * Grace.Types.Webhooks.PromotionSetApprovalSummary option) list>
-        | "queue.dequeue"
-        | "queue.enqueue"
-        | "queue.pause"
-        | "queue.resume" -> typeof<string>
-        | "queue.status" -> typeof<Grace.Types.Queue.PromotionQueue>
-        | "repository.create"
-        | "repository.delete"
-        | "repository.set-allows-large-files"
-        | "repository.set-anonymous-access"
-        | "repository.set-checkpoint-days"
-        | "repository.set-conflict-resolution-policy"
-        | "repository.set-default-server-api-version"
-        | "repository.set-description"
-        | "repository.set-diff-cache-days"
-        | "repository.set-directory-version-cache-days"
-        | "repository.set-logical-delete-days"
-        | "repository.set-name"
-        | "repository.set-record-saves"
-        | "repository.set-save-days"
-        | "repository.set-status"
-        | "repository.set-visibility"
-        | "repository.undelete" -> typeof<string>
-        | "repository.get" -> typeof<Grace.Types.Repository.RepositoryDto>
-        | "repository.get-branches" -> typeof<IEnumerable<Grace.Types.Branch.BranchDto>>
-        | "repository.init" -> typeof<Grace.CLI.Common.LocalOutputDto.RepositoryInitDto>
-        | "library.get"
-        | "library.list" -> typeof<Grace.Types.Library.LibraryCatalogDto>
-        | "library.add"
-        | "library.remove" -> typeof<Grace.Types.Library.LibraryCatalogChangeResultDto>
-        | "library.rename" -> typeof<Grace.CLI.Command.LibraryCommand.RenameOutput>
-        | "library.sync.enable"
-        | "library.sync.run"
-        | "library.sync.pause"
-        | "library.sync.resume"
-        | "library.sync.status" -> typeof<Grace.CLI.Command.LibrarySynchronization.LibrarySynchronizationStatus>
-        | "review.checkpoint"
-        | "review.deepen"
-        | "review.resolve" -> typeof<string>
-        | "review.inbox" -> typeof<obj>
-        | "review.open" -> typeof<Grace.Types.Review.ReviewNotes option>
-        | "review.report.export" -> typeof<Grace.CLI.Common.LocalOutputDto.ReviewReportExportDto>
-        | "review.report.show" -> typeof<Grace.SDK.ReviewReportResult>
-        | "watch" -> cliLocalResultType "Grace.CLI.Command.Watch+WatchCheckStatusDto"
-        | "webhook.create"
-        | "webhook.delete"
-        | "webhook.disable"
-        | "webhook.enable"
-        | "webhook.show"
-        | "webhook.update" -> typeof<Grace.Types.Webhooks.WebhookRule>
-        | "webhook.deliveries" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookDelivery>>
-        | "webhook.delivery.show"
-        | "webhook.test" -> typeof<Grace.Types.Webhooks.WebhookDelivery>
-        | "webhook.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookRule>>
-        | "workitem.attachments.add" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
-        | "workitem.attachments.download" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentDownloadResult"
-        | "workitem.attachments.delete" -> typeof<Grace.Types.Artifact.ArtifactDeletionResult>
-        | "workitem.attachments.list" -> typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
-        | "workitem.attachments.show" -> typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
-        | "workitem.attachments.undelete" -> typeof<string>
-        | "workitem.description.clear"
-        | "workitem.description.set" -> typeof<string>
-        | "workitem.create"
-        | "workitem.link.prset"
-        | "workitem.link.ref"
-        | "workitem.links.remove.prset"
-        | "workitem.links.remove.ref"
-        | "workitem.set-status" -> typeof<string>
-        | "workitem.links.list" -> typeof<Grace.Types.WorkItem.WorkItemLinksDto>
-        | "workitem.show" -> typeof<Grace.Types.WorkItem.WorkItemDto>
-        | unknown -> invalidOp $"JSON-success command '{unknown}' does not declare a ReturnValue type in CommandOutputContract."
+        | "watch" -> Conditional watchCheckCondition
+        | _ -> Supported
 
-    /// Builds type-derived schema and examples for every command that already emits a Grace success envelope.
-    let private typeDerivedReturnValueContract commandId =
-        let resultType = declaredResultTypeFor commandId
-
+    /// Builds type-derived schema and examples for a command that emits a Grace success envelope.
+    let private typeDerivedReturnValueContract (resultType: Type) =
         supportedReturnValueContract
             (contractTypeName resultType)
             $"Declared ReturnValue type: {resultType.FullName}"
@@ -817,52 +734,44 @@ module CommandOutputContract =
                 "ReturnValue schema and example are derived from the declared result type and Grace's configured JSON serializer policy."
             ]
 
-    /// Selects a derived contract only for commands with a real JSON success path.
-    let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
-        match envelopeContract with
-        | ExistingGraceResultEnvelope _ when identity.CommandId = "owner.get-directory-version-observation" ->
-            supportedReturnValueContract
-                "DirectoryVersionSizeObservation"
-                "Existing observation with route-local exact decimal and UTC strings."
-                (box (
-                    JsonSerializer.Deserialize<JsonElement>(
-                        """{"type":"object","required":["ObservationId","Scope","DeclaredLogicalBytes","DistinctContentCount","EnumerationStartedAt","EnumerationFinishedAt"],"properties":{"ObservationId":{"type":"string","format":"uuid"},"Scope":{"type":"object","required":["OwnerId","OrganizationId","RepositoryId"],"properties":{"OwnerId":{"type":"string","format":"uuid"},"OrganizationId":{"type":"string","format":"uuid"},"RepositoryId":{"type":"string","format":"uuid"}}},"DeclaredLogicalBytes":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Declared logical bytes, in [0,9223372036854775807]."},"DistinctContentCount":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Distinct content declarations, in [0,9223372036854775807]."},"EnumerationStartedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."},"EnumerationFinishedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."}}}"""
-                    )
-                ))
-                (box (
-                    JsonSerializer.Deserialize<JsonElement>(
-                        """{"ObservationId":"11111111-1111-1111-1111-111111111111","Scope":{"OwnerId":"22222222-2222-2222-2222-222222222222","OrganizationId":"33333333-3333-3333-3333-333333333333","RepositoryId":"44444444-4444-4444-4444-444444444444"},"DeclaredLogicalBytes":"9007199254740993","DistinctContentCount":"0","EnumerationStartedAt":"2026-09-07T01:02:03.123456789Z","EnumerationFinishedAt":"2026-09-07T01:02:04.987654321Z"}"""
-                    )
-                ))
-                [
-                    "Retained metadata declarations; not complete storage, interval accounting or a charge. All four IDs are required; no current configuration fallback."
-                ]
-        | ExistingGraceResultEnvelope _
-        | ConditionalGraceResultEnvelope _ -> typeDerivedReturnValueContract identity.CommandId
-        | SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
-        | JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
-        | MigrationRequiredToGraceResultEnvelope disposition ->
-            incompleteReturnValueContract
-                (outputDtoDispositionText disposition)
-                "This command is routed, but its JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
+    /// Describes the owner observation projection, whose exact decimal and UTC fields are emitted as strings by its route.
+    let private directoryVersionObservationContract =
+        supportedReturnValueContract
+            "DirectoryVersionSizeObservation"
+            "Existing observation with route-local exact decimal and UTC strings."
+            (box (
+                JsonSerializer.Deserialize<JsonElement>(
+                    """{"type":"object","required":["ObservationId","Scope","DeclaredLogicalBytes","DistinctContentCount","EnumerationStartedAt","EnumerationFinishedAt"],"properties":{"ObservationId":{"type":"string","format":"uuid"},"Scope":{"type":"object","required":["OwnerId","OrganizationId","RepositoryId"],"properties":{"OwnerId":{"type":"string","format":"uuid"},"OrganizationId":{"type":"string","format":"uuid"},"RepositoryId":{"type":"string","format":"uuid"}}},"DeclaredLogicalBytes":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Declared logical bytes, in [0,9223372036854775807]."},"DistinctContentCount":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Distinct content declarations, in [0,9223372036854775807]."},"EnumerationStartedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."},"EnumerationFinishedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."}}}"""
+                )
+            ))
+            (box (
+                JsonSerializer.Deserialize<JsonElement>(
+                    """{"ObservationId":"11111111-1111-1111-1111-111111111111","Scope":{"OwnerId":"22222222-2222-2222-2222-222222222222","OrganizationId":"33333333-3333-3333-3333-333333333333","RepositoryId":"44444444-4444-4444-4444-444444444444"},"DeclaredLogicalBytes":"9007199254740993","DistinctContentCount":"0","EnumerationStartedAt":"2026-09-07T01:02:03.123456789Z","EnumerationFinishedAt":"2026-09-07T01:02:04.987654321Z"}"""
+                )
+            ))
+            [
+                "Retained metadata declarations; not complete storage, interval accounting or a charge. All four IDs are required; no current configuration fallback."
+            ]
+
+    /// Explains why a migration-required command cannot publish a `ReturnValue` schema or example yet.
+    let private migrationRequiredContract =
+        incompleteReturnValueContract
+            "migration-required"
+            "This command's JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
 
     /// Builds the command document section of the machine-readable command-output contract.
     let private commandDocument (identity: CommandIdentity) =
         { Id = identity.CommandId; Path = identity.CommandPath; GroupPath = identity.GroupPath; Name = identity.CommandName }
 
-    /// Builds the registry document section of the machine-readable command-output contract.
-    let private registryDocument (entry: CommandContractEntry) =
+    /// Builds the support section that tells callers whether JSON output and `--select` are available.
+    let private supportDocument (entry: CommandContractEntry) =
         {
-            RouteDisposition = routeDispositionText entry.RouteDisposition
-            CurrentJsonBehavior = unionName entry.CurrentJsonBehavior
-            Category = unionName entry.Category
-            ExecutionScope = unionName entry.ExecutionScope
-            Mutating = entry.Mutating
-            EnvelopeContract = envelopeContractText entry.EnvelopeContract
-            JsonMode = unionName entry.Features.JsonMode
-            Schema = unionName entry.Features.Schema
-            Examples = unionName entry.Features.Examples
-            Select = unionName entry.Features.Select
+            JsonOutput =
+                match entry.JsonOutput with
+                | Supported -> "Supported"
+                | Conditional _ -> "Conditional"
+                | MigrationRequired -> "MigrationRequired"
+            Select = entry.SupportsSelect
         }
 
     /// Builds command-output contract metadata for success envelope schema so automation can rely on stable JSON shapes.
@@ -906,18 +815,16 @@ module CommandOutputContract =
             match entry.ReturnValueContract.Status with
             | SchemaReady -> "schema-ready"
             | MetadataIncomplete -> "metadata-incomplete"
-            | ContractUnsupported -> "unsupported"
 
         {
             Status = status
             Source = "CommandOutputContract"
             Envelope =
-                match entry.EnvelopeContract with
-                | JsonModeErrorOnly reason -> $"GraceError only in JSON mode for this release; no success ReturnValue envelope is emitted. {reason}"
-                | ConditionalGraceResultEnvelope (_, condition) ->
+                match entry.JsonOutput with
+                | Supported -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
+                | Conditional condition ->
                     $"GraceReturnValue<T> status envelope for status checks, including unavailable modes with nonzero exit codes. GraceError remains for parser and command execution errors outside that status-check path. {condition}"
-                | _ -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
-            ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
+                | MigrationRequired -> "Success output is not yet a stable GraceReturnValue<T> for this command; GraceError on error."
             ReturnValueContract = entry.ReturnValueContract.Name
             SuccessSchema = successEnvelopeSchema entry
             ErrorSchema = errorEnvelopeSchema
@@ -944,7 +851,7 @@ module CommandOutputContract =
                     |}
         }
 
-    /// Builds command-output contract metadata for incomplete metadata example so automation can rely on stable JSON shapes.
+    /// Builds the example that names the metadata gap for a command that is not schema-ready.
     let private incompleteMetadataExample (entry: CommandContractEntry) =
         {
             Name = "metadata-incomplete"
@@ -952,10 +859,7 @@ module CommandOutputContract =
             Document =
                 box
                     {|
-                        Status =
-                            match entry.ReturnValueContract.Status with
-                            | ContractUnsupported -> "unsupported"
-                            | _ -> "metadata-incomplete"
+                        Status = "metadata-incomplete"
                         CommandId = entry.Identity.CommandId
                         ReturnValueContract = entry.ReturnValueContract.Name
                         Reason =
@@ -1007,7 +911,7 @@ module CommandOutputContract =
                 | Examples -> "examples"
             ContractVersion = "cli-json-v1"
             Command = commandDocument entry.Identity
-            Registry = registryDocument entry
+            Support = supportDocument entry
             Input = commandInputDocument entry.Identity
             Schema =
                 match kind with
@@ -1023,46 +927,24 @@ module CommandOutputContract =
                             successExample entry
                             errorExample entry
                         ]
-                    | MetadataIncomplete
-                    | ContractUnsupported ->
+                    | MetadataIncomplete ->
                         [
                             incompleteMetadataExample entry
                             errorExample entry
                         ]
         }
 
-    /// Builds command-output contract metadata for features for so automation can rely on stable JSON shapes.
-    let private featuresFor behavior =
-        match behavior with
-        | UnroutedSourceOnly ->
-            { JsonMode = UnsupportedUntilRouted; Schema = UnsupportedUntilRouted; Examples = UnsupportedUntilRouted; Select = UnsupportedUntilRouted }
-        | ImmediateJsonErrorOnly ->
-            { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = RequiresMigration }
-        | ConditionalCheckStatusEnvelope -> { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
-        | CommonRenderOutputEnvelope -> { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
-        | _ -> { JsonMode = RequiresMigration; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = FutureReturnValueProjection }
-
-    /// Builds command-output contract metadata for envelope for so automation can rely on stable JSON shapes.
-    let private envelopeFor routed behavior dtoDisposition =
-        match routed, behavior with
-        | false, _ -> SourceOnlyUnsupported "Defined in source but not root-routed for V1."
-        | true, CommonRenderOutputEnvelope -> ExistingGraceResultEnvelope dtoDisposition
-        | true, ConditionalCheckStatusEnvelope ->
-            ConditionalGraceResultEnvelope(
-                dtoDisposition,
-                "`grace watch --check` supports JSON and --select status output; foreground `grace watch` still returns a JSON error because it is a continuous workflow."
-            )
-        | true, ImmediateJsonErrorOnly ->
-            JsonModeErrorOnly
-                "The command is routed, but --output Json is intentionally short-circuited before command execution because watch is a continuous foreground workflow."
-        | true, _ -> MigrationRequiredToGraceResultEnvelope dtoDisposition
-
-    /// Builds command-output contract metadata for command identity so automation can rely on stable JSON shapes.
+    /// Builds the registry identity for a command from its group path and leaf name.
     let internal commandIdentity groupPath commandName = { GroupPath = groupPath; CommandName = commandName }
 
-    /// Builds command-output contract metadata for discover leaf commands so automation can rely on stable JSON shapes.
+    /// Parses a dotted command ID such as `workitem.attachments.add` into its group path and leaf name.
+    let private identityOfCommandId (commandId: string) =
+        let segments = commandId.Split('.') |> List.ofArray
+        commandIdentity (segments |> List.take (segments.Length - 1)) (List.last segments)
+
+    /// Walks the live System.CommandLine tree and returns the identity of every leaf command a user can invoke.
     let discoverLeafCommands (rootCommand: Command) =
-        /// Builds command-output contract metadata for rec so automation can rely on stable JSON shapes.
+        /// Descends one command level, accumulating the group path until a leaf command is reached.
         let rec loop path (command: Command) =
             let subcommands =
                 command.Subcommands
@@ -1082,396 +964,27 @@ module CommandOutputContract =
         |> Seq.toList
         |> List.collect (loop [])
 
-    /// Builds command-output contract metadata for row so automation can rely on stable JSON shapes.
-    let private row groupPath commandName routed mutating behavior category executionScope dtoDisposition =
-        let identity = commandIdentity groupPath commandName
-
-        let routeDisposition =
-            if routed then
-                Routed
-            else
-                SourceOnlyUnrouted "Defined-only reference command; not attached to GraceCommand.rootCommand."
-
-        let envelopeContract = envelopeFor routed behavior dtoDisposition
-
-        {
-            Identity = identity
-            RouteDisposition = routeDisposition
-            CurrentJsonBehavior = behavior
-            Category = category
-            ExecutionScope = executionScope
-            Mutating = mutating
-            EnvelopeContract = envelopeContract
-            Features = featuresFor behavior
-            ReturnValueContract = returnValueContractFor identity envelopeContract
-        }
-
-    let private common_renderOutput_envelope = CommonRenderOutputEnvelope
-    let private immediate_json_error_only = ImmediateJsonErrorOnly
-    let private conditional_check_status_envelope = ConditionalCheckStatusEnvelope
-    let private human_progress_only_success = HumanProgressOnlySuccess
-    let private partial_manual_success = PartialManualSuccess
-    let private manual_json_unenveloped = ManualJsonUnenveloped
-    let private human_proc_only = HumanProcOnly
-    let private human_only = HumanOnly
-    let private unrouted_source_only = UnroutedSourceOnly
-
-    let private progress_local_workflow = ProgressLocalWorkflow
-    let private mutating_state_transition = MutatingStateTransition
-    let private read_or_mutating_verify = ReadOrMutatingVerify
-    let private read_list_search = ReadListSearch
-    let private mutating = Mutating
-    let private fire_and_forget_progress = FireAndForgetProgress
-    let private workflow_accepted_operation = WorkflowAcceptedOperation
-    let private help_introspection = HelpIntrospection
-
-    let private composite_local_server = CompositeLocalAndServer
-    let private local_client = LocalClient
-    let private server_via_sdk = ServerViaSdk
-    let private verify = Verify
-    let private server_via_sdk_defined_but_not_root_routed = ServerViaSdkDefinedButNotRootRouted
-
+    /// Lists the output contract of every live leaf command.
     let entries =
         [
-            row [ "owner" ] "get-directory-version-observation" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "list-path-permissions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "list-role-assignments" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "list-roles" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "authorize" ]
-                "remove-path-permission"
-                true
-                true
-                common_renderOutput_envelope
-                mutating_state_transition
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "revoke-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authorize" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "authorize" ]
-                "upsert-path-permission"
-                true
-                true
-                common_renderOutput_envelope
-                mutating_state_transition
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "reschedule" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "admin"; "reminder" ] "update-time" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "agent" ] "add-summary" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [ "agent" ] "bootstrap" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
-            row [ "agent"; "work" ] "start" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
-            row [ "agent"; "work" ] "status" true false common_renderOutput_envelope read_list_search composite_local_server ReuseExistingApiOrSdkDto
-            row [ "agent"; "work" ] "stop" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
-            row [ "alias" ] "list" true false common_renderOutput_envelope help_introspection local_client RequiresCliDto
-            row [ "approval"; "policy" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "disable" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "enable" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "evaluate" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "policy" ] "update" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "approve" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "history" true true common_renderOutput_envelope workflow_accepted_operation server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "reject" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "approval"; "request" ] "wait" true true common_renderOutput_envelope workflow_accepted_operation server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate" ] "login" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate" ] "logout" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "revoke" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate"; "token" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "authenticate" ] "whoami" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "annotate" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
-            row [ "branch" ] "assign" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "checkpoint" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "commit" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "create-external" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-assign" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-auto-rebase" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-checkpoints" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-commit" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-external" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-promotion" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-save" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "enable-tag" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-checkpoints" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-commits" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-externals" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-promotions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-recursive-size" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-references" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-saves" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "get-tags" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "list-contents" true false common_renderOutput_envelope read_list_search composite_local_server ReuseExistingApiOrSdkDto
-            row [ "branch" ] "promote" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "rebase" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "branch" ] "save" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "set-name" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "set-promotion-mode" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "status" true false human_progress_only_success read_list_search composite_local_server RequiresCliDto
-            row [ "branch" ] "switch" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "branch" ] "tag" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "branch" ] "update-parent-branch" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate" ] "attestations" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate" ] "cancel" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate"; "gate" ] "rerun" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate" ] "required-actions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto
-            row [] "connect" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "blake3" true true common_renderOutput_envelope progress_local_workflow composite_local_server ReuseExistingApiOrSdkDto
-            row [ "diff" ] "checkpoint" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "commit" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "directoryid" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "promotion" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "save" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "sha" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "diff" ] "tag" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "directory-version" ] "get-zip-file" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row [ "history" ] "delete" true true common_renderOutput_envelope mutating local_client RequiresCliDto
-            row [ "history" ] "off" true true common_renderOutput_envelope mutating local_client RequiresCliDto
-            row [ "history" ] "on" true true common_renderOutput_envelope mutating local_client RequiresCliDto
-            row [ "history" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
-            row [ "history" ] "search" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [] "doctor" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "check-ignore-entries" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "clear-journal" true true common_renderOutput_envelope mutating local_client RequiresCliDto
-            row [ "maintenance" ] "list-contents" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "scan" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
-            row [ "maintenance" ] "show-journal" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "stats" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "update-index" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
-            row [ "organization" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "organization" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "organization" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "organization" ] "set-description" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "organization" ] "set-name" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "organization" ]
-                "set-search-visibility"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "organization" ] "set-type" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "organization" ] "undelete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "set-description" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "set-name" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "set-search-visibility" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "set-type" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "owner" ] "undelete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "apply" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "promotion-set"; "conflicts" ]
-                "resolve"
-                true
-                true
-                common_renderOutput_envelope
-                mutating_state_transition
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "promotion-set"; "conflicts" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "get-events" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "recompute" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "request-approval" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "promotion-set" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "promotion-set" ]
-                "update-input-promotions"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "queue" ] "dequeue" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "queue" ] "enqueue" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "queue" ] "pause" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "queue" ] "resume" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "queue" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "reference" ] "assign" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "checkpoint" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "commit" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row
-                [ "reference" ]
-                "create-external"
-                false
-                true
-                unrouted_source_only
-                mutating_state_transition
-                server_via_sdk_defined_but_not_root_routed
-                NoServerDto
-            row [ "reference" ] "delete" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "get" false false unrouted_source_only read_list_search server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "promote" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "save" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "reference" ] "tag" false true unrouted_source_only mutating_state_transition server_via_sdk_defined_but_not_root_routed NoServerDto
-            row [ "repository" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "get-branches" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "init" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row
-                [ "repository" ]
-                "set-allows-large-files"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-anonymous-access" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-checkpoint-days" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "repository" ]
-                "set-conflict-resolution-policy"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row
-                [ "repository" ]
-                "set-default-server-api-version"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-description" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-diff-cache-days" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "repository" ]
-                "set-directory-version-cache-days"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row
-                [ "repository" ]
-                "set-logical-delete-days"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-name" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-record-saves" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-save-days" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-status" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "set-visibility" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "undelete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "library" ] "add" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "library" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "library" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "library" ] "remove" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "library" ] "rename" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
-            row [ "library"; "sync" ] "enable" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
-            row [ "library"; "sync" ] "run" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row [ "library"; "sync" ] "pause" true true common_renderOutput_envelope mutating_state_transition local_client RequiresCliDto
-            row [ "library"; "sync" ] "resume" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row [ "library"; "sync" ] "status" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "review" ] "checkpoint" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [ "review" ] "deepen" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [ "review" ] "inbox" true false common_renderOutput_envelope read_list_search verify ReuseExistingApiOrSdkDto
-            row [ "review" ] "open" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
-            row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
-            row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [] "watch" true true conditional_check_status_envelope progress_local_workflow local_client RequiresCliDto
-            row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "deliveries" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook"; "delivery" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "disable" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "enable" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "test" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "webhook" ] "update" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attachments" ] "add" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
-            row [ "workitem"; "attachments" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attachments" ] "download" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
-            row [ "workitem"; "attachments" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attachments" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "attachments" ]
-                "undelete"
-                true
-                true
-                common_renderOutput_envelope
-                mutating_state_transition
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "workitem" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "description" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "description" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "link" ] "prset" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "link" ] "ref" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "links" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "prset"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row [ "workitem"; "links"; "remove" ] "ref" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem" ] "set-status" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            {
+                Identity = identityOfCommandId "owner.get-directory-version-observation"
+                JsonOutput = Supported
+                ReturnValueContract = directoryVersionObservationContract
+            }
+
+            for commandId, resultType in declaredResultTypes do
+                {
+                    Identity = identityOfCommandId commandId
+                    JsonOutput = jsonOutputForDeclared commandId
+                    ReturnValueContract = typeDerivedReturnValueContract resultType
+                }
+
+            for commandId in migrationRequiredCommandIds do
+                { Identity = identityOfCommandId commandId; JsonOutput = MigrationRequired; ReturnValueContract = migrationRequiredContract }
         ]
 
-    /// Tries to map find and returns a GraceError instead of throwing on unsupported input.
+    /// Looks up the output contract for one command identity, or `None` when the command has no registry entry.
     let tryFind identity =
         entries
         |> List.tryFind (fun entry -> entry.Identity = identity)
-
-    let routedEntries =
-        entries
-        |> List.filter (fun entry ->
-            match entry.RouteDisposition with
-            | Routed -> true
-            | SourceOnlyUnrouted _ -> false)
-
-    let sourceOnlyEntries =
-        entries
-        |> List.filter (fun entry ->
-            match entry.RouteDisposition with
-            | Routed -> false
-            | SourceOnlyUnrouted _ -> true)
