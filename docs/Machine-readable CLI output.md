@@ -143,57 +143,27 @@ Rejected examples:
 
 Rejected selectors return a JSON error envelope. They do not produce partial output.
 
-## Final Inventory Evidence
+## Checking a Command's JSON Support
 
-The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
+Most commands fully support `--output Json`, `--schema`, `--examples`, and `--select`. To check a specific command, run
+it with `--schema` and read the `Registry` section of the result, as in the example above:
 
-- Total leaf commands: `218`
-- JSON-ready routed commands: `197`
-- Conditionally JSON-ready routed commands: `1`
-- Intentionally human-only commands: `0`
-- Deferred routed commands with explicit V2 scope: `11`
-- Source-only/unrouted commands: `9`
-- Deleted commands: `0`
+- `EnvelopeContract` starts with `ExistingGraceResultEnvelope` when the command's success output is the stable
+  `GraceReturnValue<T>` envelope.
+- `EnvelopeContract` starts with `MigrationRequiredToGraceResultEnvelope` when the command's success output still needs
+  migration before Grace can describe a stable `ReturnValue` schema. Today that includes `branch switch`, `branch
+  rebase`, `branch status`, `history run`, and the `diff` commands.
+- `JsonMode`, `Schema`, `Examples`, and `Select` show which of those options the command supports.
 
-The conditional command is `watch`. `grace watch --check --output Json` returns a `WatchCheckStatusDto` in the normal
+The command registry in `src/Grace.CLI/CommandOutputContract.CLI.fs` is the source of truth for these values.
+
+`watch` is a special case. `grace watch --check --output Json` returns a `WatchCheckStatusDto` in the normal
 `GraceReturnValue<T>` envelope so scripts and agents can read `IsRunning`, `CanUseIncrementalStatus`, `Mode`,
-`Reason`, and `SafetyFlags`. Foreground `grace watch --output Json` still short-circuits to a `GraceError` document
-instead of starting the continuous workflow.
+`Reason`, and `SafetyFlags`. Foreground `grace watch --output Json` returns a `GraceError` document instead of starting
+the continuous workflow.
 
-The source-only/unrouted commands are defined in source but are not attached to `GraceCommand.rootCommand` in V1:
-
-- `reference.assign`
-- `reference.checkpoint`
-- `reference.commit`
-- `reference.create-external`
-- `reference.delete`
-- `reference.get`
-- `reference.promote`
-- `reference.save`
-- `reference.tag`
-
-The deferred routed commands are not corrupt or unenveloped in current V1 output claims. They have explicit registry
-metadata and V2 scope because their success paths still need migration before Grace can describe stable
-`ReturnValue` schemas, examples, and projections for them. Current deferrals are:
-
-- `branch.rebase`
-- `branch.status`
-- `branch.switch`
-- `diff.checkpoint`
-- `diff.commit`
-- `diff.directoryid`
-- `diff.promotion`
-- `diff.save`
-- `diff.sha`
-- `diff.tag`
-- `history.run`
-
-The foreground `watch` workflow is not counted in those V2 routed-success migrations. Its supported machine-readable
-surface is the `--check` status probe; starting the continuous watcher in JSON mode still returns an explicit error
-envelope.
-
-`doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
-supports `--schema`, `--examples`, and `--select`.
+`doctor` emits `DoctorReportDto` in the common Grace result envelope and supports `--schema`, `--examples`, and
+`--select`.
 
 ## Library command outcomes
 
@@ -251,8 +221,8 @@ grace watch --check --select Mode
 
 ## Working Directory Update outcomes
 
-The [Working Directory Update specification](Working%20Directory%20Update.md) defines a typed local-update outcome for
-Branch switching, Connect retrieval, and Watch diagnostics. `Unchanged` and `Updated` return exit code `0`;
+Working Directory Update reports a typed local-update outcome for Branch switching, Connect retrieval, and Watch
+diagnostics. `Unchanged` and `Updated` return exit code `0`;
 `Rejected`, `UpdateIncomplete`, and `FinalizationIncomplete` return nonzero. `FinalizationIncomplete` states that the
 working directory was updated and includes `grace doctor --repair-local-state` as the recommended command.
 
@@ -269,10 +239,9 @@ uses the nonzero `GraceError` envelope. The human output likewise states that re
 before it reports an update error. Connect emits one JSON document only; it does not use JSON progress or a second
 configuration document.
 
-`branch.switch` will leave the V2 deferral list only when its stable outcome DTO, schema, example, selection behavior,
-and exit-code test are complete. Foreground Watch remains a continuous command; its existing check projection and human
-diagnostics report blocked update state without emitting a second JSON document. The inventory and deferral counts above
-remain the current executable inventory until implementation changes the command registry.
+`branch switch` keeps its migration status until its stable outcome DTO, schema, example, selection behavior, and
+exit-code test are complete. Foreground Watch remains a continuous command; its existing check projection and human
+diagnostics report blocked update state without emitting a second JSON document.
 
 ## V2 Deferrals
 
@@ -282,7 +251,7 @@ The following capabilities remain intentionally deferred beyond `cli-json-v1`:
 - JSON Lines progress streams and multi-document streaming JSON.
 - Server-backed schema discovery.
 - Live examples generated from repository or server state.
-- Stable schemas for source-only/unrouted commands until they are routed, deleted, or promoted into a supported
-  contract.
+- Stable schemas for commands that are defined in source but not attached to the CLI, until they are routed, deleted,
+  or promoted into a supported contract.
 
 These are explicit V2 boundaries, not hidden V1 promises.
