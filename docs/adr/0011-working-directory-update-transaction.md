@@ -91,20 +91,6 @@ five-input operation with real filesystem and SQLite facts. Ephemeral `bytesChan
 unchanged terminal rows; Branch and Watch Reference operations remain on their ordinary post-completion rows without
 inferring that DirectoryVersion-only discriminator.
 
-The complete requirements, state model, propagation map, and proof contract are in
-[Working Directory Update](../Working%20Directory%20Update.md).
-
-## Lifecycle projection
-
-The projection below is one of fifteen exact packet consumers. The lifecycle renderer compares every marker-delimited
-block with the compiler result; Issue #846 reran that check across the complete exported packet.
-
-<!-- grace:wdu-lifecycle-projection:adr-0011:start -->
-```json
-{"schema":"grace.wdu.lifecycle-projection/v2","artifact":"adr-0011","canonical":"docs/Working Directory Update.md#normative-branch-lifecycle-table","canonicalContentDigest":"ccd29ba6b55dde396be5c1c9244958999e7cc8173c0e5e8243f1b57fe4bc3c92","assignmentDigest":"fb20589eaffb4c7a7c8db2b1c215fe751bef3d41145fef925f07d7648f501053","rowCount":66,"applicabilityKeyCount":244,"requirementCount":19,"artifactCount":15,"requirements":[{"id":"REQ-001","owner":"#960"},{"id":"REQ-002","owner":"#869"},{"id":"REQ-003","owner":"#837"},{"id":"REQ-004","owner":"#839"},{"id":"REQ-005","owner":"#869"},{"id":"REQ-006","owner":"#898"},{"id":"REQ-007","owner":"#960"},{"id":"REQ-008","owner":"#960"},{"id":"REQ-009","owner":"#838"},{"id":"REQ-010","owner":"#838"},{"id":"REQ-011","owner":"#871"},{"id":"REQ-012","owner":"#871"},{"id":"REQ-013","owner":"#960"},{"id":"REQ-014","owner":"#960"},{"id":"REQ-015","owner":"#842"},{"id":"REQ-016","owner":"#871"},{"id":"REQ-017","owner":"#846"},{"id":"REQ-018","owner":"#928"},{"id":"REQ-019","owner":"#960"}],"artifactIds":["adr-0011","epic-835","issue-842","issue-843","issue-846","issue-869","issue-898","issue-928","issue-960","issue-922","issue-923","issue-900","issue-901","issue-871","issue-872"],"assignment":{"rowIds":["WDU-LC-200","WDU-LC-201","WDU-LC-213","WDU-LC-202","WDU-LC-206","WDU-LC-207","WDU-LC-208","WDU-LC-209","WDU-LC-210","WDU-LC-212","WDU-LC-006","WDU-LC-008","WDU-LC-007","WDU-LC-010","WDU-LC-015","WDU-LC-020","WDU-LC-023","WDU-LC-025","WDU-LC-026","WDU-LC-027","WDU-LC-028","WDU-LC-030","WDU-LC-033","WDU-LC-035","WDU-LC-036","WDU-LC-037","WDU-LC-038","WDU-LC-100","WDU-LC-101","WDU-LC-103","WDU-LC-110","WDU-LC-114","WDU-LC-120","WDU-LC-123","WDU-LC-130","WDU-LC-003"]}}
-```
-<!-- grace:wdu-lifecycle-projection:adr-0011:end -->
-
 ## Consequences
 
 The module is deep: a small typed interface hides cross-process serialization, stale-state rejection, fresh
