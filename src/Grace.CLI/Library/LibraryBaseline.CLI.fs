@@ -15,6 +15,11 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Acquires one complete immutable baseline and installs its selected revisions before accepted-change catch-up.
+/// Populated-Library onboarding acquires complete metadata before effects. Repository state retains its baseline
+/// selection, operations retain baseline items separately from accepted changes, and materialized items appear only
+/// after verified effects. Commit the baseline boundary separately after all required work; gate capture through
+/// initial catch-up. Incomplete-token restart is restricted to an unchanged catalog and empty local root. There is no
+/// migration contract for old development-only Library schemas.
 module internal LibraryBaseline =
 
     /// Uses the existing remote contracts; an absent continuation result means the server rejected its expired or invalid token.

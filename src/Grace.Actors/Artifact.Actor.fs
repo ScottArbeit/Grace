@@ -319,6 +319,10 @@ module Artifact =
                 :> Task
 
             /// Receives only exact Artifact physical-deletion reminders; stale generations are inert.
+            /// These attachment cleanup reminders are generation-bound: revalidate the exact artifact, repository, work item,
+            /// deletion generation, tombstone time and stored deadline before every cleanup run. Persist blob and link
+            /// progress separately, require exact unlink-event proof when retrying after a missing link, and treat stale
+            /// reminders as no-ops.
             member this.ReceiveReminderAsync(reminder: ReminderDto) =
                 task {
                     this.correlationId <- reminder.CorrelationId

@@ -13,6 +13,8 @@ open System.Threading.Tasks
 type Owner() =
 
     /// Reads one retained declaration using explicit historical scope, preserving all quantity and timestamp digits.
+    /// Requires an observation GUID and all three explicit recorded scope IDs. Uses GET and the existing reader to
+    /// reconstruct exact int64 and Instant fields. Never fills selectors from current configuration or resolves names.
     static member GetDirectoryVersionObservation
         (
             observationId: Guid,

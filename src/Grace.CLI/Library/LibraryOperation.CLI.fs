@@ -7,6 +7,10 @@ open Grace.Types
 open Grace.Types.Library
 
 /// Defines the sole stored intent and progress for each supported local Library operation family.
+/// Each operation stores one typed intent/progress value; derive SQL routing, completion and echo columns from it.
+/// Saved-file content must exist as a complete verified immutable object under the configured object directory before
+/// SQLite commit. Keep its locator fixed across rename, upload from that object, retain rejected saved work, and block
+/// missing/corrupt references instead of substituting working bytes. Operation pruning must not delete shared objects.
 module internal LibraryOperation =
 
     /// Identifies complete nonempty file content independently of its working path.

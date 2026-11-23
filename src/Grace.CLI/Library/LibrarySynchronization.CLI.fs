@@ -16,6 +16,14 @@ open System.IO
 open System.Threading
 
 /// Runs the Windows Library tracer using the existing SDK, local database, and shared root exclusion.
+/// Backs `grace library sync enable/run/pause/resume/status`, which owns Windows Library participation in exactly three
+/// tables of the existing local database (see LibraryLocalState).
+/// Pause invariants: pause is independent from progress. Under the shared root lease, reread pause before capture,
+/// synchronization, echo classification or pruning. Only explicit resume clears pause; a racing Watch tick skips pause
+/// without hiding other failures. Catalog classification and version-control exclusion still apply while paused.
+/// Keep frozen requests, materialized edit bases, filesystem guards and completion transactions in the Library modules.
+/// Never acquire the root lease again inside a helper that already holds it. Library work must never create a WDU
+/// completion. Watch consumes `LibraryContentAvailable.v1` only as a pull hint.
 module internal LibrarySynchronization =
 
     /// Exposes local participation and completed progress through the ordinary CLI result envelope.
@@ -424,6 +432,9 @@ module internal LibrarySynchronization =
         { OperationId = operation.OperationId; SourcePath = operation.SourcePath; TargetPath = operation.TargetPath; Outcome = outcome }
 
     /// With the root lease held, captures observable saved files before incoming metadata can replace their base; paused copies are skipped.
+    /// Zero-byte input is excluded before creating pending operations or preparing uploads. Empty files remain present
+    /// and protected; already-captured positive sources and exact submitted requests are retained. Preserve
+    /// `ItemTombstoned` rejection and saved input after deletion.
     let internal captureSavedWith afterInsert (configuration: GraceConfiguration) =
         let current = state configuration
         let items = readItems configuration.GraceStatusFile configuration.RepositoryId
@@ -999,6 +1010,8 @@ module internal LibrarySynchronization =
                 revalidate ()
 
                 /// Allows rename source removal only when changed positive bytes already have an exact accepted saved operation.
+                /// A file rename may remove changed source bytes only against their exact already-accepted pending content;
+                /// an empty source is excluded input and is always preserved.
                 let requireMovedSource () =
                     if
                         change.Item.Tombstone.IsNone
@@ -1354,6 +1367,11 @@ module internal LibrarySynchronization =
         }
 
     /// Persists an explicit rename before submission and resumes it through genuine ordered synchronization.
+    /// `grace library rename <path> <new-name>` selects one clean nonempty materialized file in its existing parent. Keep
+    /// the selected intent, generated operation ID, frozen namespace-only request and genuine receipt in the existing
+    /// operation row. Acceptance applies through ordered pull; a definitive rejected unprepared rename retires and
+    /// returns before pulling. Preserve saved-content rejection, exact prepared Watch classification and the four
+    /// human/JSON outcomes (RenameOutcome).
     let rename (configuration: GraceConfiguration) correlationId sourcePath newName cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then

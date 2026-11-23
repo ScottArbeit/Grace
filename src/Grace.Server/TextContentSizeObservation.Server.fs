@@ -17,6 +17,16 @@ open Grace.Operations.Data
 open Microsoft.Extensions.Configuration
 
 /// Captures and reads immutable completed declarations through the SystemAdmin routes.
+/// SQL access uses Grace.Operations.Data and the existing grace__operations__sql__connectionstring setting; the
+/// Operations worker creates the source-specific observation table. SQL is not a Server startup requirement: missing
+/// configuration or schema returns unavailable on these routes. Preserve live diagnostic dependencies and the separate
+/// additive usage worker. Same-ID capture checks SQL before repository/source access; new capture checks repository
+/// scope and nondeleted state before and after enumeration. Collection uses the existing provider-dispatched reader in
+/// Services.Actor.fs with scope validation from WorkItem. Pass RequestAborted through lookup, repository checks,
+/// collection and acceptance; do not add total scan or wrapper deadlines. SQL per-command behavior and short acceptance
+/// transactions stay unchanged. A failed response may follow a committed row, so errors must direct retries to the same
+/// ObservationId without promising rollback. Source identity belongs to this route/table; matching GUIDs across the
+/// DirectoryVersion, TextContent and Artifact sources do not identify a combined observation.
 module TextContentSizeObservation =
     /// Reads prior SQL state first, then checks current repository scope on both sides of a caller-cancellable collection.
     let internal captureWith

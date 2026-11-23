@@ -13,6 +13,9 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Exercises production baseline orchestration against real SQLite and Windows filesystem effects.
+/// Uses real SQLite and Windows publication plus controlled remote DTO responses. Keep its transaction interruptions
+/// and partial-installation capture controls distinct from the actual hosted CLI scenario in
+/// Grace.Server.Tests/LibrarySynchronization.Windows.Server.Tests.fs.
 [<NonParallelizable>]
 module LibraryBaselineTests =
 

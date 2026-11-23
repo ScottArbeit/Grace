@@ -16,6 +16,10 @@ open System.Text
 open System.Threading.Tasks
 
 /// Plans manifest-backed file uploads, coordinates dedupe discovery, transfers missing blocks, and finalizes manifests.
+/// Manifest-backed uploads are enabled by default for files that satisfy ManifestEligibilityPolicy. The flow plans
+/// local ContentBlocks, uploads only new local blocks, confirms them, finalizes the manifest without reposting block
+/// payload bytes, and returns FileVersion.ContentReference = FileManifest. Ineligible files still use the whole-file
+/// compatibility path.
 module ManifestUpload =
     [<Literal>]
     let OptInEnvironmentVariable = "GRACE_MANIFEST_UPLOADS"

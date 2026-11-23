@@ -1853,6 +1853,8 @@ module UploadSession =
                 :> Task
 
             /// Handles receive reminder async callbacks for the UploadSession actor.
+            /// Cleanup reminders delete only temporary upload coordination state after finalization, abandon or expiration.
+            /// They must not delete accepted manifests, content blocks, block metadata or contribution accounting.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
                     this.correlationId <- reminder.CorrelationId
