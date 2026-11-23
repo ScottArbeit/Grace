@@ -96,22 +96,14 @@ An error emits a `GraceError` document:
     ],
     "Name": "logout"
   },
-  "Registry": {
-    "RouteDisposition": "Routed",
-    "CurrentJsonBehavior": "CommonRenderOutputEnvelope",
-    "Category": "Mutating",
-    "ExecutionScope": "LocalClient",
-    "Mutating": true,
-    "EnvelopeContract": "ExistingGraceResultEnvelope: ReuseExistingApiOrSdkDto",
-    "JsonMode": "ExistingBehavior",
-    "Schema": "ExistingBehavior",
-    "Examples": "ExistingBehavior",
-    "Select": "ExistingBehavior"
+  "Support": {
+    "JsonOutput": "Supported",
+    "Select": true
   }
 }
 ```
 
-For every routed command with an existing JSON success envelope, the registry stores its declared result type.
+For every command with a JSON success envelope, the registry stores its declared result type.
 `--schema` derives the nested `ReturnValue` schema from that type and Grace's shared JSON options. `--examples`
 constructs a deterministic representative value and serializes it with the same options. Both commands preserve the
 outer `GraceReturnValue<T>` success envelope and the `GraceError` error envelope shown above.
@@ -146,16 +138,20 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 ## Checking a Command's JSON Support
 
 Most commands fully support `--output Json`, `--schema`, `--examples`, and `--select`. To check a specific command, run
-it with `--schema` and read the `Registry` section of the result, as in the example above:
+it with `--schema` and read the `Support` section of the result, as in the example above:
 
-- `EnvelopeContract` starts with `ExistingGraceResultEnvelope` when the command's success output is the stable
-  `GraceReturnValue<T>` envelope.
-- `EnvelopeContract` starts with `MigrationRequiredToGraceResultEnvelope` when the command's success output still needs
-  migration before Grace can describe a stable `ReturnValue` schema. Today that includes `branch switch`, `branch
-  rebase`, `branch status`, `history run`, and the `diff` commands.
-- `JsonMode`, `Schema`, `Examples`, and `Select` show which of those options the command supports.
+- `JsonOutput` is `Supported` when the command's success output is the stable `GraceReturnValue<T>` envelope.
+- `JsonOutput` is `Conditional` when only one invocation path emits that envelope. `watch` is the only such command;
+  see below.
+- `JsonOutput` is `MigrationRequired` when the command's success output still needs migration before Grace can describe
+  a stable `ReturnValue` schema. Today that includes `branch switch`, `branch rebase`, `branch status`, `history run`,
+  and the `diff` commands other than `diff blake3`. For these commands, `Schema.Status` is `metadata-incomplete`.
+- `Select` is `true` when the command accepts `--select`. Commands that require migration reject it with a JSON error.
 
-The command registry in `src/Grace.CLI/CommandOutputContract.CLI.fs` is the source of truth for these values.
+The command registry in `src/Grace.CLI/CommandOutputContract.CLI.fs` is the source of truth for these values. It
+declares one `ReturnValue` type for each command with a JSON success envelope and one explicit list of
+migration-required commands. A registry test walks the live command tree and fails, naming the command, when a new
+command appears in neither place or in both.
 
 `watch` is a special case. `grace watch --check --output Json` returns a `WatchCheckStatusDto` in the normal
 `GraceReturnValue<T>` envelope so scripts and agents can read `IsRunning`, `CanUseIncrementalStatus`, `Mode`,

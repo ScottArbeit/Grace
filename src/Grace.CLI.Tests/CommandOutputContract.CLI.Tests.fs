@@ -135,12 +135,6 @@ module CommandOutputContractRegistryTests =
             yield! auditPlaceholderArgs entry
         |]
 
-    /// Counts by for test assertions.
-    let private countBy behavior =
-        CommandOutputContract.entries
-        |> List.filter (fun entry -> entry.CurrentJsonBehavior = behavior)
-        |> List.length
-
     /// Asserts that set equal matches the expected contract.
     let private assertSetEqual expected actual =
         let expectedSet = Set.ofSeq expected
@@ -196,195 +190,100 @@ module CommandOutputContractRegistryTests =
         document.RootElement.ValueKind
         |> should equal JsonValueKind.Object
 
-    /// Counts entries for test assertions.
-    let private countEntries predicate =
+    /// Lists the dotted IDs of commands whose JSON output matches the predicate.
+    let private commandIdsWith predicate =
         CommandOutputContract.entries
-        |> List.filter predicate
-        |> List.length
-
-    /// Builds command ids for test data used to exercise CLI command Output Contract behavior.
-    let private commandIdsFor predicate =
-        CommandOutputContract.entries
-        |> List.filter predicate
+        |> List.filter (fun entry -> predicate entry.JsonOutput)
         |> List.map (fun entry -> entry.Identity.CommandId)
 
-    /// Verifies that registry contains accepted inventory totals.
+    /// Verifies that every live leaf command declares exactly one output contract and nothing else is registered.
     [<Test>]
-    let ``registry contains accepted inventory totals`` () =
-        CommandOutputContract.entries.Length
-        |> should equal 218
-
-        CommandOutputContract.routedEntries.Length
-        |> should equal 209
-
-        CommandOutputContract.sourceOnlyEntries.Length
-        |> should equal 9
-
-        countBy CommonRenderOutputEnvelope
-        |> should equal 197
-
-        countBy ImmediateJsonErrorOnly |> should equal 0
-
-        countBy ConditionalCheckStatusEnvelope
-        |> should equal 1
-
-        countBy HumanProgressOnlySuccess
-        |> should equal 10
-
-        countBy PartialManualSuccess |> should equal 0
-        countBy ManualJsonUnenveloped |> should equal 0
-        countBy HumanProcOnly |> should equal 1
-        countBy HumanOnly |> should equal 0
-        countBy UnroutedSourceOnly |> should equal 9
-
-    /// Verifies that final inventory dispositions cover every command exactly once.
-    [<Test>]
-    let ``final inventory dispositions cover every command exactly once`` () =
-        let jsonReady =
-            countEntries (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, ExistingGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let intentionallyHumanOnly =
-            countEntries (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, JsonModeErrorOnly _ -> true
-                | _ -> false)
-
-        let conditionalStatus =
-            countEntries (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, ConditionalGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let deferredV2 =
-            countEntries (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | Routed, MigrationRequiredToGraceResultEnvelope _ -> true
-                | _ -> false)
-
-        let sourceOnly =
-            countEntries (fun entry ->
-                match entry.RouteDisposition, entry.EnvelopeContract with
-                | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> true
-                | _ -> false)
-
-        let deleted = 0
-
-        jsonReady |> should equal 197
-        intentionallyHumanOnly |> should equal 0
-        conditionalStatus |> should equal 1
-        deferredV2 |> should equal 11
-        sourceOnly |> should equal 9
-        deleted |> should equal 0
-
-        jsonReady
-        + intentionallyHumanOnly
-        + conditionalStatus
-        + deferredV2
-        + sourceOnly
-        + deleted
-        |> should equal CommandOutputContract.entries.Length
-
-    /// Verifies that every live leaf command has one registry entry.
-    [<Test>]
-    let ``every live leaf command has one registry entry`` () =
+    let ``every live leaf command has exactly one output contract`` () =
         let discovered =
             CommandOutputContract.discoverLeafCommands GraceCommand.rootCommand
             |> List.map commandId
 
         let registered =
-            CommandOutputContract.routedEntries
+            CommandOutputContract.entries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        let sourceOnlyIds =
-            CommandOutputContract.sourceOnlyEntries
-            |> List.map (fun entry -> entry.Identity.CommandId)
+        /// Names IDs that appear more than once, such as a command declared with a result type and as migration-required.
+        let duplicatesIn ids =
+            ids
+            |> List.countBy id
+            |> List.filter (fun (_, count) -> count > 1)
+            |> List.map fst
 
-        discovered.Length
-        |> should equal CommandOutputContract.routedEntries.Length
+        let duplicateLeafCommands = duplicatesIn discovered
+        let duplicateContracts = duplicatesIn registered
 
-        for sourceOnlyId in sourceOnlyIds do
-            discovered |> should not' (contain sourceOnlyId)
+        if not duplicateLeafCommands.IsEmpty then
+            Assert.Fail($"""Leaf commands discovered more than once: {String.Join(", ", duplicateLeafCommands)}.""")
 
-        discovered.Length
-        |> should equal (discovered |> List.distinct |> List.length)
-
-        registered.Length
-        |> should equal (registered |> List.distinct |> List.length)
+        if not duplicateContracts.IsEmpty then
+            Assert.Fail($"""Commands with more than one output contract: {String.Join(", ", duplicateContracts)}.""")
 
         assertSetEqual discovered registered
 
-    /// Verifies that source only entries are explicit and unsupported.
+    /// Verifies that commands shipping without a stable JSON success envelope are named explicitly.
     [<Test>]
-    let ``source-only entries are explicit and unsupported`` () =
-        let sourceOnlyIds =
-            CommandOutputContract.sourceOnlyEntries
-            |> List.map (fun entry -> entry.Identity.CommandId)
-
-        sourceOnlyIds
+    let ``migration-required commands are an explicit list`` () =
+        commandIdsWith (fun jsonOutput -> jsonOutput = MigrationRequired)
+        |> List.sort
         |> should
             equal
             [
-                "reference.assign"
-                "reference.checkpoint"
-                "reference.commit"
-                "reference.create-external"
-                "reference.delete"
-                "reference.get"
-                "reference.promote"
-                "reference.save"
-                "reference.tag"
+                "branch.rebase"
+                "branch.status"
+                "branch.switch"
+                "diff.checkpoint"
+                "diff.commit"
+                "diff.directoryid"
+                "diff.promotion"
+                "diff.save"
+                "diff.sha"
+                "diff.tag"
+                "history.run"
             ]
 
-        for entry in CommandOutputContract.sourceOnlyEntries do
-            entry.CurrentJsonBehavior
-            |> should equal UnroutedSourceOnly
+        for entry in
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.JsonOutput = MigrationRequired) do
+            entry.SupportsSelect |> should equal false
 
-            match entry.RouteDisposition, entry.EnvelopeContract with
-            | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> ()
-            | other -> Assert.Fail($"Expected source-only unsupported disposition for {entry.Identity.CommandId}, got {other}.")
+            entry.ReturnValueContract.Status
+            |> should equal MetadataIncomplete
 
-            entry.Features.JsonMode
-            |> should equal UnsupportedUntilRouted
+            let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
-            entry.Features.Schema
-            |> should equal UnsupportedUntilRouted
+            schemaDocument.Support.JsonOutput
+            |> should equal "MigrationRequired"
 
-            entry.Features.Examples
-            |> should equal UnsupportedUntilRouted
+            schemaDocument.Support.Select
+            |> should equal false
 
-            entry.Features.Select
-            |> should equal UnsupportedUntilRouted
+            match schemaDocument.Schema with
+            | Some schema ->
+                schema.Status
+                |> should equal "metadata-incomplete"
 
-    /// Verifies that routed backlog categories are represented.
+                schema.Envelope
+                |> should contain "not yet a stable GraceReturnValue<T>"
+            | None -> Assert.Fail($"Expected schema metadata for {entry.Identity.CommandId}.")
+
+            let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+
+            examplesDocument.Examples[0].Name
+            |> should equal "metadata-incomplete"
+
+    /// Verifies that watch is the only command whose JSON envelope depends on how it is invoked.
     [<Test>]
-    let ``routed backlog categories are represented`` () =
-        let behaviors =
-            CommandOutputContract.routedEntries
-            |> List.map (fun entry -> entry.CurrentJsonBehavior)
-            |> Set.ofList
-
-        behaviors.Contains HumanOnly |> should equal false
-
-        behaviors.Contains HumanProgressOnlySuccess
-        |> should equal true
-
-        behaviors.Contains ImmediateJsonErrorOnly
-        |> should equal false
-
-        behaviors.Contains ConditionalCheckStatusEnvelope
-        |> should equal true
-
-        behaviors.Contains ManualJsonUnenveloped
-        |> should equal false
-
-        behaviors.Contains PartialManualSuccess
-        |> should equal false
-
-        behaviors.Contains HumanProcOnly
-        |> should equal true
+    let ``watch is the only conditional JSON command`` () =
+        commandIdsWith (fun jsonOutput ->
+            match jsonOutput with
+            | Conditional _ -> true
+            | _ -> false)
+        |> should equal [ "watch" ]
 
     /// Verifies that registry metadata is consumable without invoking handlers.
     [<Test>]
@@ -394,43 +293,21 @@ module CommandOutputContractRegistryTests =
         match CommandOutputContract.tryFind identity with
         | Some entry ->
             entry.Identity.CommandId |> should equal "connect"
+            entry.JsonOutput |> should equal Supported
+            entry.SupportsSelect |> should equal true
 
-            entry.CurrentJsonBehavior
-            |> should equal CommonRenderOutputEnvelope
+            entry.ReturnValueContract.Status
+            |> should equal SchemaReady
 
-            entry.EnvelopeContract
-            |> should equal (ExistingGraceResultEnvelope RequiresCliDto)
+            let document = CommandOutputContract.introspectionDocument Schema entry
 
-            entry.Features.JsonMode
-            |> should equal ExistingBehavior
+            document.Support.JsonOutput
+            |> should equal "Supported"
 
-            entry.Features.Schema
-            |> should equal ExistingBehavior
-
-            entry.Features.Examples
-            |> should equal ExistingBehavior
-
-            entry.Features.Select
-            |> should equal ExistingBehavior
+            document.Support.Select |> should equal true
         | None -> Assert.Fail("connect should have a registry entry.")
 
-    /// Verifies that branch annotate registry entry is mutating because implicit save can update local state.
-    [<Test>]
-    let ``branch annotate registry entry is mutating because implicit save can update local state`` () =
-        let identity = CommandOutputContract.commandIdentity [ "branch" ] "annotate"
-
-        match CommandOutputContract.tryFind identity with
-        | Some entry ->
-            entry.Mutating |> should equal true
-
-            entry.Category
-            |> should equal MutatingStateTransition
-
-            entry.ExecutionScope
-            |> should equal CompositeLocalAndServer
-        | None -> Assert.Fail("branch annotate should have a registry entry.")
-
-    /// Verifies that the work item status change has only its explicit mutating registry identity.
+    /// Verifies that the work item status change has only its explicit registry identity.
     [<Test>]
     let ``workitem set-status registry entry is the only status change identity`` () =
         let identity = CommandOutputContract.commandIdentity [ "workitem" ] "set-status"
@@ -441,30 +318,8 @@ module CommandOutputContractRegistryTests =
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
-            entry.Mutating |> should equal true
-
-            entry.CurrentJsonBehavior
-            |> should equal CommonRenderOutputEnvelope
-
-            entry.Category
-            |> should equal MutatingStateTransition
-
-            entry.ExecutionScope |> should equal ServerViaSdk
-
-            entry.EnvelopeContract
-            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
-
-            entry.Features.JsonMode
-            |> should equal ExistingBehavior
-
-            entry.Features.Schema
-            |> should equal ExistingBehavior
-
-            entry.Features.Examples
-            |> should equal ExistingBehavior
-
-            entry.Features.Select
-            |> should equal ExistingBehavior
+            entry.JsonOutput |> should equal Supported
+            entry.SupportsSelect |> should equal true
 
             entry.ReturnValueContract.Name
             |> should equal "string"
@@ -482,19 +337,7 @@ module CommandOutputContractRegistryTests =
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
-            entry.Mutating |> should equal true
-
-            entry.CurrentJsonBehavior
-            |> should equal CommonRenderOutputEnvelope
-
-            entry.Category
-            |> should equal MutatingStateTransition
-
-            entry.ExecutionScope
-            |> should equal CompositeLocalAndServer
-
-            entry.EnvelopeContract
-            |> should equal (ExistingGraceResultEnvelope RequiresCliDto)
+            entry.JsonOutput |> should equal Supported
 
             entry.ReturnValueContract.Name
             |> should equal "AttachmentResult"
@@ -532,45 +375,23 @@ module CommandOutputContractRegistryTests =
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
-            entry.CurrentJsonBehavior
-            |> should equal CommonRenderOutputEnvelope
+            entry.JsonOutput |> should equal Supported
 
-            entry.EnvelopeContract
-            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
-
-            entry.Features.JsonMode
-            |> should equal ExistingBehavior
+            entry.ReturnValueContract.Status
+            |> should equal SchemaReady
         | None -> Assert.Fail("diff blake3 should have a registry entry.")
 
-    /// Verifies that current common renderer entries keep the grace envelope model.
+    /// Verifies that every supported entry has a parser-valid path with the recursive json option and central envelope behavior.
     [<Test>]
-    let ``current common renderer entries keep the Grace envelope model`` () =
-        let commonEntries =
+    let ``every supported entry has recursive json option and central envelope behavior`` () =
+        let supportedEntries =
             CommandOutputContract.entries
-            |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
+            |> List.filter (fun entry -> entry.JsonOutput = Supported)
 
-        commonEntries.Length |> should equal 197
-
-        for entry in commonEntries do
-            match entry.EnvelopeContract with
-            | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
-            | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
-
-            entry.Features.Select
-            |> should equal ExistingBehavior
-
-    /// Verifies that every common renderer entry has recursive json option and central envelope behavior.
-    [<Test>]
-    let ``every common renderer entry has recursive json option and central envelope behavior`` () =
-        let commonEntries =
-            CommandOutputContract.entries
-            |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
-
-        commonEntries.Length |> should equal 197
+        supportedEntries |> should not' (be Empty)
 
         let parserInvalidEntries =
-            commonEntries
+            supportedEntries
             |> List.choose (fun entry ->
                 let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
 
@@ -587,19 +408,14 @@ module CommandOutputContractRegistryTests =
         if not parserInvalidEntries.IsEmpty then
             parserInvalidEntries
             |> String.concat Environment.NewLine
-            |> fun errors -> Assert.Fail($"Expected parser-valid audit paths for common renderer entries:{Environment.NewLine}{errors}")
+            |> fun errors -> Assert.Fail($"Expected parser-valid audit paths for supported entries:{Environment.NewLine}{errors}")
 
-        for entry in commonEntries do
+        for entry in supportedEntries do
             let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
 
             parseResult.Errors.Count |> should equal 0
 
             Common.json parseResult |> should equal true
-
-            match entry.EnvelopeContract with
-            | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
-            | RequiresCliDto) -> ()
-            | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
 
@@ -794,18 +610,11 @@ module CommandOutputContractRegistryTests =
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
-            entry.CurrentJsonBehavior
-            |> should equal ConditionalCheckStatusEnvelope
+            match entry.JsonOutput with
+            | Conditional condition -> condition |> should contain "watch --check"
+            | other -> Assert.Fail($"Expected watch to be registered as Conditional JSON output, got {other}.")
 
-            match entry.EnvelopeContract with
-            | ConditionalGraceResultEnvelope (RequiresCliDto, condition) -> condition |> should contain "watch --check"
-            | other -> Assert.Fail($"Expected watch to be registered as ConditionalGraceResultEnvelope, got {other}.")
-
-            entry.Features.JsonMode
-            |> should equal ExistingBehavior
-
-            entry.Features.Select
-            |> should equal ExistingBehavior
+            entry.SupportsSelect |> should equal true
 
             entry.ReturnValueContract.Status
             |> should equal SchemaReady
@@ -982,14 +791,7 @@ module CommandOutputContractRegistryTests =
             entry.ReturnValueContract.Status
             |> should equal SchemaReady
 
-            entry.Features.Schema
-            |> should equal ExistingBehavior
-
-            entry.Features.Examples
-            |> should equal ExistingBehavior
-
-            entry.Features.Select
-            |> should equal ExistingBehavior
+            entry.JsonOutput |> should equal Supported
 
             let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
@@ -1018,28 +820,20 @@ module CommandOutputContractRegistryTests =
             |> should equal "success-envelope-shape"
         | None -> Assert.Fail("doctor should have a registry entry.")
 
-    /// Verifies that every routed success-envelope command exposes type-derived nested metadata.
+    /// Verifies that every success-envelope command exposes type-derived nested metadata.
     [<Test>]
-    let ``every routed success envelope has schema ready ReturnValue metadata`` () =
+    let ``every success envelope has schema ready ReturnValue metadata`` () =
         let eligibleEntries =
-            CommandOutputContract.routedEntries
-            |> List.filter (fun entry ->
-                match entry.EnvelopeContract with
-                | ExistingGraceResultEnvelope _
-                | ConditionalGraceResultEnvelope _ -> true
-                | _ -> false)
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.JsonOutput <> MigrationRequired)
 
-        eligibleEntries.Length |> should equal 198
+        eligibleEntries |> should not' (be Empty)
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status
             |> should equal SchemaReady
 
-            entry.Features.Schema
-            |> should equal ExistingBehavior
-
-            entry.Features.Examples
-            |> should equal ExistingBehavior
+            entry.SupportsSelect |> should equal true
 
             let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
