@@ -9,6 +9,9 @@ open System.Net.Http
 open System.Reflection
 
 /// Applies SDK client identity, API contract version, and lifecycle diagnostics to HTTP calls.
+/// This module owns the process-wide client identity headers (X-Grace-Client-Type and X-Grace-Client-Version).
+/// CLI startup configures it with ClientType.CLI(Grace CLI assembly file version); other clients should call
+/// `configure` with their own identity before making SDK API calls.
 module ClientIdentity =
 
     [<Literal>]

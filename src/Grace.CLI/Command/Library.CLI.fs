@@ -19,6 +19,9 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Defines Library catalog management and local synchronization commands.
+/// This file remains the command entry point. Library support modules (local state, filesystem mechanics, manifest
+/// upload, baseline acquisition and synchronization) live in `Grace.CLI/Library/`; preserve their module names and the
+/// explicit F# compile order when moving files.
 module LibraryCommand =
 
     /// Defines options shared by the Library handlers.
@@ -111,6 +114,9 @@ module LibraryCommand =
         }
 
     /// Sends one catalog mutation using explicit inputs or one lookup and one invocation-local operation identity.
+    /// Add/remove read one catalog version and generate one operation ID only when those options are omitted. Explicit
+    /// values bypass the defaults, including invalid values handled by existing validation. Lookup errors and stale
+    /// mutation results are returned as-is, without retries or durable command state.
     let internal changeLibraryHandlerWith
         (newOperationId: unit -> Guid)
         (getCatalog: GetLibraryCatalogParameters -> Task<GraceResult<LibraryCatalogDto>>)

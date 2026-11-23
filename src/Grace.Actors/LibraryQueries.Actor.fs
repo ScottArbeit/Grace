@@ -418,6 +418,10 @@ module LibraryQueries =
         }
 
     /// Requires all selected source containers, even at zero, then reads permanent history through the captured control.
+    /// Reads existing control directly through LibraryRecords, then the permanent accepted prefix and immutable content
+    /// mappings. Never call RepositoryLibraryActor.currentControl or other repair paths from a diagnostic. Validate source
+    /// existence even at cursor zero, preserve exact cursor-gap rejection, and recheck the epoch/nonregression before
+    /// publishing. Manifest bytes here are declarations, not payload-presence evidence.
     let readDiagnosticContent (services: IServiceProvider) (repositoryId: RepositoryId) (token: CancellationToken) =
         task {
             let started = SystemClock.Instance.GetCurrentInstant()

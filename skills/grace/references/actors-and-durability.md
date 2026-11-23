@@ -39,15 +39,11 @@ Use this tuple in issue bodies, tests, and review prompts.
 | Content block metadata | `ContentBlockMetadata.Actor.fs` | Whole-record metadata version and range presence |
 | Manifest contribution | `ManifestContributionWorkflow.Actor.fs` | Bounded range contribution progress |
 
-## Manifest Actor Guardrails
+## Actor-specific invariants
 
-- `UploadSession` cleanup reminders delete only temporary coordination state after finalization, abandon, or expiration.
-  They must not delete accepted manifests, content blocks, block metadata, or contribution accounting.
-- `ContentBlockMetadataActor` is keyed by storage pool and content block address. Preserve whole-record
-  `MetadataVersion` concurrency and exact range presence semantics.
-- Compaction is a whole-record metadata rewrite that preserves the `ContentBlockAddress`.
-- `ManifestContributionWorkflowActor` owns durable fan-out progress for range-count contribution. Repository-local
-  reference counts stay in `RepositoryContentCounterActor`.
+Cleanup reminders, metadata versioning, and workflow ownership rules for `UploadSession`, `ContentBlockMetadata`,
+`ManifestContributionWorkflow`, and artifact attachment actors are documented in `///` comments on those actors.
+Read them before changing one.
 
 ## Tests To Prefer
 

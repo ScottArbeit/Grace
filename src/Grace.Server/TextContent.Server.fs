@@ -186,6 +186,12 @@ module TextContentStorage =
     let read repositoryDto reference correlationId = readStored false repositoryDto reference correlationId
 
     /// Writes immutable bytes and original evidence, or verifies both from one stored revision on retry.
+    /// Commits grace_textcontent_format=1, grace_utf8_byte_length as invariant decimal and grace_blake3_hash as the
+    /// existing lowercase hash in the same conditional upload as the compressed payload. Retries verify metadata and body
+    /// from one download response against the expected existing TextContent reference. Missing, malformed, unsupported
+    /// or conflicting evidence fails without metadata repair; ordinary event-backed reads keep their existing reference
+    /// verification. Preserve WorkItem append classification, newly-created cleanup ownership, unknown-outcome retention,
+    /// character limits and scope checks. This path has no Operations dependency or measurement route.
     let write repositoryDto repositoryId workItemId correlationId text =
         task {
             match validateText text with

@@ -7,6 +7,8 @@ open Microsoft.Data.Sqlite
 open Grace.CLI.LibraryOperation
 
 /// Stores Library participation, materialized ancestry, and pending operations in the existing local database.
+/// Windows Library participation owns exactly these three tables; do not add Library state elsewhere in the local
+/// database. There is no migration contract for old development-only Library schemas.
 module internal LibraryLocalState =
 
     /// Retains one immutable onboarding selection through metadata acquisition, installation and its first catch-up.

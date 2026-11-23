@@ -95,24 +95,8 @@ The newer workflow model spans:
 When changing one of these, keep policy snapshots, candidate identity, review notes, queue state, promotion-set state,
 work-item links, and CLI/report output aligned.
 
-## Validation
+## Keeping public surfaces consistent
 
-- Server route changes: focused `Grace.Server.Tests` or `Grace.Authorization.Tests`.
-- CLI changes: parsing/handler tests in `Grace.CLI.Tests` and manual command checks when practical.
-- SDK changes: SDK consumer tests or server contract tests.
-- Public behavior changes: update README, docs, or nearby `AGENTS.md` if future agents/users need the new behavior.
-
-## Public Contract Drift Checks
-
-When public behavior changes, verify all outward surfaces together:
-
-- HTTP route validation and authorization
-- CLI parser, help, JSON output, stdout/stderr, schema, and examples
-- SDK methods and generated clients
-- static OpenAPI source and aggregate documents
-- event names and payloads for webhooks, SignalR, watch, search, and notifications
-- docs and release/user examples
-
-If a route accepts a value, the CLI/SDK/OpenAPI/docs must either expose the same implemented behavior or intentionally
-omit it with a clear reason. Public projections must not reveal hidden or unauthorized resources through counts, latest
-items, ambiguity, events, or generated plans.
+When public behavior changes, walk the propagation chain in `src/AGENTS.md`. If a route accepts a value, the CLI, SDK,
+OpenAPI, and docs either expose the same behavior or deliberately omit it with a reason. Public projections must not
+reveal hidden or unauthorized resources through counts, latest items, ambiguity, events, or generated plans.

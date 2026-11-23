@@ -1,48 +1,11 @@
-# Grace.Actors Agents Guide
+# Grace.Actors
 
-Start with `../AGENTS.md` for global rules before working on Orleans code.
+Orleans grains that run Grace's stateful workflows. State changes are driven by domain events and records from
+`Grace.Types`.
 
-## Purpose
-
-- Define Orleans grain interfaces and implementations that orchestrate stateful workflows in Grace.
-- Persist state through domain events and records defined in `Grace.Types`.
-
-## Key Patterns
-
-- Follow standard Orleans activation patterns; keep grain constructors light and rely on dependency injection.
-- Drive state changes through explicit events or commands; keep transitions deterministic and idempotent.
-- Use domain types from `Grace.Types` directly to avoid duplication and guarantee serialization compatibility.
-- Separate orchestration (grains) from external service or SDK calls by delegating to helper modules/services.
-
-## Project Rules
-
-1. When adding new grain types or serializer changes, ensure `Grace.Orleans.CodeGen` stays in sync and regenerates as
-   needed.
-2. Keep grain state mutations safe for retries—idempotent transitions make distributed recovery predictable.
-3. Document non-obvious activation, reminder, or timer behavior here so future agents can reason without scanning the
-   entire implementation.
-4. `UploadSessionActor` cleanup reminders delete only temporary upload coordination state after finalization, abandon, or
-   expiration. They must not delete accepted manifests, content blocks, block metadata, or contribution accounting.
-5. `ContentBlockMetadataActor` is keyed by the StoragePoolId and ContentBlockAddress composite key. Preserve whole-record
-   MetadataVersion concurrency and exact range presence semantics; do not introduce per-chunk actor or grain state.
-   Compaction is a whole-record metadata rewrite: keep the `ContentBlockAddress`, preserve active logical ordinal
-   windows, remove reclaimed physical ranges, and require fresh `MetadataVersion` evidence plus no active upload,
-   finalization, range-claim, or compaction churn.
-6. `ManifestContributionWorkflowActor` is keyed by RepositoryId, StoragePoolId, and ManifestAddress. It owns only
-   durable fan-out progress for active range-count contribution; repository-local reference counts stay in
-   `RepositoryContentCounterActor`, and physical range metadata stays in `ContentBlockMetadataActor`.
-7. Artifact attachment cleanup reminders are generation-bound. Revalidate the exact artifact, repository, work-item,
-   deletion generation, tombstone time, and stored deadline before every cleanup run. Persist blob and link progress
-   separately, require exact unlink-event proof when retrying after a missing link, and treat stale reminders as no-ops.
-
-## Validation
-
-`LibraryQueries.readDiagnosticContent` reads existing control directly through `LibraryRecords`, then the permanent
-accepted prefix and immutable content mappings. Never call `RepositoryLibraryActor.currentControl` or other repair
-paths from a diagnostic. Validate source existence even at cursor zero, preserve exact cursor-gap rejection, and
-recheck the epoch/nonregression before publishing. Its manifest bytes are declarations, not payload-presence evidence.
-
-- Add activation and idempotency tests for new grains or state transitions.
-- Run `dotnet test --no-build` focusing on actor-related fixtures, then smoke `dotnet build --configuration Release`
-  for the solution.
-- Confirm code generation outputs (if applicable) before finalizing a PR.
+- Keep grain constructors light and use dependency injection. Put external service calls in helper modules.
+- Make state transitions deterministic and safe to retry; update event application and state writes together.
+- When grain interfaces or serialized types change, keep `Grace.Orleans.CodeGen` in sync.
+- Actor-specific invariants (cleanup reminders, metadata versioning, workflow ownership) are documented in `///`
+  comments on each actor. Read them before changing that actor.
+- Add activation and idempotency tests for new grains or transitions, preferably through the server surface.

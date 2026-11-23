@@ -72,6 +72,11 @@ module Library =
         }
 
     /// Serves the internal SystemAdmin declaration diagnostic without activating Library repair or accepting partial quantities.
+    /// `POST /admin/library-content-size/diagnose` requires permission before parsing and again before serialization,
+    /// explicit three-ID scope, a live nondeleted repository before/after collection, and an unchanged epoch with no
+    /// committed-position regression. The server-local result is the only response shape. Preserve exact Int64 JSON and
+    /// nanosecond times; no source failure or cancellation may publish a partial quantity. The operator saves the full
+    /// envelope byte-for-byte. It has no SQL observation, public SDK/CLI, broker, mutation or provisioning dependency.
     let DiagnoseContentSize: HttpHandler =
         fun next context ->
             task {

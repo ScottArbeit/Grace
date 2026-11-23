@@ -19,8 +19,13 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration
 
 /// Reads retained DirectoryVersion declarations using permission on their recorded owner.
+/// `GET /owner/usage/directory-version-observations/{observationId}` uses explicit historical scope, with no body
+/// metadata or current-entity lookup. Keep authentication before parsing, OwnerAdmin checks before and after SQL, and
+/// cancellation before publication. The read never captures, modifies or aggregates observations. Hosted tests retain
+/// actual HTTP payloads for client replay.
 module OwnerObservationRead =
     /// Keeps every quantity digit on this public route without changing shared or admin JSON.
+    /// Writes exact decimal quantities as strings; shared/admin JSON remains numeric.
     let internal jsonOptions =
         let options = JsonSerializerOptions(Constants.JsonSerializerOptions)
 

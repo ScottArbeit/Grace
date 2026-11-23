@@ -38,6 +38,8 @@ module Owner =
     let private observationRepositoryOption = observationOption "--repository-id" "Recorded repository ID."
 
     /// Preserves the HTTP representation through the common CLI renderer and --select.
+    /// This local JsonElement projection keeps decimal quantities and UTC timestamps as strings; the shared
+    /// serializer (Constants.JsonSerializerOptions) stays unchanged.
     let internal observationOutput (value: GraceReturnValue<Grace.Types.UsageObservation.DirectoryVersionSizeObservation>) =
         let options = System.Text.Json.JsonSerializerOptions(Constants.JsonSerializerOptions)
 
@@ -53,6 +55,9 @@ module Owner =
         }
 
     /// Reads retained metadata declarations using four explicit IDs and current recorded-owner permission.
+    /// `owner get-directory-version-observation` requires all four explicit historical IDs (observation, owner,
+    /// organization, repository). Keep the command output registry schema/examples in CommandOutputContract.CLI.fs
+    /// synchronized with this output.
     type GetDirectoryVersionObservation() =
         inherit AsynchronousCommandLineAction()
 

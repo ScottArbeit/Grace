@@ -384,6 +384,9 @@ module ContentBlockMetadata =
             HasActiveCompaction = churnState.HasActiveCompaction
         }
 
+    /// Compaction is a whole-record metadata rewrite: keep the ContentBlockAddress, preserve active logical ordinal
+    /// windows, remove reclaimed physical ranges, and require fresh MetadataVersion evidence plus no active upload,
+    /// finalization, range-claim or compaction churn.
     let private createCompactedMetadata
         correlationId
         (current: ContentBlockMetadataDto)
@@ -761,6 +764,8 @@ module ContentBlockMetadata =
                     okDecision metadata operationId events false "ContentBlockMetadata active manifest count adjusted."
 
     /// Implements the Orleans grain for content block metadata actor.
+    /// Keyed by the StoragePoolId and ContentBlockAddress composite key. Preserve whole-record MetadataVersion concurrency
+    /// and exact range presence semantics; do not introduce per-chunk actor or grain state.
     type ContentBlockMetadataActor
         (
             [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>

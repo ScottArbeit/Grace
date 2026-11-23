@@ -2,4 +2,4 @@ blank_issues_enabled: true
 contact_links:
   - name: Grace development process
     url: https://github.com/ScottArbeit/Grace/blob/main/docs/Development%20process.md
-    about: Read the issue-owned workflow before filing implementation tasks.
+    about: How Grace work moves from issue to merged PR.

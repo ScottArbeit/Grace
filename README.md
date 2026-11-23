@@ -65,26 +65,20 @@ Grace is written primarily in **F#**, and uses:
 
 System administrators can inspect [committed Library content declarations](docs/Operations.md#committed-library-content-declarations) with `scripts/diagnose-library-content-size.ps1`. The result includes historical accepted content and its selected epoch/cursor; it does not establish complete repository storage or charges.
 
-Grace development uses a task-record-first process that keeps human and agent work reviewable:
+Grace work, by people and agents alike, follows one lightweight flow:
 
-1. Read the root `AGENTS.md`, then the closest project `AGENTS.md`.
-2. Create or confirm the GitHub issue using the Grace agent task template.
-3. Declare objective, context, owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and
-   definition of done before editing.
-4. Claim the issue with a comment, assign it to the authenticated GitHub user, and create an issue-owned worktree from
-   the latest `origin/main`.
-5. Work in vertical slices that prove one public behavior at a time.
-6. Validate with the fastest meaningful focused command, formatting or syntax checks, and `git diff --check`.
-7. Use `pwsh ./scripts/validate.ps1 -Fast` only as an optional broad local preflight and `-Full` for local integration
-   reproduction or diagnosis. GitHub `Validate` is the required broad gate for the current pull-request revision.
-8. Commit after each completed slice and push one or more completed commits as a coherent, reviewable checkpoint.
-9. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, dependencies, or workflow changes.
+1. Start from a GitHub issue that says what the change should do and why it matters
+   (`.github/ISSUE_TEMPLATE/task.md`).
+2. Branch from the latest `origin/main`, one worktree per issue.
+3. Work in vertical slices: a focused failing test, the smallest change that passes it, then a commit.
+4. Prove each slice with focused tests and `git diff --check`. GitHub `Validate` runs the full suite on the pull
+   request; `pwsh ./scripts/validate.ps1 -Fast` and `-Full` are there for local diagnosis.
+5. Open a pull request, get one independent review, fix accepted findings in one pass, and merge after approval.
+6. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, or workflow change.
 
-When a maintainer says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when they explicitly ask
-for one, ask to start tracked implementation, or otherwise request tracker setup.
+A request to plan work stays a conversation until someone asks for tracked work.
 
-See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
-validation profiles, review expectations, and cleanup steps.
+See [`docs/Development process.md`](./docs/Development%20process.md) for epics, validation, review, and cleanup.
 
 See [Grace Operations](./docs/Operations.md) for the usage-measurement design, SystemAdmin diagnostics and durable source-specific observation capture/read. Owner administrators can read a known retained DirectoryVersion observation through HTTP, F# SDK, CLI and the Node facade with exact quantities and timestamps. Each source retains its own declaration meaning and does not contribute to billable minute usage.
 

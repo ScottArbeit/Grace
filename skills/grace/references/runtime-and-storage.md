@@ -88,11 +88,10 @@ Relevant env vars live in `src/Grace.Shared/Constants.Shared.fs`, especially:
 - `grace__azure_service_bus__*`
 - `grace__redis__*`
 
-## Validation
+## Proof
 
-- Use `pwsh ./scripts/validate.ps1 -Full` for Aspire, emulators, Service Bus, storage, Redis, deployment/runtime, or
-  cross-service background behavior.
-- Pair parser/unit tests with full-gate evidence when runtime behavior depends on external delivery infrastructure.
+Runtime behavior that depends on emulators, Service Bus, storage, or Redis needs integration proof in
+`Grace.Server.Tests`; GitHub `Validate` runs it on the PR, and `pwsh ./scripts/validate.ps1 -Full` reproduces it locally.
 
 ## Stale Authority And Materialization Ordering
 

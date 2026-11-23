@@ -379,6 +379,9 @@ module ManifestContributionWorkflow =
     let decideCommand events workflow command metadata = decideCommandForKey None events workflow command metadata
 
     /// Implements the Orleans grain for manifest contribution workflow actor.
+    /// Keyed by RepositoryId, StoragePoolId and ManifestAddress. Owns only durable fan-out progress for active range-count
+    /// contribution; repository-local reference counts stay in RepositoryContentCounterActor, and physical range metadata
+    /// stays in ContentBlockMetadataActor.
     type ManifestContributionWorkflowActor
         (
             [<PersistentState(StateName.ManifestContributionWorkflow, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<ManifestContributionWorkflowDto>
