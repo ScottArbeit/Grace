@@ -87,18 +87,32 @@ Work in vertical slices. For each behavior change:
 
 Mechanical edits and docs don't need a failing test first; their proof is the build, lint, or a rendered check.
 
-## Validation
+## Verification
 
-Focused local proof shows a slice is correct. GitHub `Validate` certifies the pull request across the whole repository.
-Don't run the full suite locally just to repeat what `Validate` will do.
+The issue's "Done when" list is the contract, and the PR shows evidence for each item on its head. Choose the proof by
+the kind of change; a change gets every row that applies.
 
-| Change | Local proof |
+| Change | Proof |
 | --- | --- |
-| F# code | Fantomas on touched files, Release build of the project, focused tests (see `src/AGENTS.md`) |
-| Docs | `npx --yes markdownlint-cli2 <files>` and `git diff --check` |
-| Scripts or YAML | Parse them and run a meaningful dry run |
+| Mechanical: rename, move, formatting, docs, agent guidance | Build, existing tests, `npx --yes markdownlint-cli2 <files>`; no new tests |
+| Logic or contract types | Focused tests from the issue's examples; FsCheck properties where an invariant matters |
+| User-visible CLI, HTTP route, or SDK behavior | Tests plus a **demo** (below) |
+| Durable state, effect order, retries, restart | The algorithm witness first, then restart and retry tests through the server |
+| Authorization or hidden resources | A test that an unauthorized caller can't tell hidden from missing |
+| Scripts or workflows | Parse them, then a meaningful dry run |
+| Performance | Measured numbers before and after |
 
-`pwsh ./scripts/validate.ps1 -Fast` is an optional broad local check (no Aspire). `-Full` runs everything, including the
+**Red-on-revert.** Every new or changed test must fail when the behavior it covers is absent. Run it against the base,
+or against the head with the change's logic reverted or stubbed out, and record "red without the change, green with it"
+in the PR. A test that can't go red only re-derives the code; rewrite it or drop it.
+
+**Demo.** For a change a user can see, start local Grace with `pwsh ./scripts/start-debuglocal.ps1`, set the environment
+it prints, and run the command or call the route the way a user would. Paste the command and trimmed output under the
+"Done when" item it proves, with tokens redacted. Changes users can't see skip this.
+
+Formatting, build, and test commands are in `src/AGENTS.md`. Focused local proof shows a slice is correct; GitHub
+`Validate` certifies the pull request across the whole repository, so don't run the full suite locally just to repeat
+it. `pwsh ./scripts/validate.ps1 -Fast` is an optional broad local check (no Aspire). `-Full` runs everything, including the
 Aspire integration tests; use it to reproduce or diagnose integration failures, or when CI is unavailable.
 
 When `Validate` fails, read the newest run for the current head and separate failures your change caused from unrelated
@@ -114,13 +128,14 @@ wasn't verified.
 ## Review
 
 Every PR gets one independent review of the whole change, from a reviewer with fresh context (a different model family
-is preferred when available). The rubric is `.github/code_review_instructions.md`. In short, a finding needs a realistic
-way to happen in supported use, a real impact, and a way to prove the fix; speculative hardening is not a finding.
+is preferred when available). Brief the reviewer with the issue and the diff, not the implementer's summary. The rubric
+is `.github/code_review_instructions.md`: check the evidence first, then look for what can be removed, then for defects.
+A defect finding comes with a failing test or a reproduction; speculative hardening is not a finding.
 
 Decide once which findings to accept, fix them together in one pass, then have the same reviewer (or a fresh one) check
-only those fixes and anything they directly affect. Do not restart a whole-diff review because the head changed. If that
-check turns up a new blocker outside the fixes, or the review shows the issue needs a new product decision, stop and ask
-Scott.
+only those fixes and anything they directly affect. Do not restart a whole-diff review because the head changed.
+Concerns outside the issue's goal become new issues, not fixes in this PR. If the fix check turns up a new blocker
+outside the fixes, or the review shows the issue needs a new product decision, stop and ask Scott.
 
 For changes to persisted, wire, or public types, Scott may also ask for a **Shape Review**: a short HTML report that
 explains the changed types and what states they allow.
@@ -135,6 +150,12 @@ head. After merge:
 3. Run `git fetch --prune` and `git pull --ff-only` on local `main`.
 
 For an epic, update its dependency list and choose the next child.
+
+## Escapes
+
+When a bug reaches `main`, or Scott catches one at approval, open an issue labeled `escape` that names the check that
+would have caught it. Fix the bug, then add that one check to the Verification table or the review rubric. The process
+grows from real escapes, not imagined ones.
 
 ## Working with subagents
 

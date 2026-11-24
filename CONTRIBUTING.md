@@ -30,8 +30,8 @@ This repo is primarily **F#** and targets **.NET 11**.
 
 - Use the **GitHub fork + pull request** workflow.
 - Keep PRs focused (one change per PR whenever practical).
-- Follow [`docs/Development process.md`](./docs/Development%20process.md): start from a GitHub issue that says what
-  the change should do and why it matters.
+- Follow [`docs/Development process.md`](./docs/Development%20process.md): start from a GitHub issue with a goal and
+  the checks that show it's done.
 - Use a focused branch for each issue. Maintainers and agents use one worktree per issue for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
 - Every PR gets one independent review. Accepted findings are fixed in one pass and then rechecked; the review doesn't
@@ -339,7 +339,8 @@ Prometheus:
 ## Pull request checklist
 
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
-- [ ] Focused validation for the touched behavior is listed in the PR
+- [ ] Evidence for each "Done when" item is in the PR: new tests fail without the change, and user-visible changes
+  include a demo
 - [ ] Independent review done, and accepted findings fixed and rechecked
 - [ ] GitHub `Validate` passed on the final PR revision
 - [ ] Anything not verified is listed with a reason
