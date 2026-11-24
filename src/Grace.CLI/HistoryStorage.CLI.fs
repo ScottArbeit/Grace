@@ -606,11 +606,16 @@ module HistoryStorage =
         | None -> None
         | stamp -> Some { Stamp = stamp; LoadResult = UserConfiguration.loadUserConfiguration () }
 
-    /// Returns the preloaded configuration only when the file is unchanged since it was read; otherwise reads it again,
-    /// so a command that changes its own history settings (for example `grace history off`) decides whether it's recorded.
+    /// Returns the preloaded configuration only when it was read cleanly and the file is unchanged since; otherwise reads
+    /// it again. A command that changes its own history settings (for example `grace history off`) still decides whether
+    /// it's recorded, and a transient read failure at startup doesn't fall back to defaults.
     let resolveUserConfiguration (preloaded: PreloadedUserConfiguration option) =
         match preloaded with
-        | Some preloaded when preloaded.Stamp = UserConfiguration.getUserConfigurationStamp () -> preloaded.LoadResult
+        | Some preloaded when
+            not preloaded.LoadResult.WasCorrupt
+            && preloaded.Stamp = UserConfiguration.getUserConfigurationStamp ()
+            ->
+            preloaded.LoadResult
         | _ -> UserConfiguration.loadUserConfiguration ()
 
     /// Builds the history entry for an invocation, using a preloaded user configuration when it is still current.

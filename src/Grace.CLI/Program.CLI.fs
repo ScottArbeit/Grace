@@ -953,7 +953,11 @@ module GraceCommand =
 
     /// Predicts from the arguments alone the start bar `main` draws after parsing, so it can be drawn before the command
     /// tree is built and the user sees Grace respond right away. Expects arguments after alias expansion and output-value
-    /// canonicalization, and compares names exactly, as System.CommandLine does.
+    /// canonicalization.
+    ///
+    /// A wrong "no early bar" is harmless, because `main` still draws the bar after parsing; a wrong early bar would put
+    /// a rule in front of JSON on stdout. So any option form this can't read exactly (other casing, `:` or attached
+    /// values, a repeated `--output`) predicts no early bar.
     let internal startBannerFromArgs (args: string array) (configurationExists: unit -> bool) =
         let tokens =
             if isNull args then
@@ -962,37 +966,48 @@ module GraceCommand =
                 args
                 |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
 
-        /// True when the token is the named option, in either `--name` or `--name=value` form.
-        let isOption (name: string) (token: string) =
-            token.Equals(name, StringComparison.Ordinal)
-            || token.StartsWith(name + "=", StringComparison.Ordinal)
+        /// Reads an option value written directly after its name: `=value`, `:value`, or attached `value`.
+        let attachedValue (nameLength: int) (token: string) =
+            let rest = token.Substring(nameLength)
 
-        // The last output value wins, as it does in System.CommandLine.
-        let outputValue =
+            if
+                rest.StartsWith("=", StringComparison.Ordinal)
+                || rest.StartsWith(":", StringComparison.Ordinal)
+            then
+                rest.Substring(1)
+            else
+                rest
+
+        // Every output value supplied, in any form System.CommandLine accepts. Anything starting with `--output` or `-o`
+        // counts, so an unreadable form never looks like Normal output.
+        let outputValues =
             tokens
             |> Array.indexed
             |> Array.choose (fun (index, token) ->
                 if
-                    token.Equals(OptionName.Output, StringComparison.Ordinal)
-                    || token.Equals("-o", StringComparison.Ordinal)
+                    token.Equals(OptionName.Output, StringComparison.OrdinalIgnoreCase)
+                    || token.Equals("-o", StringComparison.OrdinalIgnoreCase)
                 then
                     Some(if index + 1 < tokens.Length then tokens[index + 1] else String.Empty)
-                elif token.StartsWith(OptionName.Output + "=", StringComparison.Ordinal) then
-                    Some(token.Substring(OptionName.Output.Length + 1))
-                elif token.StartsWith("-o=", StringComparison.Ordinal) then
-                    Some(token.Substring("-o=".Length))
+                elif token.StartsWith(OptionName.Output, StringComparison.OrdinalIgnoreCase) then
+                    Some(attachedValue OptionName.Output.Length token)
+                elif
+                    token.StartsWith("-o", StringComparison.OrdinalIgnoreCase)
+                    && not (token.StartsWith("--", StringComparison.Ordinal))
+                then
+                    Some(attachedValue "-o".Length token)
                 else
                     None)
-            |> Array.tryLast
 
         let drawsNoBars =
             tokens
             |> Array.exists (fun token ->
-                helpOptions.Contains(token)
-                || isOption OptionName.Schema token
-                || isOption OptionName.Examples token
-                || isOption OptionName.Select token
-                || token.Equals("get-directory-version-observation", StringComparison.Ordinal))
+                helpOptions
+                |> Array.exists (fun helpOption -> helpOption.Equals(token, StringComparison.OrdinalIgnoreCase))
+                || token.StartsWith(OptionName.Schema, StringComparison.OrdinalIgnoreCase)
+                || token.StartsWith(OptionName.Examples, StringComparison.OrdinalIgnoreCase)
+                || token.StartsWith(OptionName.Select, StringComparison.OrdinalIgnoreCase)
+                || token.Equals("get-directory-version-observation", StringComparison.OrdinalIgnoreCase))
 
         let isRecognizedCommand =
             match tryGetTopLevelCommandFromArgs args false with
@@ -1006,11 +1021,12 @@ module GraceCommand =
         if not isRecognizedCommand || drawsNoBars then
             NoStartBanner
         else
-            match outputValue with
-            | None
-            | Some "Normal" -> if configurationExists () then PlainStartBanner else NoStartBanner
-            | Some "Verbose" -> if configurationExists () then VerboseStartBanner else NoStartBanner
-            | Some _ -> NoStartBanner
+            // System.CommandLine rejects a repeated --output, so only zero or one exactly-canonical value draws early.
+            match outputValues with
+            | [||]
+            | [| "Normal" |] -> if configurationExists () then PlainStartBanner else NoStartBanner
+            | [| "Verbose" |] -> if configurationExists () then VerboseStartBanner else NoStartBanner
+            | _ -> NoStartBanner
 
     /// Draws the start bar for the given banner kind.
     let private writeStartBanner (banner: StartBanner) (startTime: Instant) =

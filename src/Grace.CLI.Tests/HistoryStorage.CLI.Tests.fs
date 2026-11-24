@@ -355,3 +355,19 @@ module HistoryStorageTests =
             HistoryStorage.recordInvocationWith None (branchStatusInput ())
             |> Option.isSome
             |> should equal true)
+
+    /// Verifies a startup read that fell back to defaults (for example, the file was briefly locked) isn't reused, so
+    /// history recording still follows the user's real settings.
+    [<Test>]
+    let ``recordInvocationWith rereads the configuration when the preload fell back to defaults`` () =
+        withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
+            saveHistoryEnabled true
+            let preloaded = preloadExisting ()
+            let fallback = UserConfiguration.UserConfiguration()
+            fallback.History.Enabled <- false
+
+            let failedPreload = { preloaded with LoadResult = { preloaded.LoadResult with Configuration = fallback; WasCorrupt = true } }
+
+            HistoryStorage.recordInvocationWith (Some failedPreload) (branchStatusInput ())
+            |> Option.isSome
+            |> should equal true)

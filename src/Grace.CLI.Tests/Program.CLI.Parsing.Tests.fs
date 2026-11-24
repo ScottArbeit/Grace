@@ -438,9 +438,9 @@ module StartBannerTests =
                     "--output"
                     "Normal"
                 |],
-                PlainStartBanner
+                NoStartBanner
             )
-                .SetName("last output value wins")
+                .SetName("repeated output draws no early bar")
             TestCaseData(
                 [|
                     "branch"
@@ -507,6 +507,46 @@ module StartBannerTests =
                 .SetName("no arguments draws no bar")
             TestCaseData([| "branch"; "status"; "--"; "--help" |], PlainStartBanner)
                 .SetName("tokens after the separator are ignored")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output:Json"
+                |],
+                NoStartBanner
+            )
+                .SetName("colon Json draws no bar")
+            TestCaseData([| "branch"; "status"; "-o:Json" |], NoStartBanner)
+                .SetName("short colon Json draws no bar")
+            TestCaseData([| "branch"; "status"; "-oJson" |], NoStartBanner)
+                .SetName("attached short Json draws no bar")
+            TestCaseData([| "branch"; "status"; "-oVerbose" |], VerboseStartBanner)
+                .SetName("attached short Verbose draws the timed bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--select:Name"
+                |],
+                NoStartBanner
+            )
+                .SetName("select colon draws no bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--Output"
+                    "Json"
+                |],
+                NoStartBanner
+            )
+                .SetName("other-case output Json draws no bar")
+            TestCaseData([| "branch"; "status"; "-O"; "Json" |], NoStartBanner)
+                .SetName("other-case short output Json draws no bar")
+            TestCaseData([| "branch"; "status"; "--Schema" |], NoStartBanner)
+                .SetName("other-case schema draws no bar")
+            TestCaseData([| "branch"; "status"; "--HELP" |], NoStartBanner)
+                .SetName("other-case help draws no bar")
         ]
 
     /// Verifies the start bar predicted for each argument shape when a graceconfig.json exists.
