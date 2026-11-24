@@ -372,9 +372,10 @@ module LibraryCommand =
                         match result with
                         | Ok value when not (hasSelect parseResult) ->
                             let output =
-                                discriminatedUnionFromString<OutputFormat>(
-                                    parseResult.GetValue Grace.CLI.Common.Options.output
-                                )
+                                OutputFormat
+                                    .TryParse(
+                                        parseResult.GetValue Grace.CLI.Common.Options.output
+                                    )
                                     .Value
 
                             match output with
@@ -433,9 +434,10 @@ module LibraryCommand =
                             match result with
                             | Ok value when not (hasSelect parseResult) ->
                                 let output =
-                                    discriminatedUnionFromString<OutputFormat>(
-                                        parseResult.GetValue Grace.CLI.Common.Options.output
-                                    )
+                                    OutputFormat
+                                        .TryParse(
+                                            parseResult.GetValue Grace.CLI.Common.Options.output
+                                        )
                                         .Value
 
                                 match output with

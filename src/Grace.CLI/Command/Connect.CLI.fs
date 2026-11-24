@@ -149,7 +149,7 @@ module Connect =
 
         let referenceType =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-                .AcceptOnlyFromAmong(listCases<ReferenceType> ())
+                .AcceptOnlyFromAmong(ReferenceType.Names)
 
         let referenceId =
             new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)

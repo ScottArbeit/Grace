@@ -235,6 +235,35 @@ module Common =
         | Silent
         | Verbose
 
+        /// Every output format, in declaration order.
+        static member All =
+            [|
+                Normal
+                Json
+                Minimal
+                Silent
+                Verbose
+            |]
+
+        /// The name Grace accepts for this output format on the command line.
+        member this.Name =
+            match this with
+            | Normal -> nameof OutputFormat.Normal
+            | Json -> nameof OutputFormat.Json
+            | Minimal -> nameof OutputFormat.Minimal
+            | Silent -> nameof OutputFormat.Silent
+            | Verbose -> nameof OutputFormat.Verbose
+
+        /// Every output format name, in declaration order, so option validation doesn't reflect over the union at startup.
+        static member Names =
+            OutputFormat.All
+            |> Array.map (fun format -> format.Name)
+
+        /// Parses an output format name case-insensitively without reflection; None when the name isn't an output format.
+        static member TryParse(value: string) =
+            OutputFormat.All
+            |> Array.tryFind (fun format -> String.Equals(format.Name, value, StringComparison.OrdinalIgnoreCase))
+
     /// Adds an option (i.e. parameter) to a command, so you can do cool stuff like `|> addOption Options.someOption |> addOption Options.anotherOption`.
     let addOption (option: Option) (command: Command) =
         command.Options.Add(option)
@@ -277,7 +306,7 @@ module Common =
                 Recursive = true,
                 DefaultValueFactory = (fun _ -> "Normal")
             ))
-                .AcceptOnlyFromAmong(listCases<OutputFormat> ())
+                .AcceptOnlyFromAmong(OutputFormat.Names)
 
         let schema =
             new Option<bool>(
@@ -668,10 +697,7 @@ module Common =
                 // The command had an output option set, so we check if it matches the expected output format.
                 let formatFromCommand = parseResult.GetValue<string>(Options.output)
 
-                if outputFormat = discriminatedUnionFromString<OutputFormat>(
-                    formatFromCommand
-                )
-                    .Value then
+                if outputFormat = OutputFormat.TryParse(formatFromCommand).Value then
                     true
                 else
                     false
@@ -1121,9 +1147,10 @@ module Common =
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
-            discriminatedUnionFromString<OutputFormat>(
-                parseResult.GetValue(Options.output)
-            )
+            OutputFormat
+                .TryParse(
+                    parseResult.GetValue(Options.output)
+                )
                 .Value
 
         match result with

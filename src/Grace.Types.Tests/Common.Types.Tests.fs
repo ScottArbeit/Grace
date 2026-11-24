@@ -400,3 +400,72 @@ type CommonTypesTests() =
         Assert.That(localDirectoryVersion.Blake3Hash, Is.EqualTo(directoryVersion.Blake3Hash))
         Assert.That(directoryRoundTrip.Sha256Hash, Is.EqualTo(directoryVersion.Sha256Hash))
         Assert.That(directoryRoundTrip.Blake3Hash, Is.EqualTo(directoryVersion.Blake3Hash))
+
+/// Keeps each union's written-out `Names` in step with its real cases, so CLI option validation stays correct without
+/// reflecting over unions at startup.
+[<Parallelizable(ParallelScope.All)>]
+module UnionCaseNamesTests =
+    open Microsoft.FSharp.Reflection
+
+    /// Reads a union's case names by reflection, the source of truth `Names` must match.
+    let private reflectedCaseNames (unionType: Type) =
+        FSharpType.GetUnionCases unionType
+        |> Array.map (fun case -> case.Name)
+
+    let private unions: obj array list =
+        [
+            [|
+                typeof<Grace.Types.Authorization.PrincipalType>
+                Grace.Types.Authorization.PrincipalType.Names
+            |]
+            [|
+                typeof<Grace.Types.Authorization.Operation>
+                Grace.Types.Authorization.Operation.Names
+            |]
+            [| typeof<OwnerType>; OwnerType.Names |]
+            [|
+                typeof<OrganizationType>
+                OrganizationType.Names
+            |]
+            [|
+                typeof<SearchVisibility>
+                SearchVisibility.Names
+            |]
+            [|
+                typeof<ReferenceType>
+                ReferenceType.Names
+            |]
+            [|
+                typeof<RepositoryType>
+                RepositoryType.Names
+            |]
+            [|
+                typeof<RepositoryStatus>
+                RepositoryStatus.Names
+            |]
+            [|
+                typeof<BranchPromotionMode>
+                BranchPromotionMode.Names
+            |]
+            [|
+                typeof<ConflictResolutionPolicy>
+                ConflictResolutionPolicy.Names
+            |]
+            [|
+                typeof<ReminderTypes>
+                ReminderTypes.Names
+            |]
+            [|
+                typeof<ServerApiVersions>
+                ServerApiVersions.Names
+            |]
+            [|
+                typeof<Grace.Types.WorkItem.WorkItemStatus>
+                Grace.Types.WorkItem.WorkItemStatus.Names
+            |]
+        ]
+
+    /// Verifies a union's `Names` lists every case, in declaration order, with no extras.
+    [<TestCaseSource(nameof unions)>]
+    let ``union Names match reflected case names`` (unionType: Type) (names: string array) =
+        Assert.That(names, Is.EqualTo(reflectedCaseNames unionType), unionType.FullName)

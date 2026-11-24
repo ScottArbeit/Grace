@@ -1065,7 +1065,7 @@ module GraceCommand =
         let normalizedArgs = args |> Array.copy
 
         if isCaseInsensitive then
-            let canonicalOutputFormats = listCases<OutputFormat> () |> Seq.toArray
+            let canonicalOutputFormats = OutputFormat.Names |> Seq.toArray
 
             /// Maps a recognized output spelling to the canonical value advertised by CLI help.
             let tryCanonicalOutputFormat value =

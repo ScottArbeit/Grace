@@ -361,3 +361,34 @@ module LazyCommandTreeTests =
             ]
 
         failures |> should be Empty
+
+/// Covers reflection-free output format names and parsing used on every CLI invocation.
+[<Parallelizable(ParallelScope.All)>]
+module OutputFormatTests =
+    open Grace.CLI.Common
+    open Microsoft.FSharp.Reflection
+
+    /// Verifies output format names list every case, in declaration order.
+    [<Test>]
+    let ``output format Names match reflected case names`` () =
+        OutputFormat.Names
+        |> should
+            equal
+            (FSharpType.GetUnionCases typeof<OutputFormat>
+             |> Array.map (fun case -> case.Name))
+
+    /// Verifies every output format parses from its name in any casing.
+    [<Test>]
+    let ``output format TryParse accepts every name in any casing`` () =
+        for format in OutputFormat.All do
+            OutputFormat.TryParse(format.Name.ToUpperInvariant())
+            |> should equal (Some format)
+
+            OutputFormat.TryParse(format.Name.ToLowerInvariant())
+            |> should equal (Some format)
+
+    /// Verifies unknown or missing output format names don't parse.
+    [<TestCase("Fancy")>]
+    [<TestCase("")>]
+    [<TestCase(null)>]
+    let ``output format TryParse rejects unknown names`` (value: string) = OutputFormat.TryParse(value) |> should equal None

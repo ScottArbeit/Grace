@@ -117,11 +117,11 @@ module Repository =
                 Description = "The visibility of the repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<RepositoryType> ())
+                .AcceptOnlyFromAmong(RepositoryType.Names)
 
         let status =
             (new Option<String>(OptionName.Status, Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
-                .AcceptOnlyFromAmong(listCases<RepositoryStatus> ())
+                .AcceptOnlyFromAmong(RepositoryStatus.Names)
 
         let recordSaves =
             new Option<bool>(
@@ -138,7 +138,7 @@ module Repository =
                 Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<ServerApiVersions> ())
+                .AcceptOnlyFromAmong(ServerApiVersions.Names)
 
         let saveDays =
             new Option<single>(
@@ -256,7 +256,7 @@ module Repository =
                 Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionSet.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
+                .AcceptOnlyFromAmong(ConflictResolutionPolicy.Names)
 
         let confidenceThreshold =
             new Option<float32>(

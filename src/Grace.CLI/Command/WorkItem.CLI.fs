@@ -77,7 +77,7 @@ module WorkItemCommand =
                 Description = "Status to assign to the work item.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<WorkItemStatus> ())
+                .AcceptOnlyFromAmong(WorkItemStatus.Names)
 
         let file =
             new Option<string>(
