@@ -392,3 +392,131 @@ module OutputFormatTests =
     [<TestCase("")>]
     [<TestCase(null)>]
     let ``output format TryParse rejects unknown names`` (value: string) = OutputFormat.TryParse(value) |> should equal None
+
+/// Covers predicting the start bar from arguments, so Grace draws it before building the command tree.
+[<Parallelizable(ParallelScope.All)>]
+module StartBannerTests =
+    open Grace.CLI.GraceCommand
+
+    let private configured () = true
+    let private notConfigured () = false
+
+    let private cases =
+        [
+            TestCaseData([| "branch"; "status" |], PlainStartBanner)
+                .SetName("normal output draws the plain bar")
+            TestCaseData([| "br"; "status" |], PlainStartBanner)
+                .SetName("top-level alias draws the plain bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output"
+                    "Normal"
+                |],
+                PlainStartBanner
+            )
+                .SetName("explicit Normal draws the plain bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output"
+                    "Verbose"
+                |],
+                VerboseStartBanner
+            )
+                .SetName("Verbose draws the timed bar")
+            TestCaseData([| "-o=Verbose"; "branch"; "status" |], VerboseStartBanner)
+                .SetName("short equals Verbose draws the timed bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output"
+                    "Json"
+                    "--output"
+                    "Normal"
+                |],
+                PlainStartBanner
+            )
+                .SetName("last output value wins")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output"
+                    "Json"
+                |],
+                NoStartBanner
+            )
+                .SetName("Json draws no bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--output=Minimal"
+                |],
+                NoStartBanner
+            )
+                .SetName("Minimal draws no bar")
+            TestCaseData([| "branch"; "status"; "-o"; "Silent" |], NoStartBanner)
+                .SetName("Silent draws no bar")
+            TestCaseData([| "branch"; "status"; "--output" |], NoStartBanner)
+                .SetName("missing output value draws no bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--select"
+                    "Name"
+                |],
+                NoStartBanner
+            )
+                .SetName("select draws no bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "status"
+                    "--select=Name"
+                |],
+                NoStartBanner
+            )
+                .SetName("select equals draws no bar")
+            TestCaseData([| "branch"; "status"; "--help" |], NoStartBanner)
+                .SetName("help draws no bar")
+            TestCaseData([| "branch"; "-h" |], NoStartBanner)
+                .SetName("short help draws no bar")
+            TestCaseData([| "branch"; "status"; "--schema" |], NoStartBanner)
+                .SetName("schema draws no bar")
+            TestCaseData([| "branch"; "status"; "--examples" |], NoStartBanner)
+                .SetName("examples draws no bar")
+            TestCaseData([| "doctor" |], NoStartBanner)
+                .SetName("doctor draws no bar")
+            TestCaseData(
+                [|
+                    "repository"
+                    "get-directory-version-observation"
+                |],
+                NoStartBanner
+            )
+                .SetName("observation lookup draws no bar")
+            TestCaseData([| "brnch"; "status" |], NoStartBanner)
+                .SetName("unknown command draws no early bar")
+            TestCaseData(Array.empty<string>, NoStartBanner)
+                .SetName("no arguments draws no bar")
+            TestCaseData([| "branch"; "status"; "--"; "--help" |], PlainStartBanner)
+                .SetName("tokens after the separator are ignored")
+        ]
+
+    /// Verifies the start bar predicted for each argument shape when a graceconfig.json exists.
+    [<TestCaseSource(nameof cases)>]
+    let ``start bar prediction`` (args: string array) (expected: StartBanner) =
+        startBannerFromArgs args configured
+        |> should equal expected
+
+    /// Verifies no early bar is drawn outside a configured repository, where Grace reports the missing configuration instead.
+    [<Test>]
+    let ``no start bar without a graceconfig`` () =
+        startBannerFromArgs [| "branch"; "status" |] notConfigured
+        |> should equal NoStartBanner

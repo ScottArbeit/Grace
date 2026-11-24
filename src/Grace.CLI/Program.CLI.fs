@@ -942,6 +942,87 @@ module GraceCommand =
         | Some (_, build) -> createRootCommand [ build () ]
         | None -> fullRootCommand.Value
 
+    /// The start bar Grace draws before a command runs.
+    type StartBanner =
+        /// No start bar: machine-readable or quiet output, help, introspection, or a command that draws none.
+        | NoStartBanner
+        /// The plain rule drawn for Normal output.
+        | PlainStartBanner
+        /// The rule showing the start time, drawn for Verbose output.
+        | VerboseStartBanner
+
+    /// Predicts from the arguments alone the start bar `main` draws after parsing, so it can be drawn before the command
+    /// tree is built and the user sees Grace respond right away. Expects arguments after alias expansion and output-value
+    /// canonicalization, and compares names exactly, as System.CommandLine does.
+    let internal startBannerFromArgs (args: string array) (configurationExists: unit -> bool) =
+        let tokens =
+            if isNull args then
+                Array.empty
+            else
+                args
+                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
+
+        /// True when the token is the named option, in either `--name` or `--name=value` form.
+        let isOption (name: string) (token: string) =
+            token.Equals(name, StringComparison.Ordinal)
+            || token.StartsWith(name + "=", StringComparison.Ordinal)
+
+        // The last output value wins, as it does in System.CommandLine.
+        let outputValue =
+            tokens
+            |> Array.indexed
+            |> Array.choose (fun (index, token) ->
+                if
+                    token.Equals(OptionName.Output, StringComparison.Ordinal)
+                    || token.Equals("-o", StringComparison.Ordinal)
+                then
+                    Some(if index + 1 < tokens.Length then tokens[index + 1] else String.Empty)
+                elif token.StartsWith(OptionName.Output + "=", StringComparison.Ordinal) then
+                    Some(token.Substring(OptionName.Output.Length + 1))
+                elif token.StartsWith("-o=", StringComparison.Ordinal) then
+                    Some(token.Substring("-o=".Length))
+                else
+                    None)
+            |> Array.tryLast
+
+        let drawsNoBars =
+            tokens
+            |> Array.exists (fun token ->
+                helpOptions.Contains(token)
+                || isOption OptionName.Schema token
+                || isOption OptionName.Examples token
+                || isOption OptionName.Select token
+                || token.Equals("get-directory-version-observation", StringComparison.Ordinal))
+
+        let isBarredCommand =
+            match tryGetTopLevelCommandFromArgs args false with
+            | Some token when not (token.Equals("doctor", StringComparison.Ordinal)) ->
+                topLevelCommands
+                |> Array.exists (fun (names, _) ->
+                    names
+                    |> Array.exists (fun name -> name.Equals(token, StringComparison.Ordinal)))
+            | _ -> false
+
+        if not isBarredCommand || drawsNoBars then
+            NoStartBanner
+        else
+            match outputValue with
+            | None
+            | Some "Normal" -> if configurationExists () then PlainStartBanner else NoStartBanner
+            | Some "Verbose" -> if configurationExists () then VerboseStartBanner else NoStartBanner
+            | Some _ -> NoStartBanner
+
+    /// Draws the start bar for the given banner kind.
+    let private writeStartBanner (banner: StartBanner) (startTime: Instant) =
+        match banner with
+        | NoStartBanner -> ()
+        | PlainStartBanner -> AnsiConsole.Write(new Rule())
+        | VerboseStartBanner ->
+            AnsiConsole.Write(
+                (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                    .RightJustified()
+            )
+
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
     //    if isCaseInsensitive then
@@ -1141,9 +1222,9 @@ module GraceCommand =
     let main args =
         let startTime = getCurrentInstant ()
 
-        // Read the user configuration (warming Grace's JSON serializer) on a background thread while the command runs,
+        // Read an existing user configuration (warming Grace's JSON serializer) on a background thread while the command runs,
         // so history recording at exit doesn't wait for it.
-        let userConfigurationPreload = Task.Run<HistoryStorage.PreloadedUserConfiguration>(fun () -> HistoryStorage.preloadUserConfiguration ())
+        let userConfigurationPreload = Task.Run<HistoryStorage.PreloadedUserConfiguration option>(fun () -> HistoryStorage.preloadUserConfiguration ())
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
@@ -1251,6 +1332,10 @@ module GraceCommand =
                 | None -> properCasedArgs
 
         let mutable argvNormalized = normalizeArgsForHistory (normalizeOutputArguments args isCaseInsensitive)
+
+        // Draw the start bar now, before the command tree is built, when the arguments show the command will draw one.
+        let earlyStartBanner = startBannerFromArgs argvNormalized configurationFileExists
+        writeStartBanner earlyStartBanner startTime
 
         (task {
             let mutable parseResult: ParseResult = null
@@ -1487,19 +1572,13 @@ module GraceCommand =
                                 Common.writeJsonErrorStdout error
                                 returnValue <- -1
                             else
+                                // Draw the start bar here unless it was already drawn before the command tree was built.
                                 if
-                                    (parseResult |> hasOutput)
+                                    earlyStartBanner = NoStartBanner
+                                    && (parseResult |> hasOutput)
                                     && not (parseResult |> json)
                                 then
-                                    if parseResult |> verbose then
-                                        AnsiConsole.Write(
-                                            (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                                .RightJustified()
-                                        )
-
-                                    //printParseResult parseResult
-                                    else
-                                        AnsiConsole.Write(new Rule())
+                                    writeStartBanner (if parseResult |> verbose then VerboseStartBanner else PlainStartBanner) startTime
 
                                 // If this instance isn't foreground `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
                                 if not <| (parseResult |> isGraceWatchForeground) then
@@ -1520,11 +1599,10 @@ module GraceCommand =
                                 if parseResult |> isGraceWatchForeground then
                                     logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
-                                // If we're writing output, write the final Rule() to the console.
-                                if
-                                    (parseResult |> hasOutput)
-                                    && not (parseResult |> json)
-                                then
+                                // If we're writing output, or already drew the start bar, write the final Rule() to the console.
+                                if earlyStartBanner <> NoStartBanner
+                                   || ((parseResult |> hasOutput)
+                                       && not (parseResult |> json)) then
                                     let finishTime = getCurrentInstant ()
 
                                     let elapsed =
@@ -1645,7 +1723,7 @@ module GraceCommand =
                 then
                     let preloadedUserConfiguration =
                         try
-                            Some(userConfigurationPreload.GetAwaiter().GetResult())
+                            userConfigurationPreload.GetAwaiter().GetResult()
                         with
                         | _ -> None
 

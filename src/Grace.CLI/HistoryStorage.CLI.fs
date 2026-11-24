@@ -597,12 +597,14 @@ module HistoryStorage =
     /// A user configuration read before the command ran, with the file stamp taken before the read.
     type PreloadedUserConfiguration = { Stamp: (int64 * DateTime) option; LoadResult: UserConfiguration.UserConfigurationLoadResult }
 
-    /// Reads the user configuration now (which also warms Grace's JSON serializer), so history recording at exit
+    /// Reads an existing user configuration now (which also warms Grace's JSON serializer), so history recording at exit
     /// doesn't pay for it. Takes the file stamp first, so a write during or after this read is always detected.
-    /// Creates the default user configuration file when it is missing, as `loadUserConfiguration` does.
+    /// Returns None without creating anything when the file doesn't exist: commands such as `grace doctor` must not
+    /// create user configuration, and history recording creates the default file itself when it records.
     let preloadUserConfiguration () =
-        let stamp = UserConfiguration.getUserConfigurationStamp ()
-        { Stamp = stamp; LoadResult = UserConfiguration.loadUserConfiguration () }
+        match UserConfiguration.getUserConfigurationStamp () with
+        | None -> None
+        | stamp -> Some { Stamp = stamp; LoadResult = UserConfiguration.loadUserConfiguration () }
 
     /// Returns the preloaded configuration only when the file is unchanged since it was read; otherwise reads it again,
     /// so a command that changes its own history settings (for example `grace history off`) decides whether it's recorded.

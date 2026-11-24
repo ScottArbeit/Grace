@@ -297,12 +297,33 @@ module HistoryStorageTests =
         | Ok _ -> ()
         | Error error -> Assert.Fail(error)
 
+    /// Preloads the user configuration, failing the test when the preload finds no file to read.
+    let private preloadExisting () =
+        match HistoryStorage.preloadUserConfiguration () with
+        | Some preloaded -> preloaded
+        | None -> failwith "Expected preloadUserConfiguration to read the saved user configuration."
+
+    /// Verifies the startup preload never creates a missing user configuration, so read-only commands such as
+    /// `grace doctor` leave the user's .grace directory untouched.
+    [<Test>]
+    let ``preloadUserConfiguration does not create a missing user configuration`` () =
+        let configPath = UserConfiguration.getUserConfigurationPath ()
+
+        withFileBackup configPath (fun () ->
+            if File.Exists(configPath) then File.Delete(configPath)
+
+            HistoryStorage.preloadUserConfiguration ()
+            |> Option.isNone
+            |> should equal true
+
+            File.Exists(configPath) |> should equal false)
+
     /// Verifies history recording uses the configuration preloaded at startup when the file hasn't changed since.
     [<Test>]
     let ``recordInvocationWith uses the preloaded configuration when the file is unchanged`` () =
         withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
             saveHistoryEnabled true
-            let preloaded = HistoryStorage.preloadUserConfiguration ()
+            let preloaded = preloadExisting ()
 
             // The preloaded copy says "disabled" while the unchanged file says "enabled", so the result shows which was used.
             preloaded.LoadResult.Configuration.History.Enabled <- false
@@ -317,7 +338,7 @@ module HistoryStorageTests =
     let ``recordInvocationWith rereads the configuration when the file changed after preload`` () =
         withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
             saveHistoryEnabled true
-            let preloaded = HistoryStorage.preloadUserConfiguration ()
+            let preloaded = preloadExisting ()
 
             saveHistoryEnabled false
 
