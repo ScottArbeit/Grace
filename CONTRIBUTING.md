@@ -135,7 +135,7 @@ Notes:
 
 - Keys frequently use `__` to map to hierarchical configuration. See:
   <https://learn.microsoft.com/aspnet/core/fundamentals/configuration/>.
-- The Aspire AppHost can read the server user-secrets id and forward selected auth settings (see `Grace.Aspire.AppHost/AGENTS.md`).
+- The Aspire AppHost can read the server user-secrets id and forward selected auth settings to `grace-server`; the AppHost startup log lists the forwarded keys (see `src/docs/ENVIRONMENT.md`).
 
 ## Environment variables
 

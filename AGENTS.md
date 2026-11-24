@@ -23,7 +23,6 @@ Nested `AGENTS.md` files add project-specific rules; `src/AGENTS.md` covers all 
   that the issue did not already decide. Bring a recommendation.
 - **Keep docs current.** When behavior, commands, APIs, or workflow change, update README, CONTRIBUTING, and the nearest
   `AGENTS.md` in the same change.
-- New F# declarations get a short `///` comment that says what Grace behavior or invariant they own.
 
 ## Tracked work
 
