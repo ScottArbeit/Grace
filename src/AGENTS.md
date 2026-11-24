@@ -65,8 +65,8 @@ dotnet test --configuration Release --no-build src/Grace.Types.Tests/Grace.Types
 ```
 
 Run the smallest test set that proves the change, then `git diff --check`. GitHub `Validate` runs the full suite on the
-PR. `pwsh ./scripts/validate.ps1 -Fast` (no Aspire) and `-Full` (everything) are for diagnosis or when CI is
-unavailable, not a routine extra step.
+PR. `pwsh ./scripts/validate.ps1 -Fast` runs a selected set of non-Aspire projects (not the Cache tests; target those
+directly) and `-Full` runs everything. Use them for diagnosis or when CI is unavailable, not as a routine extra step.
 
 NUnit assembly-level parallelism is limited on purpose: `Grace.Server.Unit.Tests` and `Grace.CLI.Tests` still mutate
 process-wide state, and `Grace.Server.Tests` shares Aspire resources. Don't enable it there without fixing that first.
