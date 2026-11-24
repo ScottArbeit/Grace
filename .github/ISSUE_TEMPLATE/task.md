@@ -1,29 +1,23 @@
 ---
 name: Task
-about: One outcome for Grace, ready for a person or an agent to implement.
+about: One goal for Grace, with the checks that show it's done.
 title: ""
 labels: []
 assignees: []
 ---
 
-## Outcome
+## Goal
 
-<!-- What a user, operator, or developer can do or observe when this is done. -->
+<!-- What someone can do or observe when this is done, and why it matters to Grace and its users. -->
 
-## Why it matters
+## Done when
 
-<!-- How this helps Grace and its users. This guides the implementer where the issue is silent. -->
+<!-- Checks anyone can run on the PR's head: a command and its expected output, a test that fails on main today,
+an HTTP call, a screenshot. -->
 
-## Scope
+- [ ]
 
-- In:
-- Not doing:
+## Notes
 
-## How we'll know it works
-
-<!-- The test, command, or observable behavior that proves it. -->
-
-## Risk notes
-
-<!-- Only what applies: durable state or effect order (link the algorithm witness), authority or security,
-public or persisted contracts and the surfaces they reach, files that other work is also touching. -->
+<!-- Optional: what's out of scope, decisions already made, and risky parts (durable state, effect order, authority,
+public or persisted contracts). -->

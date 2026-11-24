@@ -14,16 +14,16 @@ Nested `AGENTS.md` files add project-specific rules; `src/AGENTS.md` covers all 
 
 - **Grace is pre-production.** There is no production data to migrate, import, preserve, or grandfather. Write
   contracts, validators, and tests for the behavior Grace should have now. Add compatibility behavior only when an issue
-  asks for it.
+  asks for it. Resetting development data never excuses broken serialization, replay, authorization, or truthful
+  failure.
 - **A request to plan stays in chat.** Create GitHub issues, branches, or PRs only when asked to track or implement the
   work.
 - **Say why.** Issues, PRs, and plans explain how the change helps Grace and its users, so whoever implements it can make
   good calls where the plan is silent.
-- **Stop and ask** before work grows a new durable state machine, authority boundary, public contract, or product rule
-  that the issue did not already decide. Bring a recommendation.
+- **Stop and ask** before work grows a new domain term, durable state machine, authority boundary, public contract, or
+  product rule that the issue did not already decide. Bring a recommendation.
 - **Keep docs current.** When behavior, commands, APIs, or workflow change, update README, CONTRIBUTING, and the nearest
   `AGENTS.md` in the same change.
-- New F# declarations get a short `///` comment that says what Grace behavior or invariant they own.
 
 ## Tracked work
 

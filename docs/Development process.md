@@ -13,9 +13,10 @@ plan -> issue -> branch -> slices (test, change, commit) -> PR -> Validate + rev
 
 A request to plan stays in chat until someone asks for tracked work. A good plan states:
 
-- the outcome a user or operator will see, and why it matters for Grace;
-- what is in scope and what is deliberately left out;
-- how we will know it works;
+- the goal: what a user or operator will be able to do or see, and why it matters for Grace;
+- done when: checks anyone can run on the finished PR (a command and its expected output, a test that fails on `main`
+  today, an HTTP call, a screenshot);
+- what is deliberately left out;
 - the risky parts: durable state, effect order, authority, public or persisted contracts.
 
 Ask about real product decisions and bring a recommendation. Look up facts yourself.
@@ -107,7 +108,8 @@ ones before fixing anything.
 
 Open a normal, ready-for-review PR once the first complete version is pushed and its focused proof passes. Use
 `.github/PULL_REQUEST_TEMPLATE.md`. Link the issue with `Closes #123` (or `Part of #123` for a PR into an epic branch).
-Keep the body short: what changed, why, how it was verified, and what was skipped or remains risky.
+Keep the body short: what changed, the evidence for each "Done when" item on this head, the review outcome, and what
+wasn't verified.
 
 ## Review
 
