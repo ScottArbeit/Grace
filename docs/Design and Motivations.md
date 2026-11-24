@@ -225,33 +225,27 @@ Grace relies on external databases and object storage services, and so there's n
 
 I've personally installed and maintained hundreds of servers and virtual machines in my career. I racked dozens of them myself. It seemed fun at the time. I'm over it.
 
-That's why I'm a huge fan of Platform-as-a-Service (PaaS), and why Grace was imagined on its first day as a cloud-native system. I starting tracking the [Dapr project](https://dapr.io) as soon as it was announced, and saw it as a perfect solution for being able to write a cloud-native, PaaS-based system, while allowing everyone to choose their own deployment adventure.
+That's why I'm a huge fan of Platform-as-a-Service (PaaS), and why Grace was imagined on its first day as a cloud-native system: a stateless server in front of managed database, object storage, and messaging services.
 
-### Your choice of services at deployment time
+### Actors for the stateful parts
 
-Grace runs on Dapr to allow you to choose which PaaS or cloud or even on-premises services it runs on.
-
-The database, the observability platform, the service bus / event hub pieces, and more, will be configurable by you. Grace will run on anything Dapr supports.
+Grace Server uses [Microsoft Orleans](https://learn.microsoft.com/dotnet/orleans/) for its stateful workflows. Owners, organizations, repositories, branches, and more are each an actor (Orleans calls them grains) that lives in memory on one server instance while it's in use, and saves its state to the database. Orleans decides which instance hosts each actor, and moves them around as instances come and go.
 
 ### Object storage is different
 
-Grace uses an object storage service to save each version of the files in a repo (i.e. Azure Blob Storage, AWS S3, Google Cloud Storage, etc.). Although Dapr does support pluggable object storage providers, using Dapr for Grace's object storage isn't appropriate for Dapr's design.
-
-Dapr is perfect for using object storage for storing smaller blobs, and although most code files fall in the size range that works well for Grace, I want Grace to support virtually unlimited file sizes. That means that it's best for Grace to directly use the specific API's for the storage providers, and to allow the CLI / client to communicate directly with the object storage service, offloading that work to the service where it belongs.
+Grace uses an object storage service to save each version of the files in a repo (i.e. Azure Blob Storage, AWS S3, Google Cloud Storage, etc.). I want Grace to support virtually unlimited file sizes, so it uses the specific API's for the storage providers directly, and lets the CLI / client communicate directly with the object storage service, offloading that work to the service where it belongs.
 
 #### A note about the actual current state of Grace
 
-Thus far, Grace has been written only to run on Microsoft Azure. (It's the cloud provider I know best.)
-
-There was an issue with Dapr when I started writing Grace that caused me to "work around" Dapr's support for databases. It has since been fixed – the ability to query actor storage using a Dapr-specific syntax – and I intend to remove the Azure Cosmos DB code I wrote in favor of that Dapr code over the coming months, enabling Grace to run not just on Cosmos DB, but on any data service that Dapr supports for actor storage.
+Thus far, Grace has been written only to run on Microsoft Azure. (It's the cloud provider I know best.) Actor state lives in Azure Cosmos DB, and Orleans uses Azure Storage to keep track of the server instances in the cluster.
 
 As mentioned above, the best thing for Grace is to directly use the specific API's of the object storage providers in the client. To do that securely, at a minimum, the object storage provider must support the concept of a time-limited and scope-limited token that can be generated at the server to be handed to the client for directly accessing the object storage service. (For example, Azure Blob Storage has [Secure Access Signatures](https://docs.microsoft.com/en-us/azure/storage/common/storage-sas-overview).)
 
 Although I've only implemented support for Azure Blob Storage so far, I've created some light structure in the code using discriminated unions to try to keep me honest and able to implement support for other object storage services without too much difficulty.
 
-### How does Dapr affect performance?
+### How do actors affect performance?
 
-The simple version is: it adds ~1ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr. To make that even faster, I use a short-term in-memory cache on each application instance for specific data to save even on those calls.
+Very little. Orleans routes each call to the server instance that hosts the actor, which is at most one hop inside the cluster, with no separate placement service or sidecar in the path. An actor that's in use keeps its state in memory, so repeated reads don't go back to the database. That's negligible compared to the network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -369,7 +363,7 @@ Grace's design is so different from Git's that spending time trying to make them
 
 Grace has no binary data format of its own, and relies on object storage (i.e. Azure Blob Storage, AWS S3, etc.) to store individual versions of files. Likewise, Grace's metadata is stored as documents in a database (i.e. Azure Cosmos DB, MongoDB, Redis, etc.) and not in a file on a filesystem. Therefore, to a large extent, the scalability of an installation of Grace depends on the Platform-as-a-Service components that it is deployed on.
 
-Because Grace uses the Actor pattern extensively, Grace benefits when more memory is available for each server container instance, as Grace will automatically use that memory as a cache, reducing pressure on the underlying database. And because Grace Server is stateless, and Dapr's Actor Placement service automatically rebalances whenever an application instance is added or removed, Grace can scale up and scale down automatically as traffic increases or decreases, using standard [KEDA](https://keda.sh/) counters to drive those actions.
+Because Grace uses the Actor pattern extensively, Grace benefits when more memory is available for each server container instance, as Grace will automatically use that memory as a cache, reducing pressure on the underlying database. And because Grace Server is stateless, and Orleans automatically rebalances actors whenever a server instance is added or removed, Grace can scale up and scale down automatically as traffic increases or decreases, using standard [KEDA](https://keda.sh/) counters to drive those actions.
 
 I haven't yet run large-scale load tests, but... if the database used for Grace can support thousands of transactions/second, and the object storage service can handle thousands of transactions/second (and the message bus and the observability system etc.), then between that and Grace's natural use of memory for caching, Grace Server *should* be able to scale up and scale out pretty well. The smaller-scale load tests I've run so far have been promising.
 
