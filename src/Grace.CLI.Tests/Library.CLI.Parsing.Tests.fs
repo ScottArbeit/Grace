@@ -22,11 +22,22 @@ module LibraryCliParsingTests =
                 "new.txt"
             |]
 
-        Assert.That(GraceCommand.rootCommand.Parse(args).Errors.Count, Is.Zero)
+        Assert.That(
+            GraceCommand
+                .fullRootCommand
+                .Value
+                .Parse(
+                    args
+                )
+                .Errors
+                .Count,
+            Is.Zero
+        )
 
         Assert.That(
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     [|
                         "library"
@@ -48,7 +59,8 @@ module LibraryCliParsingTests =
             |] do
             Assert.That(
                 GraceCommand
-                    .rootCommand
+                    .fullRootCommand
+                    .Value
                     .Parse(
                         Array.append args [| option; string (Guid.NewGuid()) |]
                     )
@@ -69,13 +81,17 @@ module LibraryCliParsingTests =
                 "status"
             ] do
             let parsed =
-                GraceCommand.rootCommand.Parse [| "library"
-                                                  "sync"
-                                                  verb
-                                                  "--repository-id"
-                                                  "a140fd79-c198-4f9d-8d73-76a7f5fb3649"
-                                                  "--output"
-                                                  "Json" |]
+                GraceCommand.fullRootCommand.Value.Parse(
+                    [|
+                        "library"
+                        "sync"
+                        verb
+                        "--repository-id"
+                        "a140fd79-c198-4f9d-8d73-76a7f5fb3649"
+                        "--output"
+                        "Json"
+                    |]
+                )
 
             parsed.Errors.Count |> should equal 0
 
@@ -87,7 +103,8 @@ module LibraryCliParsingTests =
                 "re-enable"
             ] do
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     [| "library"; "sync"; verb |]
                 )
@@ -99,7 +116,8 @@ module LibraryCliParsingTests =
     [<Test>]
     let ``library exposes only remote catalog operations`` () =
         GraceCommand
-            .rootCommand
+            .fullRootCommand
+            .Value
             .Parse(
                 [| "library"; "list" |]
             )
@@ -108,7 +126,8 @@ module LibraryCliParsingTests =
         |> should equal 0
 
         GraceCommand
-            .rootCommand
+            .fullRootCommand
+            .Value
             .Parse(
                 [| "library"; "get"; "shared/docs" |]
             )
@@ -118,7 +137,8 @@ module LibraryCliParsingTests =
 
         for operation in [| "add"; "remove" |] do
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     [|
                         "library"
@@ -142,7 +162,8 @@ module LibraryCliParsingTests =
                 "status"
             |] do
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     [| "library"; unsupported |]
                 )
@@ -152,7 +173,8 @@ module LibraryCliParsingTests =
 
         for staleAlias in [| "sync"; "synchronize"; "libraries" |] do
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     [| staleAlias; "list" |]
                 )
@@ -180,7 +202,8 @@ module LibraryCliParsingTests =
                 |]
             |] do
             GraceCommand
-                .rootCommand
+                .fullRootCommand
+                .Value
                 .Parse(
                     arguments
                 )
@@ -195,7 +218,8 @@ module LibraryCliParsingTests =
         let arguments = [| "library"; verb; "shared/docs" |]
 
         GraceCommand
-            .rootCommand
+            .fullRootCommand
+            .Value
             .Parse(
                 arguments
             )
@@ -214,7 +238,8 @@ module LibraryCliParsingTests =
                     [| option; "not-a-guid" |]
                 |] do
                 GraceCommand
-                    .rootCommand
+                    .fullRootCommand
+                    .Value
                     .Parse(
                         Array.append arguments values
                     )

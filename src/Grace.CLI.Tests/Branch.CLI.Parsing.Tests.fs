@@ -63,25 +63,25 @@ module BranchCommandParsingTests =
 
     /// Asserts that parses matches the expected contract.
     let private assertParses args =
-        let parseResult = GraceCommand.rootCommand.Parse(withIds args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(withIds args)
         parseResult.Errors.Count |> should equal 0
         parseResult
 
     /// Asserts that does not parse matches the expected contract.
     let private assertDoesNotParse args =
-        let parseResult = GraceCommand.rootCommand.Parse(withIds args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(withIds args)
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
         parseResult
 
     /// Asserts that repository command parses matches the expected contract.
     let private assertRepositoryCommandParses args =
-        let parseResult = GraceCommand.rootCommand.Parse(withRepositoryIds args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(withRepositoryIds args)
         parseResult.Errors.Count |> should equal 0
         parseResult
 
     /// Asserts that repository command does not parse matches the expected contract.
     let private assertRepositoryCommandDoesNotParse args =
-        let parseResult = GraceCommand.rootCommand.Parse(withRepositoryIds args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(withRepositoryIds args)
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
         parseResult
 
@@ -609,7 +609,7 @@ module BranchCommandParsingTests =
                 "--force-save"
             |] do
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     withIds [| "branch"
                                "annotate"
                                "--path"

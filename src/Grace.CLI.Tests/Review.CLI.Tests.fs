@@ -78,13 +78,13 @@ module ReviewCommandTests =
                 Guid.NewGuid().ToString()
             |]
 
-        GraceCommand.rootCommand.Parse(withIdsAndSilent (Array.append baseArgs extraArgs))
+        GraceCommand.fullRootCommand.Value.Parse(withIdsAndSilent (Array.append baseArgs extraArgs))
 
     /// Verifies that review open rejects invalid promotion set id.
     [<Test>]
     let ``review open rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "open"
                                     "--promotion-set"
@@ -98,7 +98,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``review checkpoint rejects invalid reference id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "checkpoint"
                                     "--promotion-set"
@@ -116,7 +116,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``review resolve requires resolution state`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "resolve"
                                     "--promotion-set"
@@ -132,7 +132,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``review resolve rejects approve and request changes together`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "resolve"
                                     "--promotion-set"
@@ -149,7 +149,7 @@ module ReviewCommandTests =
     /// Verifies that review delta command is unavailable.
     [<Test>]
     let ``review delta command is unavailable`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "review"; "delta" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "review"; "delta" |])
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
@@ -235,7 +235,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``candidate get rejects invalid candidate id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "candidate"
                                     "get"
                                     "--candidate"
@@ -249,7 +249,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``candidate required actions rejects invalid candidate id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "candidate"
                                     "required-actions"
                                     "--candidate"
@@ -263,7 +263,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``candidate gate rerun requires gate option`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "candidate"
                                     "gate"
                                     "rerun"
@@ -285,7 +285,7 @@ module ReviewCommandTests =
         let candidateId = Guid.NewGuid()
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "candidate"
                                     "get"
                                     "--candidate"
@@ -371,7 +371,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``review report show rejects invalid candidate id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "report"
                                     "show"
@@ -386,7 +386,7 @@ module ReviewCommandTests =
     [<Test>]
     let ``review report export requires format and output file`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "review"
                                     "report"
                                     "export"

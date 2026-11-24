@@ -25,7 +25,7 @@ type OwnerObservationCliTests() =
 
     /// Parses the real root command and its inherited output switches.
     let parse args =
-        GraceCommand.rootCommand.Parse(
+        GraceCommand.fullRootCommand.Value.Parse(
             Array.concat [ [|
                                "owner"
                                "get-directory-version-observation"

@@ -22,7 +22,7 @@ open Grace.Types.ArtifactGrant
 module ConnectCacheTests =
 
     /// Parses Connect arguments through the public root command.
-    let private parse arguments = GraceCommand.rootCommand.Parse(Array.append [| "connect" |] arguments)
+    let private parse arguments = GraceCommand.fullRootCommand.Value.Parse(Array.append [| "connect" |] arguments)
 
     /// Represents the deterministic public key returned by the fake Cache process.
     let private cachePublicKey = P256PublicJwk.Create("cache-x", "cache-y")

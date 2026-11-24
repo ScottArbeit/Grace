@@ -22,6 +22,14 @@ module Authorization =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PrincipalType>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof PrincipalType.User
+                nameof PrincipalType.Group
+                nameof PrincipalType.Service
+            |]
+
     /// Identifies a principal (user, group, or service).
     [<GenerateSerializer>]
     type Principal =
@@ -87,6 +95,35 @@ module Authorization =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<Operation>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof Operation.SystemAdmin
+                nameof Operation.SystemOperate
+                nameof Operation.SystemRead
+                nameof Operation.OwnerAdmin
+                nameof Operation.OwnerWrite
+                nameof Operation.OwnerRead
+                nameof Operation.OrganizationAdmin
+                nameof Operation.OrganizationWrite
+                nameof Operation.OrganizationRead
+                nameof Operation.RepositoryAdmin
+                nameof Operation.RepositoryWrite
+                nameof Operation.RepositoryRead
+                nameof Operation.LibraryRead
+                nameof Operation.LibraryWrite
+                nameof Operation.BranchAdmin
+                nameof Operation.BranchWrite
+                nameof Operation.BranchRead
+                nameof Operation.PathRead
+                nameof Operation.PathWrite
+                nameof Operation.ApprovalPolicyManage
+                nameof Operation.ApprovalRequestRead
+                nameof Operation.ApprovalRequestRespond
+                nameof Operation.WebhookManage
+                nameof Operation.WebhookDeliveryRead
+            |]
 
     /// Unique identifier for a role.
     type RoleId = string

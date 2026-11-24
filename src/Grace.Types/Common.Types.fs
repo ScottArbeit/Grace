@@ -244,6 +244,13 @@ module Common =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof OwnerType.Public
+                nameof OwnerType.Private
+            |]
+
     /// Represents organization type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OrganizationType =
@@ -256,6 +263,13 @@ module Common =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof OrganizationType.Public
+                nameof OrganizationType.Private
+            |]
+
     /// Represents search visibility.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type SearchVisibility =
@@ -267,6 +281,13 @@ module Common =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof SearchVisibility.Visible
+                nameof SearchVisibility.NotVisible
+            |]
 
     /// Defines the different types of references that can exist in a branch.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -287,6 +308,18 @@ module Common =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof ReferenceType.Promotion
+                nameof ReferenceType.Commit
+                nameof ReferenceType.Checkpoint
+                nameof ReferenceType.Save
+                nameof ReferenceType.Tag
+                nameof ReferenceType.External
+                nameof ReferenceType.Rebase
+            |]
 
     // Records
 
@@ -948,6 +981,13 @@ module Common =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryType>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof RepositoryType.Private
+                nameof RepositoryType.Public
+            |]
+
     /// Specifies the current operational status of a repository.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type RepositoryStatus =
@@ -958,6 +998,15 @@ module Common =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryStatus>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof RepositoryStatus.Active
+                nameof RepositoryStatus.Suspended
+                nameof RepositoryStatus.Closed
+                nameof RepositoryStatus.Deleted
+            |]
 
     // /// Defines the type of the list of validations used in server endpoints.
     // type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
@@ -1325,6 +1374,14 @@ module Common =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<BranchPromotionMode>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof BranchPromotionMode.IndividualOnly
+                nameof BranchPromotionMode.GroupOnly
+                nameof BranchPromotionMode.Hybrid
+            |]
+
         /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
@@ -1336,6 +1393,13 @@ module Common =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof ConflictResolutionPolicy.NoConflicts
+                nameof ConflictResolutionPolicy.ConflictsAllowed
+            |]
 
         /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
@@ -1402,6 +1466,15 @@ module Common =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof ReminderTypes.Maintenance
+                nameof ReminderTypes.PhysicalDeletion
+                nameof ReminderTypes.DeleteCachedState
+                nameof ReminderTypes.DeleteZipFile
+            |]
+
         /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
@@ -1446,6 +1519,14 @@ module Common =
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ServerApiVersions>()
+
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof ServerApiVersions.``V2022-02-01``
+                nameof ServerApiVersions.Latest
+                nameof ServerApiVersions.Edge
+            |]
 
         /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this

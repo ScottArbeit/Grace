@@ -30,7 +30,7 @@ module QueueCommandParsingTests =
     [<Test>]
     let ``queue enqueue accepts numeric work item identifier`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "queue"
                            "enqueue"
                            "--branch-id"
@@ -44,7 +44,7 @@ module QueueCommandParsingTests =
     /// Verifies that queue retry command is unavailable.
     [<Test>]
     let ``queue retry command is unavailable`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "queue"; "retry" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "queue"; "retry" |])
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 

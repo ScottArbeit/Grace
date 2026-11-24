@@ -160,7 +160,7 @@ module Reference =
 
         let referenceType =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-                .AcceptOnlyFromAmong(listCases<ReferenceType> ())
+                .AcceptOnlyFromAmong(ReferenceType.Names)
 
         let fullSha = HashOptions.deprecatedFullSha
 

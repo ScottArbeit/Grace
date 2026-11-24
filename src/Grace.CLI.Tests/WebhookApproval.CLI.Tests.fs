@@ -80,7 +80,7 @@ module WebhookApprovalCommandTests =
             }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "promotion-set"
                            "apply"
                            "--promotion-set"
@@ -115,7 +115,7 @@ module WebhookApprovalCommandTests =
             }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "webhook"
                            "show"
                            "--webhook"
@@ -157,7 +157,7 @@ module WebhookApprovalCommandTests =
             }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "approval"
                            "policy"
                            "show"
@@ -191,7 +191,7 @@ module WebhookApprovalCommandTests =
         let pending = { ApprovalRequest.Default with ApprovalRequestId = requestId; Status = ApprovalRequestStatus.Pending }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "approval"
                            "request"
                            "wait"
@@ -225,7 +225,7 @@ module WebhookApprovalCommandTests =
         let secondPromotionSetId = Guid.NewGuid()
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "promotion-set"
                            "list"
                            "--branch"
@@ -286,7 +286,7 @@ module WebhookApprovalCommandTests =
             }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "promotion-set"
                            "list"
                            "--branch"
@@ -330,7 +330,7 @@ module WebhookApprovalCommandTests =
             }
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "webhook"
                            "delivery"
                            "show"

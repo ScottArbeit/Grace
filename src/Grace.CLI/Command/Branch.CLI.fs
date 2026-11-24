@@ -209,7 +209,7 @@ module Branch =
 
         let referenceType =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-                .AcceptOnlyFromAmong(listCases<ReferenceType> ())
+                .AcceptOnlyFromAmong(ReferenceType.Names)
 
         let doNotSwitch =
             new Option<bool>(
@@ -392,7 +392,7 @@ module Branch =
                 Description = "The promotion mode for the branch: IndividualOnly, GroupOnly, or Hybrid.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<BranchPromotionMode> ())
+                .AcceptOnlyFromAmong(BranchPromotionMode.Names)
 
         let toBranchId =
             new Option<BranchId>(
@@ -2093,7 +2093,7 @@ module Branch =
     /// Models branch annotate target reference resolver values passed between the parser and branch handlers.
     type BranchAnnotateTargetReferenceResolver = ReferenceId option -> CorrelationId -> Task<Result<CliCurrentStateCaptureResult, GraceError>>
 
-    let private validReferenceTypeNames = listCases<ReferenceType> ()
+    let private validReferenceTypeNames = ReferenceType.Names
 
     /// Tries to map parse reference type and returns a GraceError instead of throwing on unsupported input.
     let private tryParseReferenceType (value: string) =

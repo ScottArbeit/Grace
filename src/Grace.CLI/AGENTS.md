@@ -10,6 +10,9 @@ The `grace` command-line tool, built on System.CommandLine and Spectre.Console, 
 - A deliberately removed command or option stays removed; don't bring it back as a hidden alias.
 - When adding or renaming commands, update `rootHelpSections` and the related `*HelpSections` lists in
   `Program.CLI.fs` so the command doesn't fall into "Other".
+- Startup builds only the requested top-level command (`topLevelCommands` in `Program.CLI.fs`), so a shared helper's
+  `parseResult.GetResult(name)` throws for an option only other commands declare. Use `Services.getResultByName` and
+  `Services.getValueByName` there.
 
 ## Auth
 

@@ -59,7 +59,7 @@ module WatchTests =
         try
             Console.SetOut(writer)
             setAnsiConsoleOutput writer
-            let parseResult = GraceCommand.rootCommand.Parse(args)
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
             let exitCode = parseResult.InvokeAsync().Result
             exitCode, writer.ToString()
         finally
@@ -462,7 +462,7 @@ module WatchTests =
     /// Points process-global configuration at the temporary repository and clears Watch caches and pending work.
     let private enterWatchTempRepo (tempDir: string) (configPath: string) =
         Environment.CurrentDirectory <- tempDir
-        Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+        Services.parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
         resetConfiguration ()
         let configuration = Current()
         configuration.RepositoryId <- Guid.NewGuid()

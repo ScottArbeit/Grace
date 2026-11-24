@@ -199,7 +199,7 @@ module WorkingDirectoryUpdateBranchDirectoryVersionTests =
 
             saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, GraceConfigFileName)) configuration
             resetConfiguration ()
-            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+            Services.parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
             action root (Current())
         finally
             Services.clearShouldIgnoreCache ()

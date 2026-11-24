@@ -24,6 +24,17 @@ module WorkItem =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<WorkItemStatus>()
 
+        /// Every case name, in declaration order, so CLI option validation doesn't reflect over the union at startup.
+        static member Names =
+            [|
+                nameof WorkItemStatus.Backlog
+                nameof WorkItemStatus.Active
+                nameof WorkItemStatus.Blocked
+                nameof WorkItemStatus.InReview
+                nameof WorkItemStatus.Done
+                nameof WorkItemStatus.Canceled
+            |]
+
     /// Defines the commands for the WorkItem actor.
     [<KnownType("GetKnownTypes")>]
     type WorkItemCommand =

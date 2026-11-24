@@ -106,7 +106,7 @@ module Admin =
                     Description = "Filter by reminder type (Maintenance, PhysicalDeletion, DeleteCachedState, DeleteZipFile).",
                     Arity = ArgumentArity.ZeroOrOne
                 ))
-                    .AcceptOnlyFromAmong(listCases<ReminderTypes> ())
+                    .AcceptOnlyFromAmong(ReminderTypes.Names)
 
             let actorName =
                 new Option<String>(
@@ -664,7 +664,7 @@ module Admin =
                     Description = "The type of reminder (Maintenance, PhysicalDeletion, DeleteCachedState, DeleteZipFile).",
                     Arity = ArgumentArity.ExactlyOne
                 ))
-                    .AcceptOnlyFromAmong(listCases<ReminderTypes> ())
+                    .AcceptOnlyFromAmong(ReminderTypes.Names)
 
             let createCommand =
                 new Command("create", Description = "Create a new manual reminder.")

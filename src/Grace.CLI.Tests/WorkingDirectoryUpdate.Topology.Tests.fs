@@ -52,7 +52,7 @@ module WorkingDirectoryUpdateTopologyTests =
         try
             Directory.CreateDirectory(root) |> ignore
             Environment.CurrentDirectory <- root
-            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+            Services.parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
             let configuration = configureForRoot root
             action root configuration
         finally

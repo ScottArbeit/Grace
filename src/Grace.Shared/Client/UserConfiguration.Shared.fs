@@ -131,6 +131,12 @@ module UserConfiguration =
         let userGraceDir = getUserGraceDirectory ()
         Path.Combine(userGraceDir, "userconfig.json")
 
+    /// Identifies one version of the user configuration file by its size and last write time, or None when it doesn't
+    /// exist, so a configuration read earlier can be checked for staleness. Reads file metadata only.
+    let getUserConfigurationStamp () =
+        let info = FileInfo(getUserConfigurationPath ())
+        if info.Exists then Some(info.Length, info.LastWriteTimeUtc) else None
+
     /// Creates the per-user .grace directory when it is missing and returns its path.
     let ensureUserGraceDirectory () =
         let userGraceDir = getUserGraceDirectory ()

@@ -80,7 +80,7 @@ module Access =
                 Description = "The principal type (User, Group, Service).",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<PrincipalType> ())
+                .AcceptOnlyFromAmong(PrincipalType.Names)
 
         let principalIdRequired =
             new Option<string>(OptionName.PrincipalId, Required = true, Description = "The principal identifier.", Arity = ArgumentArity.ExactlyOne)
@@ -92,7 +92,7 @@ module Access =
                 Description = "Optional principal type filter (User, Group, Service).",
                 Arity = ArgumentArity.ZeroOrOne
             ))
-                .AcceptOnlyFromAmong(listCases<PrincipalType> ())
+                .AcceptOnlyFromAmong(PrincipalType.Names)
 
         let principalIdOptional =
             new Option<string>(OptionName.PrincipalId, Required = false, Description = "Optional principal identifier filter.", Arity = ArgumentArity.ZeroOrOne)
@@ -166,7 +166,7 @@ module Access =
 
         let operationRequired =
             (new Option<string>(OptionName.Operation, Required = true, Description = "Operation to check.", Arity = ArgumentArity.ExactlyOne))
-                .AcceptOnlyFromAmong(listCases<Operation> ())
+                .AcceptOnlyFromAmong(Operation.Names)
 
         let canAction =
             (new Argument<string>("action", Description = "Capability action (read, write, administer).", Arity = ArgumentArity.ExactlyOne))

@@ -36,7 +36,7 @@ module AgentCommandTests =
 
     /// Invokes the parsed CLI command for test scenarios.
     let private invoke (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
         parseResult.Invoke()
 
     /// Runs the public CLI entry point while capturing output for test assertions.

@@ -274,3 +274,100 @@ module HistoryStorageTests =
 
         HistoryStorage.shouldRecord input configuration.History
         |> should equal false
+
+    /// Builds a minimal recordable invocation for preload tests.
+    let private branchStatusInput () : HistoryStorage.RecordInput =
+        {
+            argvOriginal = [| "branch"; "status" |]
+            argvNormalized = [| "branch"; "status" |]
+            cwd = Environment.CurrentDirectory
+            exitCode = 0
+            durationMs = 5L
+            parseSucceeded = true
+            timestampUtc = Instant.FromUtc(2026, 1, 2, 3, 4, 5)
+            source = None
+        }
+
+    /// Saves a user configuration with history recording turned on or off.
+    let private saveHistoryEnabled (enabled: bool) =
+        let configuration = UserConfiguration.UserConfiguration()
+        configuration.History.Enabled <- enabled
+
+        match UserConfiguration.saveUserConfiguration configuration with
+        | Ok _ -> ()
+        | Error error -> Assert.Fail(error)
+
+    /// Preloads the user configuration, failing the test when the preload finds no file to read.
+    let private preloadExisting () =
+        match HistoryStorage.preloadUserConfiguration () with
+        | Some preloaded -> preloaded
+        | None -> failwith "Expected preloadUserConfiguration to read the saved user configuration."
+
+    /// Verifies the startup preload never creates a missing user configuration, so read-only commands such as
+    /// `grace doctor` leave the user's .grace directory untouched.
+    [<Test>]
+    let ``preloadUserConfiguration does not create a missing user configuration`` () =
+        let configPath = UserConfiguration.getUserConfigurationPath ()
+
+        withFileBackup configPath (fun () ->
+            if File.Exists(configPath) then File.Delete(configPath)
+
+            HistoryStorage.preloadUserConfiguration ()
+            |> Option.isNone
+            |> should equal true
+
+            File.Exists(configPath) |> should equal false)
+
+    /// Verifies history recording uses the configuration preloaded at startup when the file hasn't changed since.
+    [<Test>]
+    let ``recordInvocationWith uses the preloaded configuration when the file is unchanged`` () =
+        withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
+            saveHistoryEnabled true
+            let preloaded = preloadExisting ()
+
+            // The preloaded copy says "disabled" while the unchanged file says "enabled", so the result shows which was used.
+            preloaded.LoadResult.Configuration.History.Enabled <- false
+
+            HistoryStorage.recordInvocationWith (Some preloaded) (branchStatusInput ())
+            |> Option.isSome
+            |> should equal false)
+
+    /// Verifies a configuration change made during the run (for example `grace history off`) decides whether that run
+    /// is recorded, even though the configuration was preloaded before the change.
+    [<Test>]
+    let ``recordInvocationWith rereads the configuration when the file changed after preload`` () =
+        withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
+            saveHistoryEnabled true
+            let preloaded = preloadExisting ()
+
+            saveHistoryEnabled false
+
+            HistoryStorage.recordInvocationWith (Some preloaded) (branchStatusInput ())
+            |> Option.isSome
+            |> should equal false)
+
+    /// Verifies recording without a preload reads the current configuration.
+    [<Test>]
+    let ``recordInvocationWith without a preload reads the current configuration`` () =
+        withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
+            saveHistoryEnabled true
+
+            HistoryStorage.recordInvocationWith None (branchStatusInput ())
+            |> Option.isSome
+            |> should equal true)
+
+    /// Verifies a startup read that fell back to defaults (for example, the file was briefly locked) isn't reused, so
+    /// history recording still follows the user's real settings.
+    [<Test>]
+    let ``recordInvocationWith rereads the configuration when the preload fell back to defaults`` () =
+        withFileBackup (UserConfiguration.getUserConfigurationPath ()) (fun () ->
+            saveHistoryEnabled true
+            let preloaded = preloadExisting ()
+            let fallback = UserConfiguration.UserConfiguration()
+            fallback.History.Enabled <- false
+
+            let failedPreload = { preloaded with LoadResult = { preloaded.LoadResult with Configuration = fallback; WasCorrupt = true } }
+
+            HistoryStorage.recordInvocationWith (Some failedPreload) (branchStatusInput ())
+            |> Option.isSome
+            |> should equal true)

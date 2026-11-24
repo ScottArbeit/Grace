@@ -594,9 +594,33 @@ module HistoryStorage =
             else
                 true
 
-    /// Records record invocation information in the local command-history store.
-    let recordInvocation (input: RecordInput) =
-        let loadResult = UserConfiguration.loadUserConfiguration ()
+    /// A user configuration read before the command ran, with the file stamp taken before the read.
+    type PreloadedUserConfiguration = { Stamp: (int64 * DateTime) option; LoadResult: UserConfiguration.UserConfigurationLoadResult }
+
+    /// Reads an existing user configuration now (which also warms Grace's JSON serializer), so history recording at exit
+    /// doesn't pay for it. Takes the file stamp first, so a write during or after this read is always detected.
+    /// Returns None without creating anything when the file doesn't exist: commands such as `grace doctor` must not
+    /// create user configuration, and history recording creates the default file itself when it records.
+    let preloadUserConfiguration () =
+        match UserConfiguration.getUserConfigurationStamp () with
+        | None -> None
+        | stamp -> Some { Stamp = stamp; LoadResult = UserConfiguration.loadUserConfiguration () }
+
+    /// Returns the preloaded configuration only when it was read cleanly and the file is unchanged since; otherwise reads
+    /// it again. A command that changes its own history settings (for example `grace history off`) still decides whether
+    /// it's recorded, and a transient read failure at startup doesn't fall back to defaults.
+    let resolveUserConfiguration (preloaded: PreloadedUserConfiguration option) =
+        match preloaded with
+        | Some preloaded when
+            not preloaded.LoadResult.WasCorrupt
+            && preloaded.Stamp = UserConfiguration.getUserConfigurationStamp ()
+            ->
+            preloaded.LoadResult
+        | _ -> UserConfiguration.loadUserConfiguration ()
+
+    /// Builds the history entry for an invocation, using a preloaded user configuration when it is still current.
+    let recordInvocationWith (preloaded: PreloadedUserConfiguration option) (input: RecordInput) =
+        let loadResult = resolveUserConfiguration preloaded
 
         if not
            <| shouldRecord input loadResult.Configuration.History then
@@ -631,9 +655,13 @@ module HistoryStorage =
 
             Some(entry, loadResult.Configuration.History)
 
-    /// Tries to map record invocation and returns a GraceError instead of throwing on unsupported input.
-    let tryRecordInvocation (input: RecordInput) =
-        match recordInvocation input with
+    /// Builds the history entry for an invocation, reading the user configuration now.
+    let recordInvocation (input: RecordInput) = recordInvocationWith None input
+
+    /// Appends an invocation to history when the user configuration allows it, using a preloaded configuration when it
+    /// is still current. Lock failures are reported on stderr and skip recording.
+    let tryRecordInvocationWith (preloaded: PreloadedUserConfiguration option) (input: RecordInput) =
+        match recordInvocationWith preloaded input with
         | None -> ()
         | Some (entry, historyConfig) ->
             /// Shapes local command-history on failure data for persistence or display.
@@ -644,6 +672,9 @@ module HistoryStorage =
                     appendHistoryEntry entry historyConfig
                     ())
                 onFailure
+
+    /// Appends an invocation to history when the user configuration allows it, reading the configuration now.
+    let tryRecordInvocation (input: RecordInput) = tryRecordInvocationWith None input
 
     /// Clears inherited history values so explicitly scoped access commands do not target child resources accidentally.
     let clearHistory () =

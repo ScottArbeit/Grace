@@ -73,7 +73,7 @@ type ClientIdentitySdkTests() =
             setAnsiConsoleOutput originalOut
 
     /// Parses output for test assertions.
-    let parseOutput outputFormat = GraceCommand.rootCommand.Parse([| "--output"; outputFormat |])
+    let parseOutput outputFormat = GraceCommand.fullRootCommand.Value.Parse([| "--output"; outputFormat |])
 
     /// Parses normal output for test assertions.
     let parseNormalOutput () = parseOutput "Normal"

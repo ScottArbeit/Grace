@@ -28,12 +28,12 @@ module WebhookApprovalCommandParsingTests =
 
     /// Asserts that parses matches the expected contract.
     let private assertParses (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(withIds args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(withIds args)
         parseResult.Errors |> should be Empty
 
     /// Asserts that does not parse matches the expected contract.
     let private assertDoesNotParse (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)

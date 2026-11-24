@@ -17,7 +17,7 @@ module ConnectParsingTests =
     /// Verifies that connect retrieve default branch defaults to true.
     [<Test>]
     let ``connect retrieve default branch defaults to true`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "connect" |])
 
         parseResult.GetValue<bool>(OptionName.RetrieveDefaultBranch)
         |> should equal true
@@ -26,7 +26,7 @@ module ConnectParsingTests =
     [<Test>]
     let ``connect retrieve default branch parses explicit false`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "connect"
                     OptionName.RetrieveDefaultBranch
@@ -41,7 +41,7 @@ module ConnectParsingTests =
     [<Test>]
     let ``connect cache required parses as a valueless option`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "connect"
                     OptionName.CacheRequired
@@ -59,7 +59,7 @@ module ConnectParsingTests =
         let cacheUri = "http://127.0.0.1:5341/"
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "connect"
                     OptionName.CacheRequired
@@ -80,7 +80,7 @@ module ConnectParsingTests =
         let referenceId = Guid.NewGuid()
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "connect"
                     OptionName.DirectoryVersionId
@@ -108,7 +108,7 @@ module ConnectParsingTests =
     /// Verifies that connect repository shortcut populates owner organization repository.
     [<Test>]
     let ``connect repository shortcut populates owner organization repository`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "connect"; "owner/org/repo" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "connect"; "owner/org/repo" |])
         let graceIds = GraceIds.Default
 
         match Connect.applyRepositoryShortcut parseResult graceIds with
@@ -127,7 +127,7 @@ module ConnectParsingTests =
     /// Verifies that connect repository shortcut rejects missing segments.
     [<Test>]
     let ``connect repository shortcut rejects missing segments`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "connect"; "owner/repo" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "connect"; "owner/repo" |])
         let graceIds = GraceIds.Default
 
         match Connect.applyRepositoryShortcut parseResult graceIds with
@@ -140,7 +140,7 @@ module ConnectParsingTests =
     [<Test>]
     let ``connect repository shortcut conflicts with explicit options`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "connect"
                     "owner/org/repo"

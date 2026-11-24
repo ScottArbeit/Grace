@@ -14,7 +14,7 @@ module CommandParsingTests =
     /// Parses arguments after applying the selected platform output-value policy.
     let private parseWithOutputPolicy isCaseInsensitive args =
         GraceCommand.normalizeOutputArguments args isCaseInsensitive
-        |> GraceCommand.rootCommand.Parse
+        |> GraceCommand.fullRootCommand.Value.Parse
 
     /// Verifies that direct lowercase verbose output selects the existing Verbose behavior.
     [<Test>]
@@ -95,7 +95,7 @@ module CommandParsingTests =
     let ``resolveInvocationSource prefers explicit source over environment`` () =
         withEnvironmentVariable Common.SourceEnvironmentVariableName (Some "env-source") (fun () ->
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "--source"
                         "explicit-source"
@@ -113,7 +113,7 @@ module CommandParsingTests =
     [<Test>]
     let ``resolveInvocationSource falls back to environment`` () =
         withEnvironmentVariable Common.SourceEnvironmentVariableName (Some "env-source") (fun () ->
-            let parseResult = GraceCommand.rootCommand.Parse([| "history"; "show" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "history"; "show" |])
             parseResult.Errors.Count |> should equal 0
 
             Common.resolveInvocationSource parseResult
@@ -123,7 +123,7 @@ module CommandParsingTests =
     [<Test>]
     let ``history show accepts source filter option`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "history"
                     "show"
@@ -138,11 +138,15 @@ module CommandParsingTests =
     [<Test>]
     let ``history search accepts source filter option`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse [| "history"
-                                              "search"
-                                              "workitem"
-                                              "--source"
-                                              "codex" |]
+            GraceCommand.fullRootCommand.Value.Parse(
+                [|
+                    "history"
+                    "search"
+                    "workitem"
+                    "--source"
+                    "codex"
+                |]
+            )
 
         parseResult.Errors.Count |> should equal 0
 
@@ -195,10 +199,10 @@ module CommandParsingTests =
     [<TestCase("RepositoryApprovalResponder")>]
     [<TestCase("BranchApprovalResponder")>]
     let ``authorize role commands accept canonical role ids`` roleId =
-        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
+        let grantParseResult = GraceCommand.fullRootCommand.Value.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 0
 
-        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        let revokeParseResult = GraceCommand.fullRootCommand.Value.Parse(revokeRoleArgs roleId)
         revokeParseResult.Errors.Count |> should equal 0
 
     /// Verifies that authorize grant role rejects stale short role ids.
@@ -212,7 +216,7 @@ module CommandParsingTests =
     [<TestCase("oRgReAdEr")>]
     [<TestCase("ApprovalResponder")>]
     let ``authorize grant role rejects stale short role ids`` roleId =
-        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
+        let grantParseResult = GraceCommand.fullRootCommand.Value.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
     /// Verifies that authorize revoke role allows stale role ids when explicit scope is supplied.
@@ -222,7 +226,7 @@ module CommandParsingTests =
         let repositoryId = Guid.NewGuid()
 
         let revokeParseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 revokeRoleArgsWithScope
                     roleId
                     [|
@@ -241,7 +245,7 @@ module CommandParsingTests =
     [<TestCase("OrgAdmin")>]
     [<TestCase("ApprovalResponder")>]
     let ``authorize revoke role rejects stale role ids without explicit scope`` roleId =
-        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        let revokeParseResult = GraceCommand.fullRootCommand.Value.Parse(revokeRoleArgs roleId)
         revokeParseResult.Errors.Count |> should equal 0
 
         match Command.Access.deriveScopeKindForRevoke revokeParseResult roleId with
@@ -251,17 +255,17 @@ module CommandParsingTests =
     /// Verifies that authorize grant and revoke derive scope from role without scope option.
     [<Test>]
     let ``authorize grant and revoke derive scope from role without scope option`` () =
-        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs "RepositoryReader")
+        let grantParseResult = GraceCommand.fullRootCommand.Value.Parse(grantRoleArgs "RepositoryReader")
         grantParseResult.Errors.Count |> should equal 0
 
-        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs "RepositoryReader")
+        let revokeParseResult = GraceCommand.fullRootCommand.Value.Parse(revokeRoleArgs "RepositoryReader")
         revokeParseResult.Errors.Count |> should equal 0
 
     /// Verifies that authorize grant no longer accepts explicit scope option.
     [<Test>]
     let ``authorize grant no longer accepts explicit scope option`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     yield! grantRoleArgs "RepositoryReader"
                     "--scope"
@@ -275,14 +279,14 @@ module CommandParsingTests =
     /// Verifies that authenticate command group accepts authn alias.
     [<Test>]
     let ``authenticate command group accepts authn alias`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "authn"; "status" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "authn"; "status" |])
         parseResult.Errors.Count |> should equal 0
 
     /// Verifies that authorize command group accepts authz alias.
     [<Test>]
     let ``authorize command group accepts authz alias`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 grantRoleArgs "RepositoryReader"
                 |> Array.updateAt 0 "authz"
             )
@@ -292,17 +296,17 @@ module CommandParsingTests =
     /// Verifies that authorize show command parses through authz alias.
     [<Test>]
     let ``authorize show command parses through authz alias`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "authz"; "show" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "authz"; "show" |])
         parseResult.Errors.Count |> should equal 0
 
     /// Verifies that authorize can command parses user oriented repo and path checks.
     [<Test>]
     let ``authorize can command parses user oriented repo and path checks`` () =
-        let readRepo = GraceCommand.rootCommand.Parse([| "authz"; "can"; "read"; "repo" |])
+        let readRepo = GraceCommand.fullRootCommand.Value.Parse([| "authz"; "can"; "read"; "repo" |])
         readRepo.Errors.Count |> should equal 0
 
         let pathRead =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "authz"
                     "can"
@@ -319,7 +323,7 @@ module CommandParsingTests =
     [<TestCase("auth", "status")>]
     [<TestCase("access", "list-roles")>]
     let ``old auth and access command groups are not accepted`` commandGroup commandName =
-        let parseResult = GraceCommand.rootCommand.Parse([| commandGroup; commandName |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| commandGroup; commandName |])
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)
@@ -551,7 +555,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root ownerId organizationId configuredRepositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "show"
@@ -595,7 +599,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root configuredOwnerId configuredOrganizationId configuredRepositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "show"
@@ -626,7 +630,7 @@ module HelpDoesNotReadConfigTests =
     let ``authz check system scope does not require graceconfig`` () =
         withTempDir (fun _ ->
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authorize"
                         "check"
@@ -655,7 +659,7 @@ module HelpDoesNotReadConfigTests =
             let roleId = "OrgAdmin"
 
             let revokeParseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authorize"
                         "revoke-role"
@@ -687,7 +691,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root configuredOwnerId configuredOrganizationId configuredRepositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "can"
@@ -728,7 +732,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root ownerId configuredOrganizationId configuredRepositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "can"
@@ -768,7 +772,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root ownerId organizationId configuredRepositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "can"
@@ -807,7 +811,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfig root ownerId organizationId repositoryId configuredBranchId
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "authz"
                         "can"
@@ -843,7 +847,7 @@ module HelpDoesNotReadConfigTests =
 
             writeValidConfig root ownerId organizationId repositoryId branchId
 
-            let parseResult = GraceCommand.rootCommand.Parse([| "authz"; "can"; "read"; "branch" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "authz"; "can"; "read"; "branch" |])
 
             parseResult.Errors.Count |> should equal 0
 
@@ -1471,7 +1475,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output json success writes one stdout document and no stderr.
     [<Test>]
     let ``renderOutput json success writes one stdout document and no stderr`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--output"; "Json" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-json-success"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -1735,7 +1739,7 @@ module HelpDoesNotReadConfigTests =
     [<Test>]
     let ``repository init no output DTO renders absent observability as null`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "--output"
                     "Json"
@@ -1856,7 +1860,7 @@ module HelpDoesNotReadConfigTests =
     [<Test>]
     let ``select option makes command json-oriented`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "authenticate"
                     "logout"
@@ -1875,7 +1879,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select writes selected scalar json only.
     [<Test>]
     let ``renderOutput select writes selected scalar json only`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Value" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok"; Other = "hidden" |} "corr-select-success"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -1890,7 +1894,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select success suppresses lifecycle warnings.
     [<Test>]
     let ``renderOutput select success suppresses lifecycle warnings`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Value" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-lifecycle-success"
 
         returnValue.enhance (lifecycleProperties "deprecated")
@@ -1911,7 +1915,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select writes selected object and collection json.
     [<Test>]
     let ``renderOutput select writes selected object and collection json`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Container.Items" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Container.Items" |])
 
         let returnValue =
             GraceReturnValue.Create
@@ -1949,7 +1953,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select writes null json.
     [<Test>]
     let ``renderOutput select writes null json`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Value" |])
         let returnValue = GraceReturnValue.Create {| Value = (null: string) |} "corr-select-null"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -1964,7 +1968,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select missing property emits json error.
     [<Test>]
     let ``renderOutput select missing property emits json error`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Missing" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Missing" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-missing"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -1989,7 +1993,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select scalar traversal emits json error.
     [<Test>]
     let ``renderOutput select scalar traversal emits json error`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value.Name" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Value.Name" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-scalar"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -2006,7 +2010,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output select leaves error envelope unprojected.
     [<Test>]
     let ``renderOutput select leaves error envelope unprojected`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--select"; "Value" |])
         let error = GraceError.Create "original failure" "corr-select-error"
 
         error.enhance (lifecycleProperties "unsupported")
@@ -2077,7 +2081,7 @@ module HelpDoesNotReadConfigTests =
     /// Verifies that render output json error writes grace error envelope with shared field names.
     [<Test>]
     let ``renderOutput json error writes GraceError envelope with shared field names`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--output"; "Json" |])
         let error = GraceError.Create "central writer error" "corr-json-error"
 
         /// Builds standard out test data used to exercise CLI program behavior.
@@ -2500,7 +2504,7 @@ module HelpDoesNotReadConfigTests =
             let branchId = Guid.NewGuid()
             writeValidConfig root ownerId orgId repoId branchId
 
-            let parseResult = GraceCommand.rootCommand.Parse([| "authorize"; "grant-role" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "authorize"; "grant-role" |])
 
             let output = captureOutput (fun () -> Common.printParseResult parseResult)
 
@@ -2517,7 +2521,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfigWithDeterministicIds root
 
             let implicitParseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "branch"
                         "status"
@@ -2543,7 +2547,7 @@ module HelpDoesNotReadConfigTests =
             let explicitCorrelationId = "verbose-correlation-id"
 
             let explicitParseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "branch"
                         "status"
@@ -2571,7 +2575,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfigWithDeterministicIds root
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "repository"
                         "create"
@@ -2663,7 +2667,7 @@ module HelpDoesNotReadConfigTests =
                 ]
 
             for args, createdIdOptionName, resolvedLabel, requestId in cases do
-                let parseResult = GraceCommand.rootCommand.Parse(args)
+                let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
                 parseResult.Errors.Count |> should equal 0
                 let mutable generatedCount = 0
 
@@ -2699,7 +2703,7 @@ module HelpDoesNotReadConfigTests =
             let explicitId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "repository"
                         "create"
@@ -2744,7 +2748,7 @@ module HelpDoesNotReadConfigTests =
             writeValidConfigWithDeterministicIds root
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     [|
                         "branch"
                         "create"
@@ -2774,7 +2778,7 @@ module HelpDoesNotReadConfigTests =
             let branchId = Guid.NewGuid()
             writeValidConfig root ownerId orgId repoId branchId
 
-            let parseResult = GraceCommand.rootCommand.Parse([| "authorize"; "grant-role" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "authorize"; "grant-role" |])
             let graceIds = Services.getNormalizedIdsAndNames parseResult
 
             graceIds.OwnerId |> should equal ownerId

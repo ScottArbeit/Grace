@@ -855,8 +855,55 @@ module GraceCommand =
 
         current
 
-    let rootCommand =
-        // Create the root of the command tree.
+    /// Builds the `alias` command, which lists Grace's built-in command aliases.
+    let private buildAliasCommand () =
+        let Alias = Command("alias", "Display aliases for Grace commands.")
+        let ListAliases = Command("list", "Display aliases for Grace commands.")
+        ListAliases.SetAction(fun parseResult -> renderAliases parseResult)
+        Alias.Subcommands.Add(ListAliases)
+        Alias
+
+    /// Every top-level command's name and aliases, in help order, paired with the function that builds its subtree.
+    ///
+    /// Reading a command's `Build` value initializes that command's whole source file, so startup builds only the entry
+    /// the user asked for. A CLI test checks each entry against its command's declared name and aliases.
+    let topLevelCommands: (string array * (unit -> Command)) array =
+        [|
+            [| "connect" |], (fun () -> Connect.Build)
+            [| "watch"; "w" |], (fun () -> Watch.Build)
+            [| "branch"; "br" |], (fun () -> Branch.Build)
+            [| "directory-version"; "dv"; "ver" |], (fun () -> DirectoryVersion.Build)
+            [| "diff" |], (fun () -> Diff.Build)
+            [| "repository"; "repo" |], (fun () -> Repository.Build)
+            [| "library" |], (fun () -> LibraryCommand.Build)
+            [| "organization"; "org" |], (fun () -> Organization.Build)
+            [| "owner" |], (fun () -> Owner.Build)
+            [| "config" |], (fun () -> Config.Build)
+            [| "history" |], (fun () -> History.Build)
+            [| "authenticate"; "authn" |], (fun () -> Auth.Build)
+            [| "maintenance"; "maint" |], (fun () -> Maintenance.Build)
+            [| "doctor" |], (fun () -> Doctor.Build)
+            [|
+                "workitem"
+                "work"
+                "work-item"
+                "wi"
+            |],
+            (fun () -> WorkItemCommand.Build)
+            [| "review" |], (fun () -> ReviewCommand.Build)
+            [| "candidate" |], (fun () -> CandidateCommand.Build)
+            [| "queue" |], (fun () -> QueueCommand.Build)
+            [| "webhook" |], (fun () -> WebhookCommand.Build)
+            [| "approval" |], (fun () -> ApprovalCommand.Build)
+            [| "promotion-set"; "prset" |], (fun () -> PromotionSetCommand.Build)
+            [| "agent" |], (fun () -> AgentCommand.Build)
+            [| "admin" |], (fun () -> Admin.Build)
+            [| "authorize"; "authz" |], (fun () -> Access.Build)
+            [| "alias" |], buildAliasCommand
+        |]
+
+    /// Creates the root command with Grace's global options and the given top-level commands.
+    let private createRootCommand (subcommands: Command seq) =
         let rootCommand = new RootCommand("Grace Version Control System")
 
         // Turning this off means getting much more flexible in our input handling, and that's not happening for a while.
@@ -870,38 +917,136 @@ module GraceCommand =
         rootCommand.Options.Add(Options.examples)
         rootCommand.Options.Add(Options.select)
 
-        // Add subcommands.
-        rootCommand.Subcommands.Add(Connect.Build)
-        rootCommand.Subcommands.Add(Watch.Build)
-        rootCommand.Subcommands.Add(Branch.Build)
-        rootCommand.Subcommands.Add(DirectoryVersion.Build)
-        rootCommand.Subcommands.Add(Diff.Build)
-        rootCommand.Subcommands.Add(Repository.Build)
-        rootCommand.Subcommands.Add(LibraryCommand.Build)
-        rootCommand.Subcommands.Add(Organization.Build)
-        rootCommand.Subcommands.Add(Owner.Build)
-        rootCommand.Subcommands.Add(Config.Build)
-        rootCommand.Subcommands.Add(History.Build)
-        rootCommand.Subcommands.Add(Auth.Build)
-        rootCommand.Subcommands.Add(Maintenance.Build)
-        rootCommand.Subcommands.Add(Doctor.Build)
-        rootCommand.Subcommands.Add(WorkItemCommand.Build)
-        rootCommand.Subcommands.Add(ReviewCommand.Build)
-        rootCommand.Subcommands.Add(CandidateCommand.Build)
-        rootCommand.Subcommands.Add(QueueCommand.Build)
-        rootCommand.Subcommands.Add(WebhookCommand.Build)
-        rootCommand.Subcommands.Add(ApprovalCommand.Build)
-        rootCommand.Subcommands.Add(PromotionSetCommand.Build)
-        rootCommand.Subcommands.Add(AgentCommand.Build)
-        rootCommand.Subcommands.Add(Admin.Build)
-        rootCommand.Subcommands.Add(Access.Build)
+        for subcommand in subcommands do
+            rootCommand.Subcommands.Add(subcommand)
 
-        let Alias = Command("alias", "Display aliases for Grace commands.")
-        let ListAliases = Command("list", "Display aliases for Grace commands.")
-        ListAliases.SetAction(fun parseResult -> renderAliases parseResult)
-        Alias.Subcommands.Add(ListAliases)
-        rootCommand.Subcommands.Add(Alias)
         rootCommand
+
+    /// The full command tree (every top-level command), as root help, suggestions, and tests see it. Wrapped in `lazy`
+    /// so reading other values in this file at startup doesn't build every command.
+    let fullRootCommand = lazy (createRootCommand [ for (_, build) in topLevelCommands -> build () ])
+
+    /// Builds the root command for one invocation. When `topLevelToken` exactly names a top-level command or alias (the
+    /// same ordinal match System.CommandLine uses), only that command's subtree is built; otherwise (root help, no
+    /// command, typos, other casing) the full tree is used so help and suggestions still see every command.
+    let buildRootCommand (topLevelToken: string option) =
+        let selected =
+            topLevelToken
+            |> Option.bind (fun token ->
+                topLevelCommands
+                |> Array.tryFind (fun (names, _) ->
+                    names
+                    |> Array.exists (fun name -> String.Equals(name, token, StringComparison.Ordinal))))
+
+        match selected with
+        | Some (_, build) -> createRootCommand [ build () ]
+        | None -> fullRootCommand.Value
+
+    /// The start bar Grace draws before a command runs.
+    type StartBanner =
+        /// No start bar: machine-readable or quiet output, help, introspection, or a command that draws none.
+        | NoStartBanner
+        /// The plain rule drawn for Normal output.
+        | PlainStartBanner
+        /// The rule showing the start time, drawn for Verbose output.
+        | VerboseStartBanner
+
+    /// Predicts from the arguments alone the start bar `main` draws after parsing, so it can be drawn before the command
+    /// tree is built and the user sees Grace respond right away. Expects arguments after alias expansion and output-value
+    /// canonicalization.
+    ///
+    /// A wrong "no early bar" is harmless, because `main` still draws the bar after parsing; a wrong early bar would put
+    /// a rule in front of JSON on stdout. So any option form this can't read exactly (other casing, `:` or attached
+    /// values, bundled short options, response files, a repeated `--output`) predicts no early bar.
+    let internal startBannerFromArgs (args: string array) (configurationExists: unit -> bool) =
+        let tokens =
+            if isNull args then
+                Array.empty
+            else
+                args
+                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
+
+        /// Reads an option value written directly after its name: `=value`, `:value`, or attached `value`.
+        let attachedValue (nameLength: int) (token: string) =
+            let rest = token.Substring(nameLength)
+
+            if
+                rest.StartsWith("=", StringComparison.Ordinal)
+                || rest.StartsWith(":", StringComparison.Ordinal)
+            then
+                rest.Substring(1)
+            else
+                rest
+
+        // Every output value supplied, in any form System.CommandLine accepts. Anything starting with `--output` or `-o`
+        // counts, so an unreadable form never looks like Normal output.
+        let outputValues =
+            tokens
+            |> Array.indexed
+            |> Array.choose (fun (index, token) ->
+                if
+                    token.Equals(OptionName.Output, StringComparison.OrdinalIgnoreCase)
+                    || token.Equals("-o", StringComparison.OrdinalIgnoreCase)
+                then
+                    Some(if index + 1 < tokens.Length then tokens[index + 1] else String.Empty)
+                elif token.StartsWith(OptionName.Output, StringComparison.OrdinalIgnoreCase) then
+                    Some(attachedValue OptionName.Output.Length token)
+                elif
+                    token.StartsWith("-o", StringComparison.OrdinalIgnoreCase)
+                    && not (token.StartsWith("--", StringComparison.Ordinal))
+                then
+                    Some(attachedValue "-o".Length token)
+                elif token.StartsWith("-", StringComparison.Ordinal)
+                     && not (token.StartsWith("--", StringComparison.Ordinal))
+                     && token
+                         .Substring(1)
+                         .Contains("o", StringComparison.OrdinalIgnoreCase) then
+                    // A bundle of short options such as `-do Json` may include -o; its value can't be read here.
+                    Some String.Empty
+                else
+                    None)
+
+        let drawsNoBars =
+            tokens
+            |> Array.exists (fun token ->
+                helpOptions
+                |> Array.exists (fun helpOption -> helpOption.Equals(token, StringComparison.OrdinalIgnoreCase))
+                || token.StartsWith(OptionName.Schema, StringComparison.OrdinalIgnoreCase)
+                || token.StartsWith(OptionName.Examples, StringComparison.OrdinalIgnoreCase)
+                || token.StartsWith(OptionName.Select, StringComparison.OrdinalIgnoreCase)
+                || token.Equals("get-directory-version-observation", StringComparison.OrdinalIgnoreCase)
+                // A response file (`@file`) can supply any option, including --output Json.
+                || token.StartsWith("@", StringComparison.Ordinal))
+
+        let isRecognizedCommand =
+            match tryGetTopLevelCommandFromArgs args false with
+            | Some token when not (token.Equals("doctor", StringComparison.Ordinal)) ->
+                topLevelCommands
+                |> Array.exists (fun (names, _) ->
+                    names
+                    |> Array.exists (fun name -> name.Equals(token, StringComparison.Ordinal)))
+            | _ -> false
+
+        if not isRecognizedCommand || drawsNoBars then
+            NoStartBanner
+        else
+            // System.CommandLine rejects a repeated --output, so only zero or one exactly-canonical value draws early.
+            match outputValues with
+            | [||]
+            | [| "Normal" |] -> if configurationExists () then PlainStartBanner else NoStartBanner
+            | [| "Verbose" |] -> if configurationExists () then VerboseStartBanner else NoStartBanner
+            | _ -> NoStartBanner
+
+    /// Draws the start bar for the given banner kind.
+    let private writeStartBanner (banner: StartBanner) (startTime: Instant) =
+        match banner with
+        | NoStartBanner -> ()
+        | PlainStartBanner -> AnsiConsole.Write(new Rule())
+        | VerboseStartBanner ->
+            AnsiConsole.Write(
+                (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                    .RightJustified()
+            )
 
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
@@ -1026,7 +1171,7 @@ module GraceCommand =
         let normalizedArgs = args |> Array.copy
 
         if isCaseInsensitive then
-            let canonicalOutputFormats = listCases<OutputFormat> () |> Seq.toArray
+            let canonicalOutputFormats = OutputFormat.Names |> Seq.toArray
 
             /// Maps a recognized output spelling to the canonical value advertised by CLI help.
             let tryCanonicalOutputFormat value =
@@ -1101,6 +1246,10 @@ module GraceCommand =
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant ()
+
+        // Read an existing user configuration (warming Grace's JSON serializer) on a background thread while the command runs,
+        // so history recording at exit doesn't wait for it.
+        let userConfigurationPreload = Task.Run<HistoryStorage.PreloadedUserConfiguration option>(fun () -> HistoryStorage.preloadUserConfiguration ())
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
@@ -1209,6 +1358,10 @@ module GraceCommand =
 
         let mutable argvNormalized = normalizeArgsForHistory (normalizeOutputArguments args isCaseInsensitive)
 
+        // Draw the start bar now, before the command tree is built, when the arguments show the command will draw one.
+        let earlyStartBanner = startBannerFromArgs argvNormalized configurationFileExists
+        writeStartBanner earlyStartBanner startTime
+
         (task {
             let mutable parseResult: ParseResult = null
             let mutable returnValue: int = 0
@@ -1225,6 +1378,9 @@ module GraceCommand =
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
                     let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
+
+                    // Build only the requested top-level command's subtree; unrecognized input gets the full tree.
+                    let rootCommand = buildRootCommand (tryGetTopLevelCommandFromArgs argvToParse false)
 
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
@@ -1441,19 +1597,13 @@ module GraceCommand =
                                 Common.writeJsonErrorStdout error
                                 returnValue <- -1
                             else
+                                // Draw the start bar here unless it was already drawn before the command tree was built.
                                 if
-                                    (parseResult |> hasOutput)
+                                    earlyStartBanner = NoStartBanner
+                                    && (parseResult |> hasOutput)
                                     && not (parseResult |> json)
                                 then
-                                    if parseResult |> verbose then
-                                        AnsiConsole.Write(
-                                            (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                                .RightJustified()
-                                        )
-
-                                    //printParseResult parseResult
-                                    else
-                                        AnsiConsole.Write(new Rule())
+                                    writeStartBanner (if parseResult |> verbose then VerboseStartBanner else PlainStartBanner) startTime
 
                                 // If this instance isn't foreground `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
                                 if not <| (parseResult |> isGraceWatchForeground) then
@@ -1474,11 +1624,10 @@ module GraceCommand =
                                 if parseResult |> isGraceWatchForeground then
                                     logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
-                                // If we're writing output, write the final Rule() to the console.
-                                if
-                                    (parseResult |> hasOutput)
-                                    && not (parseResult |> json)
-                                then
+                                // If we're writing output, or already drew the start bar, write the final Rule() to the console.
+                                if earlyStartBanner <> NoStartBanner
+                                   || ((parseResult |> hasOutput)
+                                       && not (parseResult |> json)) then
                                     let finishTime = getCurrentInstant ()
 
                                     let elapsed =
@@ -1533,7 +1682,7 @@ module GraceCommand =
                                  |> Seq.exists (fun cmd -> cmd.Name.Equals("authorize", comparison)))
                                 && (commandLineage
                                     |> Seq.exists (fun cmd -> cmd.Name.Equals("check", comparison)))
-                                && String.Equals(parseResult.GetValue<string>(OptionName.ResourceKind), "system", comparison)
+                                && String.Equals(getValueByName<string> parseResult OptionName.ResourceKind, "system", comparison)
 
                             isAgentBootstrap
                             || isSystemAuthorizationCheck
@@ -1597,7 +1746,14 @@ module GraceCommand =
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
                 then
-                    HistoryStorage.tryRecordInvocation
+                    let preloadedUserConfiguration =
+                        try
+                            userConfigurationPreload.GetAwaiter().GetResult()
+                        with
+                        | _ -> None
+
+                    HistoryStorage.tryRecordInvocationWith
+                        preloadedUserConfiguration
                         {
                             argvOriginal = argvOriginal
                             argvNormalized = argvNormalized

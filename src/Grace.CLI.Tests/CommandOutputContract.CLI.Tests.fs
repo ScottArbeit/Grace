@@ -99,7 +99,7 @@ module CommandOutputContractRegistryTests =
     /// Finds command used by the test scenario.
     let private findCommand (commandPath: string list) =
         /// Tracks current changes so this scenario can assert the resulting side effect explicitly.
-        let mutable current: Command = GraceCommand.rootCommand :> Command
+        let mutable current: Command = GraceCommand.fullRootCommand.Value :> Command
 
         for commandName in commandPath do
             current <-
@@ -200,7 +200,7 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``every live leaf command has exactly one output contract`` () =
         let discovered =
-            CommandOutputContract.discoverLeafCommands GraceCommand.rootCommand
+            CommandOutputContract.discoverLeafCommands GraceCommand.fullRootCommand.Value
             |> List.map commandId
 
         let registered =
@@ -393,7 +393,7 @@ module CommandOutputContractRegistryTests =
         let parserInvalidEntries =
             supportedEntries
             |> List.choose (fun entry ->
-                let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+                let parseResult = GraceCommand.fullRootCommand.Value.Parse(auditParseArgs entry)
 
                 if parseResult.Errors.Count = 0 then
                     None
@@ -411,7 +411,7 @@ module CommandOutputContractRegistryTests =
             |> fun errors -> Assert.Fail($"Expected parser-valid audit paths for supported entries:{Environment.NewLine}{errors}")
 
         for entry in supportedEntries do
-            let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse(auditParseArgs entry)
 
             parseResult.Errors.Count |> should equal 0
 
@@ -457,7 +457,7 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``representative local dto envelopes use shared serializer contract`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "--output"
                     "Json"
@@ -521,7 +521,7 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``maintenance list contents local dto serializes explicit dual hash fields`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "--output"
                     "Json"

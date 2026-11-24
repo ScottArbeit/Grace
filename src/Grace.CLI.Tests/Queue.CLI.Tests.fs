@@ -36,7 +36,7 @@ module QueueCommandTests =
     [<Test>]
     let ``queue enqueue rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "queue"
                                     "enqueue"
                                     "--branch-id"
@@ -52,7 +52,7 @@ module QueueCommandTests =
     [<Test>]
     let ``queue enqueue rejects invalid work item id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "queue"
                                     "enqueue"
                                     "--branch-id"
@@ -68,7 +68,7 @@ module QueueCommandTests =
     [<Test>]
     let ``queue dequeue rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "queue"
                                     "dequeue"
                                     "--branch-id"
