@@ -14,7 +14,7 @@ module DoctorCliParsingTests =
     [<Test>]
     let ``doctor command accepts v1 options`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 [|
                     "doctor"
                     "--full"
@@ -47,14 +47,14 @@ module DoctorCliParsingTests =
             ]
 
         for args in cases do
-            let parseResult = GraceCommand.rootCommand.Parse(args)
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
 
             parseResult.Errors.Count |> should equal 0
 
     /// Verifies that doctor command rejects repair option in scaffold slice.
     [<Test>]
     let ``doctor command rejects repair option in scaffold slice`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "doctor"; "--repair" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "doctor"; "--repair" |])
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)
@@ -62,7 +62,7 @@ module DoctorCliParsingTests =
     /// Verifies that doctor command rejects check option without value.
     [<TestCaseSource(nameof emptyCheckCases)>]
     let ``doctor command rejects check option without value`` (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)

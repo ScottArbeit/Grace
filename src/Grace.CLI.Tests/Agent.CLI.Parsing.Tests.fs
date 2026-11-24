@@ -29,7 +29,7 @@ module AgentCommandParsingTests =
     [<Test>]
     let ``agent add-summary accepts numeric work item identifier`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "agent"
                            "add-summary"
                            "--work-item-id"
@@ -44,7 +44,7 @@ module AgentCommandParsingTests =
     [<Test>]
     let ``agent add-summary accepts guid work item identifier`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "agent"
                            "add-summary"
                            "--work-item-id"
@@ -61,7 +61,7 @@ module AgentCommandParsingTests =
         let promotionSetId = Guid.NewGuid().ToString()
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "agent"
                            "add-summary"
                            "--work-item-id"

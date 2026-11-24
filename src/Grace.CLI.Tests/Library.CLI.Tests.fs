@@ -59,7 +59,7 @@ module LibraryCommandTests =
     /// Parses the actual command with explicit scope and the chosen optional arguments.
     let private parse verb options =
         let parsed =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 Array.concat [ [|
                                    "library"
                                    verb

@@ -27,12 +27,12 @@ module WorkItemCommandParsingTests =
 
     /// Asserts that parses without errors matches the expected contract.
     let private assertParsesWithoutErrors (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
         parseResult.Errors.Count |> should equal 0
 
     /// Asserts that the actual root parser rejects the supplied command line.
     let private assertRejected (args: string array) =
-        let parseResult = GraceCommand.rootCommand.Parse(args)
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args)
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
     /// Builds attachments args for test scenarios.
@@ -181,7 +181,7 @@ module WorkItemCommandParsingTests =
         )
         =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "workitem"
                            "set-status"
                            workItemIdentifier
@@ -281,7 +281,7 @@ module WorkItemCommandParsingTests =
                     "content"
                 |]
             |> withIds
-            |> GraceCommand.rootCommand.Parse
+            |> GraceCommand.fullRootCommand.Value.Parse
 
         parseResult.Errors.Count |> should equal 0
 
@@ -319,7 +319,7 @@ module WorkItemCommandParsingTests =
             args.Add("--output")
             args.Add("Json")
 
-        let parseResult = GraceCommand.rootCommand.Parse(args.ToArray())
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse(args.ToArray())
         parseResult.Errors.Count |> should equal 0
 
         parseResult.CommandResult.Command.Action.GetType()
@@ -460,7 +460,7 @@ module WorkItemCommandParsingTests =
     /// Verifies that work link artifact command is unavailable.
     [<Test>]
     let ``work link artifact command is unavailable`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "work"; "link"; "artifact" |])
+        let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "work"; "link"; "artifact" |])
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
@@ -474,7 +474,7 @@ module WorkItemCommandParsingTests =
     [<Test>]
     let ``workitem attachments show rejects invalid type values during parse`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "workitem"
                            "attachments"
                            "show"
@@ -489,7 +489,7 @@ module WorkItemCommandParsingTests =
     [<Test>]
     let ``workitem attachments download requires artifact id and output file options`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIds [| "workitem"
                            "attachments"
                            "download"

@@ -855,8 +855,55 @@ module GraceCommand =
 
         current
 
-    let rootCommand =
-        // Create the root of the command tree.
+    /// Builds the `alias` command, which lists Grace's built-in command aliases.
+    let private buildAliasCommand () =
+        let Alias = Command("alias", "Display aliases for Grace commands.")
+        let ListAliases = Command("list", "Display aliases for Grace commands.")
+        ListAliases.SetAction(fun parseResult -> renderAliases parseResult)
+        Alias.Subcommands.Add(ListAliases)
+        Alias
+
+    /// Every top-level command's name and aliases, in help order, paired with the function that builds its subtree.
+    ///
+    /// Reading a command's `Build` value initializes that command's whole source file, so startup builds only the entry
+    /// the user asked for. A CLI test keeps this table in step with the full command tree.
+    let topLevelCommands: (string array * (unit -> Command)) array =
+        [|
+            [| "connect" |], (fun () -> Connect.Build)
+            [| "watch"; "w" |], (fun () -> Watch.Build)
+            [| "branch"; "br" |], (fun () -> Branch.Build)
+            [| "directory-version"; "dv"; "ver" |], (fun () -> DirectoryVersion.Build)
+            [| "diff" |], (fun () -> Diff.Build)
+            [| "repository"; "repo" |], (fun () -> Repository.Build)
+            [| "library" |], (fun () -> LibraryCommand.Build)
+            [| "organization"; "org" |], (fun () -> Organization.Build)
+            [| "owner" |], (fun () -> Owner.Build)
+            [| "config" |], (fun () -> Config.Build)
+            [| "history" |], (fun () -> History.Build)
+            [| "authenticate"; "authn" |], (fun () -> Auth.Build)
+            [| "maintenance"; "maint" |], (fun () -> Maintenance.Build)
+            [| "doctor" |], (fun () -> Doctor.Build)
+            [|
+                "workitem"
+                "work"
+                "work-item"
+                "wi"
+            |],
+            (fun () -> WorkItemCommand.Build)
+            [| "review" |], (fun () -> ReviewCommand.Build)
+            [| "candidate" |], (fun () -> CandidateCommand.Build)
+            [| "queue" |], (fun () -> QueueCommand.Build)
+            [| "webhook" |], (fun () -> WebhookCommand.Build)
+            [| "approval" |], (fun () -> ApprovalCommand.Build)
+            [| "promotion-set"; "prset" |], (fun () -> PromotionSetCommand.Build)
+            [| "agent" |], (fun () -> AgentCommand.Build)
+            [| "admin" |], (fun () -> Admin.Build)
+            [| "authorize"; "authz" |], (fun () -> Access.Build)
+            [| "alias" |], buildAliasCommand
+        |]
+
+    /// Creates the root command with Grace's global options and the given top-level commands.
+    let private createRootCommand (subcommands: Command seq) =
         let rootCommand = new RootCommand("Grace Version Control System")
 
         // Turning this off means getting much more flexible in our input handling, and that's not happening for a while.
@@ -870,38 +917,30 @@ module GraceCommand =
         rootCommand.Options.Add(Options.examples)
         rootCommand.Options.Add(Options.select)
 
-        // Add subcommands.
-        rootCommand.Subcommands.Add(Connect.Build)
-        rootCommand.Subcommands.Add(Watch.Build)
-        rootCommand.Subcommands.Add(Branch.Build)
-        rootCommand.Subcommands.Add(DirectoryVersion.Build)
-        rootCommand.Subcommands.Add(Diff.Build)
-        rootCommand.Subcommands.Add(Repository.Build)
-        rootCommand.Subcommands.Add(LibraryCommand.Build)
-        rootCommand.Subcommands.Add(Organization.Build)
-        rootCommand.Subcommands.Add(Owner.Build)
-        rootCommand.Subcommands.Add(Config.Build)
-        rootCommand.Subcommands.Add(History.Build)
-        rootCommand.Subcommands.Add(Auth.Build)
-        rootCommand.Subcommands.Add(Maintenance.Build)
-        rootCommand.Subcommands.Add(Doctor.Build)
-        rootCommand.Subcommands.Add(WorkItemCommand.Build)
-        rootCommand.Subcommands.Add(ReviewCommand.Build)
-        rootCommand.Subcommands.Add(CandidateCommand.Build)
-        rootCommand.Subcommands.Add(QueueCommand.Build)
-        rootCommand.Subcommands.Add(WebhookCommand.Build)
-        rootCommand.Subcommands.Add(ApprovalCommand.Build)
-        rootCommand.Subcommands.Add(PromotionSetCommand.Build)
-        rootCommand.Subcommands.Add(AgentCommand.Build)
-        rootCommand.Subcommands.Add(Admin.Build)
-        rootCommand.Subcommands.Add(Access.Build)
+        for subcommand in subcommands do
+            rootCommand.Subcommands.Add(subcommand)
 
-        let Alias = Command("alias", "Display aliases for Grace commands.")
-        let ListAliases = Command("list", "Display aliases for Grace commands.")
-        ListAliases.SetAction(fun parseResult -> renderAliases parseResult)
-        Alias.Subcommands.Add(ListAliases)
-        rootCommand.Subcommands.Add(Alias)
         rootCommand
+
+    /// The full command tree (every top-level command), as root help, suggestions, and tests see it. Wrapped in `lazy`
+    /// so reading other values in this file at startup doesn't build every command.
+    let fullRootCommand = lazy (createRootCommand [ for (_, build) in topLevelCommands -> build () ])
+
+    /// Builds the root command for one invocation. When `topLevelToken` exactly names a top-level command or alias (the
+    /// same ordinal match System.CommandLine uses), only that command's subtree is built; otherwise (root help, no
+    /// command, typos, other casing) the full tree is used so help and suggestions still see every command.
+    let buildRootCommand (topLevelToken: string option) =
+        let selected =
+            topLevelToken
+            |> Option.bind (fun token ->
+                topLevelCommands
+                |> Array.tryFind (fun (names, _) ->
+                    names
+                    |> Array.exists (fun name -> String.Equals(name, token, StringComparison.Ordinal))))
+
+        match selected with
+        | Some (_, build) -> createRootCommand [ build () ]
+        | None -> fullRootCommand.Value
 
     ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
     //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
@@ -1226,6 +1265,9 @@ module GraceCommand =
 
                     let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
 
+                    // Build only the requested top-level command's subtree; unrecognized input gets the full tree.
+                    let rootCommand = buildRootCommand (tryGetTopLevelCommandFromArgs argvToParse false)
+
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
 
@@ -1533,7 +1575,7 @@ module GraceCommand =
                                  |> Seq.exists (fun cmd -> cmd.Name.Equals("authorize", comparison)))
                                 && (commandLineage
                                     |> Seq.exists (fun cmd -> cmd.Name.Equals("check", comparison)))
-                                && String.Equals(parseResult.GetValue<string>(OptionName.ResourceKind), "system", comparison)
+                                && String.Equals(getValueByName<string> parseResult OptionName.ResourceKind, "system", comparison)
 
                             isAgentBootstrap
                             || isSystemAuthorizationCheck

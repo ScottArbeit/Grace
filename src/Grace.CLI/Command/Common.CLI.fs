@@ -408,14 +408,13 @@ module Common =
 
         /// Defines the shared explicit option value parser option used by multiple Grace commands.
         let private explicitOptionValue (optionName: string) algorithm (parseResult: ParseResult) =
-            let result = parseResult.GetResult(optionName)
+            let result = getResultByName parseResult optionName
 
             if isNull result then
                 None
             else
-                match
-                    parseResult.GetValue<string>(optionName)
-                    |> normalizeVersionHashPrefix algorithm optionName
+                match getValueByName<string> parseResult optionName
+                      |> normalizeVersionHashPrefix algorithm optionName
                     with
                 | Ok normalized -> Some normalized
                 | Error _ -> None
@@ -444,19 +443,21 @@ module Common =
         /// Normalizes bind version hash display mode values used by hash-based version lookup and display options.
         let bindVersionHashDisplayMode (parseResult: ParseResult) =
             /// Evaluates has option against parsed options and command state.
-            let hasOption (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
+            let hasOption (optionName: string) =
+                not
+                <| isNull (getResultByName parseResult optionName)
 
             let fullHashes =
                 hasOption OptionName.FullHashes
-                && parseResult.GetValue<bool>(OptionName.FullHashes)
+                && getValueByName<bool> parseResult OptionName.FullHashes
 
             let showSha256 =
                 hasOption OptionName.ShowSha256
-                && parseResult.GetValue<bool>(OptionName.ShowSha256)
+                && getValueByName<bool> parseResult OptionName.ShowSha256
 
             let deprecatedFullSha =
                 hasOption OptionName.FullSha
-                && parseResult.GetValue<bool>(OptionName.FullSha)
+                && getValueByName<bool> parseResult OptionName.FullSha
 
             { FullHashes = fullHashes || deprecatedFullSha; ShowSha256 = showSha256 || deprecatedFullSha; UsedDeprecatedFullSha = deprecatedFullSha }
 
@@ -501,7 +502,7 @@ module Common =
         if isNull parseResult then
             None
         else
-            let result = parseResult.GetResult(OptionName.Source)
+            let result = getResultByName parseResult OptionName.Source
 
             if isNull result then
                 None
@@ -512,7 +513,7 @@ module Common =
                     if optionResult.Implicit then
                         None
                     else
-                        parseResult.GetValue<string>(OptionName.Source)
+                        getValueByName<string> parseResult OptionName.Source
                         |> normalizeSource
                 with
                 | :? InvalidOperationException -> None
@@ -529,8 +530,8 @@ module Common =
     module Validations =
         /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.
         let mustBeAValidGraceName<'T when 'T :> IErrorDiscriminatedUnion> (parseResult: ParseResult) (optionName: string) (error: 'T) =
-            let result = parseResult.GetResult(optionName)
-            let value = parseResult.GetValue<string>(optionName)
+            let result = getResultByName parseResult optionName
+            let value = getValueByName<string> parseResult optionName
 
             if result <> null
                && not <| Constants.GraceNameRegex.IsMatch(value) then
@@ -539,7 +540,7 @@ module Common =
                 Ok(parseResult)
 
         let ``Option must be present`` (optionName: string) (error: IErrorDiscriminatedUnion) (parseResult: ParseResult) =
-            let result = parseResult.GetResult(optionName)
+            let result = getResultByName parseResult optionName
 
             if isNull result then
                 Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
@@ -567,9 +568,9 @@ module Common =
 
             // Only perform this validation if the command has an OwnerId option.
             if command.Options.Any(fun option -> option.Name = OptionName.OwnerId) then
-                let ownerIdResult = parseResult.GetResult(OptionName.OwnerId) :?> OptionResult
-                let ownerId = parseResult.GetValue<Guid>(OptionName.OwnerId)
-                let ownerName = parseResult.GetValue<string>(OptionName.OwnerName)
+                let ownerIdResult = getResultByName parseResult OptionName.OwnerId :?> OptionResult
+                let ownerId = getValueByName<Guid> parseResult OptionName.OwnerId
+                let ownerName = getValueByName<string> parseResult OptionName.OwnerName
 
                 let isOk =
                     ownerIdResult.Implicit
@@ -588,8 +589,8 @@ module Common =
             let command = parseResult.CommandResult.Command
             // Only perform this validation if the command has an OrganizationId option.
             if command.Options.Any(fun option -> option.Name = OptionName.OrganizationId) then
-                let organizationId = parseResult.GetValue<Guid>(OptionName.OrganizationId)
-                let organizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+                let organizationId = getValueByName<Guid> parseResult OptionName.OrganizationId
+                let organizationName = getValueByName<string> parseResult OptionName.OrganizationName
 
                 if
                     organizationId = Guid.Empty
@@ -609,8 +610,8 @@ module Common =
             let command = parseResult.CommandResult.Command
             // Only perform this validation if the command has a RepositoryId option.
             if command.Options.Any(fun option -> option.Name = OptionName.RepositoryId) then
-                let repositoryId = parseResult.GetValue<Guid>(OptionName.RepositoryId)
-                let repositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+                let repositoryId = getValueByName<Guid> parseResult OptionName.RepositoryId
+                let repositoryName = getValueByName<string> parseResult OptionName.RepositoryName
 
                 if
                     repositoryId = Guid.Empty
@@ -627,8 +628,8 @@ module Common =
             let command = parseResult.CommandResult.Command
             // Only perform this validation if the command has a BranchId option.
             if command.Options.Any(fun option -> option.Name = OptionName.BranchId) then
-                let branchId = parseResult.GetValue<Guid>(OptionName.BranchId)
-                let branchName = parseResult.GetValue<string>(OptionName.BranchName)
+                let branchId = getValueByName<Guid> parseResult OptionName.BranchId
+                let branchName = getValueByName<string> parseResult OptionName.BranchName
 
                 if
                     branchId = Guid.Empty
@@ -684,7 +685,7 @@ module Common =
         if isNull parseResult then
             None
         else
-            let result = parseResult.GetResult(OptionName.Select)
+            let result = getResultByName parseResult OptionName.Select
 
             if isNull result then
                 None
@@ -763,7 +764,7 @@ module Common =
 
     /// Returns the symbolic human display for an omitted GUID option without resolving configuration or generating an identity.
     let private tryGetImplicitGuidDisplay (parseResult: ParseResult) (option: Option) (value: obj) =
-        let optionResult = parseResult.GetResult(option.Name) :?> OptionResult
+        let optionResult = getResultByName parseResult option.Name :?> OptionResult
 
         if isNull optionResult
            || not optionResult.Implicit
@@ -855,7 +856,7 @@ module Common =
 
                 /// Tries to map get value and returns a GraceError instead of throwing on unsupported input.
                 let tryGetValue (option: Option) =
-                    let result = parseResult.GetResult(option.Name)
+                    let result = getResultByName parseResult option.Name
 
                     if isNull result then
                         None
@@ -922,7 +923,7 @@ module Common =
     /// Resolves one create-owned hierarchy identity exactly once while preserving explicit IDs and all parsed names.
     let internal resolveCreateGraceIdsWith (newGuid: unit -> Guid) (createdIdOptionName: string) (parseResult: ParseResult) =
         let graceIds = Services.getNormalizedIdsAndNames parseResult
-        let optionResult = parseResult.GetResult(createdIdOptionName) :?> OptionResult
+        let optionResult = getResultByName parseResult createdIdOptionName :?> OptionResult
 
         if isNull optionResult || not optionResult.Implicit then
             graceIds

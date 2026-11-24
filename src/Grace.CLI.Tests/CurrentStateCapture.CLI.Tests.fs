@@ -236,7 +236,7 @@ module CurrentStateCaptureCliTests =
         try
             Directory.CreateDirectory(root) |> ignore
             Environment.CurrentDirectory <- root
-            parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+            parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
             let configuration = configureForRoot root
             action root configuration
         finally

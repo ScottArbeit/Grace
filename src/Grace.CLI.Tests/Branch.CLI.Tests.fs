@@ -153,7 +153,7 @@ module BranchCommandTests =
             |]
 
     /// Parses representative arguments through the production CLI parser for CLI branch assertions.
-    let private parse args = GraceCommand.rootCommand.Parse(withIds args)
+    let private parse args = GraceCommand.fullRootCommand.Value.Parse(withIds args)
 
     /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
@@ -240,7 +240,7 @@ module BranchCommandTests =
         Directory.CreateDirectory(graceDir) |> ignore
         File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{}")
         Environment.CurrentDirectory <- tempDir
-        Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+        Services.parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
         resetConfiguration ()
 
         let configuration = Current()

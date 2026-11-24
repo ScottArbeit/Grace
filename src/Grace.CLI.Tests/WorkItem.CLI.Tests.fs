@@ -241,7 +241,7 @@ module WorkItemCommandTests =
         assertDescriptionSetDoesNotDispatch (fun serverUri ->
             withTemporaryGraceConfiguration serverUri (fun _ ->
                 let parseResult =
-                    GraceCommand.rootCommand.Parse(
+                    GraceCommand.fullRootCommand.Value.Parse(
                         withIdsAndSilent [| "workitem"
                                             "description"
                                             "set"
@@ -258,7 +258,7 @@ module WorkItemCommandTests =
             captureDescriptionSetRequest (fun serverUri ->
                 withTemporaryGraceConfiguration serverUri (fun _ ->
                     let parseResult =
-                        GraceCommand.rootCommand.Parse(
+                        GraceCommand.fullRootCommand.Value.Parse(
                             withIdsAndSilent [| "workitem"
                                                 "description"
                                                 "set"
@@ -297,7 +297,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem show rejects invalid work item identifier`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "show"
                                     "not-a-guid" |]
@@ -310,7 +310,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem set-status rejects invalid work item identifier through its bound action`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "set-status"
                                     "not-a-work-item"
@@ -332,7 +332,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem description set rejects invalid work item identifier through its bound action`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "description"
                                     "set"
@@ -355,7 +355,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem description clear rejects invalid work item identifier through its bound action`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "description"
                                     "clear"
@@ -518,7 +518,7 @@ module WorkItemCommandTests =
             Console.SetIn(input)
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     withIds [| "workitem"
                                "description"
                                "set"
@@ -561,7 +561,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem link ref rejects invalid reference id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "link"
                                     "ref"
@@ -576,7 +576,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``work link prset rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "work"
                                     "link"
                                     "prset"
@@ -591,7 +591,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem attachments add requires exactly one input source`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "attachments"
                                     "add"
@@ -607,7 +607,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem attachments add rejects multiple input sources`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "attachments"
                                     "add"
@@ -626,7 +626,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem attachments download rejects invalid artifact id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "attachments"
                                     "download"
@@ -644,7 +644,7 @@ module WorkItemCommandTests =
     [<Test>]
     let ``workitem attachments download rejects invalid output file path`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "workitem"
                                     "attachments"
                                     "download"
@@ -687,7 +687,7 @@ module WorkItemCommandTests =
         let parseResult =
             args.ToArray()
             |> withIdsAndSilent
-            |> GraceCommand.rootCommand.Parse
+            |> GraceCommand.fullRootCommand.Value.Parse
 
         if selectedCount = 1 then
             parseResult.Errors.Count = 0

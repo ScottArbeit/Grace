@@ -943,7 +943,7 @@ module ConnectTests =
         try
             Console.SetOut(writer)
             setAnsiConsoleOutput writer
-            let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json"; "connect" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--output"; "Json"; "connect" |])
             let error = GraceError.Create "local update failed" "connect-output-json"
 
             Connect.renderConfiguredUpdateFailure parseResult configuration "UpdateIncomplete" error
@@ -985,7 +985,7 @@ module ConnectTests =
         try
             Console.SetOut(writer)
             setAnsiConsoleOutput writer
-            let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json"; "connect" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "--output"; "Json"; "connect" |])
 
             Connect.renderConfiguredUpdateSuccess parseResult configuration "Unchanged" "connect-output-json-success"
             |> should equal 0
@@ -1025,7 +1025,7 @@ module ConnectTests =
         try
             Console.SetOut(writer)
             setAnsiConsoleOutput writer
-            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+            let parseResult = GraceCommand.fullRootCommand.Value.Parse([| "connect" |])
             let error = GraceError.Create "local update failed" "connect-output-human"
 
             Connect.renderConfiguredUpdateFailure parseResult configuration "Rejected" error

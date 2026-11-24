@@ -4268,6 +4268,28 @@ module Services =
         || hasAlias optionName
         || hasAlias normalizedName
 
+    /// Looks up a parsed symbol by name, returning `ValueNone` when no symbol in the built command tree has that name.
+    ///
+    /// Startup builds only the requested top-level command's subtree, so shared helpers can ask for an option name that
+    /// only other commands declare. System.CommandLine throws `ArgumentException` for such names.
+    let private tryFindSymbolResultByName (parseResult: ParseResult) (name: string) =
+        try
+            ValueSome(parseResult.GetResult(name))
+        with
+        | :? ArgumentException -> ValueNone
+
+    /// Gets the parse result for a symbol by name, or null when it wasn't supplied or isn't declared in the built tree.
+    let getResultByName (parseResult: ParseResult) (name: string) : SymbolResult =
+        match tryFindSymbolResultByName parseResult name with
+        | ValueSome result -> result
+        | ValueNone -> null
+
+    /// Gets a symbol's value by name, or the type's default when no command in the built tree declares that name.
+    let getValueByName<'T> (parseResult: ParseResult) (name: string) : 'T =
+        match tryFindSymbolResultByName parseResult name with
+        | ValueSome _ -> parseResult.GetValue<'T>(name)
+        | ValueNone -> Unchecked.defaultof<'T>
+
     /// Coordinates rec behavior for this CLI command path.
     let rec private hasOptionInCommandResult (commandResult: CommandResult) (optionName: string) =
         if isNull commandResult then
@@ -4282,7 +4304,10 @@ module Services =
 
     /// Checks if an option was present in the definition of the command.
     let isOptionPresent (parseResult: ParseResult) (optionName: string) =
-        if not <| isNull (parseResult.GetResult(optionName)) then
+        if
+            not
+            <| isNull (getResultByName parseResult optionName)
+        then
             true
         else
             hasOptionInCommandResult parseResult.CommandResult optionName
@@ -4290,7 +4315,7 @@ module Services =
     /// Checks if an option was implicitly specified (i.e. the default value was used), or explicitly specified by the user.
     let isOptionResultImplicit (parseResult: ParseResult) (optionName: string) =
         if isOptionPresent parseResult optionName then
-            let result = parseResult.GetResult(optionName)
+            let result = getResultByName parseResult optionName
 
             if isNull result then
                 true
@@ -4324,13 +4349,13 @@ module Services =
             && not
                <| isOptionResultImplicit parseResult nameOption
             && not
-               <| String.IsNullOrWhiteSpace(parseResult.GetValue<string>(nameOption))
+               <| String.IsNullOrWhiteSpace(getValueByName<string> parseResult nameOption)
 
         /// Coordinates needs fallback behavior for this CLI command path.
         let needsFallback (idOption: string) (nameOption: string) =
             isOptionPresent parseResult idOption
             && isOptionResultImplicit parseResult idOption
-            && parseResult.GetValue<Guid>(idOption) = Guid.Empty
+            && getValueByName<Guid> parseResult idOption = Guid.Empty
             && not <| isExplicitName nameOption
 
         let needsConfigFallback =
@@ -4345,7 +4370,7 @@ module Services =
         let getNormalizedId (idOption: string) (nameOption: string) (configValue: Guid) =
             let isImplicit = isOptionResultImplicit parseResult idOption
             let explicitName = isExplicitName nameOption
-            let idValue = parseResult.GetValue<Guid>(idOption)
+            let idValue = getValueByName<Guid> parseResult idOption
 
             if isImplicit && explicitName then
                 Guid.Empty
@@ -4378,7 +4403,7 @@ module Services =
                 { graceIds with
                     OwnerId = ownerId
                     OwnerIdString = if ownerId = Guid.Empty then "" else $"{ownerId}"
-                    OwnerName = parseResult.GetValue<string>(OptionName.OwnerName)
+                    OwnerName = getValueByName<string> parseResult OptionName.OwnerName
                     HasOwner = true
                 }
 
@@ -4396,7 +4421,7 @@ module Services =
                 { graceIds with
                     OrganizationId = organizationId
                     OrganizationIdString = if organizationId = Guid.Empty then "" else $"{organizationId}"
-                    OrganizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+                    OrganizationName = getValueByName<string> parseResult OptionName.OrganizationName
                     HasOrganization = true
                 }
 
@@ -4414,7 +4439,7 @@ module Services =
                 { graceIds with
                     RepositoryId = repositoryId
                     RepositoryIdString = if repositoryId = Guid.Empty then "" else $"{repositoryId}"
-                    RepositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+                    RepositoryName = getValueByName<string> parseResult OptionName.RepositoryName
                     HasRepository = true
                 }
 
@@ -4432,7 +4457,7 @@ module Services =
                 { graceIds with
                     BranchId = branchId
                     BranchIdString = if branchId = Guid.Empty then "" else $"{branchId}"
-                    BranchName = parseResult.GetValue<string>(OptionName.BranchName)
+                    BranchName = getValueByName<string> parseResult OptionName.BranchName
                     HasBranch = true
                 }
 

@@ -36,7 +36,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set create rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "create"
                                     "--promotion-set"
@@ -52,7 +52,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set create rejects invalid target branch id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "create"
                                     "--target-branch-id"
@@ -66,7 +66,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set get rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "get"
                                     "--promotion-set"
@@ -80,7 +80,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set get-events rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "get-events"
                                     "--promotion-set"
@@ -94,7 +94,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set update-input-promotions rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "update-input-promotions"
                                     "--promotion-set"
@@ -112,7 +112,7 @@ module PromotionSetCommandTests =
         let missingFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json")
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "update-input-promotions"
                                     "--promotion-set"
@@ -133,7 +133,7 @@ module PromotionSetCommandTests =
             File.WriteAllText(tempFile, "this is not json")
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     withIdsAndSilent [| "promotion-set"
                                         "update-input-promotions"
                                         "--promotion-set"
@@ -151,7 +151,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set recompute rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "recompute"
                                     "--promotion-set"
@@ -165,7 +165,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set apply rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "apply"
                                     "--promotion-set"
@@ -179,7 +179,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set delete rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "delete"
                                     "--promotion-set"
@@ -193,7 +193,7 @@ module PromotionSetCommandTests =
     [<Test>]
     let ``promotion-set conflicts show rejects invalid promotion set id`` () =
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "conflicts"
                                     "show"
@@ -213,7 +213,7 @@ module PromotionSetCommandTests =
             File.WriteAllText(tempFile, "[]")
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     withIdsAndSilent [| "promotion-set"
                                         "conflicts"
                                         "resolve"
@@ -236,7 +236,7 @@ module PromotionSetCommandTests =
         let missingFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json")
 
         let parseResult =
-            GraceCommand.rootCommand.Parse(
+            GraceCommand.fullRootCommand.Value.Parse(
                 withIdsAndSilent [| "promotion-set"
                                     "conflicts"
                                     "resolve"
@@ -260,7 +260,7 @@ module PromotionSetCommandTests =
             File.WriteAllText(tempFile, "this is not json")
 
             let parseResult =
-                GraceCommand.rootCommand.Parse(
+                GraceCommand.fullRootCommand.Value.Parse(
                     withIdsAndSilent [| "promotion-set"
                                         "conflicts"
                                         "resolve"

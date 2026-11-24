@@ -389,7 +389,7 @@ module DoctorCliTests =
                     seedPendingReferenceRepair repositoryRoot bytes false
 
                 let originalParseResult = Services.parseResult
-                Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+                Services.parseResult <- GraceCommand.fullRootCommand.Value.Parse(Array.empty<string>)
 
                 let scope =
                     WorkingDirectoryUpdateCoordination.Scope.create configuration.RepositoryId configuration.RootDirectory
