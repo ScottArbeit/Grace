@@ -1141,6 +1141,10 @@ module GraceCommand =
     let main args =
         let startTime = getCurrentInstant ()
 
+        // Read the user configuration (warming Grace's JSON serializer) on a background thread while the command runs,
+        // so history recording at exit doesn't wait for it.
+        let userConfigurationPreload = Task.Run<HistoryStorage.PreloadedUserConfiguration>(fun () -> HistoryStorage.preloadUserConfiguration ())
+
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
         //memoryCache <- new MemoryCache(memoryCacheOptions)
@@ -1639,7 +1643,14 @@ module GraceCommand =
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
                 then
-                    HistoryStorage.tryRecordInvocation
+                    let preloadedUserConfiguration =
+                        try
+                            Some(userConfigurationPreload.GetAwaiter().GetResult())
+                        with
+                        | _ -> None
+
+                    HistoryStorage.tryRecordInvocationWith
+                        preloadedUserConfiguration
                         {
                             argvOriginal = argvOriginal
                             argvNormalized = argvNormalized
