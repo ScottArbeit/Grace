@@ -8,7 +8,8 @@ Closes #
 ## Evidence
 
 <!-- For each "Done when" item in the issue: the command, test, or demo you ran on this head, and its result.
-GitHub Validate covers the rest of the suite. -->
+For each new or changed test, "red without the change, green with it". For user-visible changes, the demo output.
+Say that Fantomas and markdownlint ran on touched files. GitHub Validate covers the rest of the suite. -->
 
 ## Review
 

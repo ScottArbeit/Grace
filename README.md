@@ -67,12 +67,13 @@ System administrators can inspect [committed Library content declarations](docs/
 
 Grace work, by people and agents alike, follows one lightweight flow:
 
-1. Start from a GitHub issue that says what the change should do and why it matters
+1. Start from a GitHub issue with a goal and "Done when" checks anyone can run
    (`.github/ISSUE_TEMPLATE/task.md`).
 2. Branch from the latest `origin/main`, one worktree per issue.
 3. Work in vertical slices: a focused failing test, the smallest change that passes it, then a commit.
-4. Prove each slice with focused tests and `git diff --check`. GitHub `Validate` runs the full suite on the pull
-   request; `pwsh ./scripts/validate.ps1 -Fast` and `-Full` are there for local diagnosis.
+4. Prove each slice with focused tests that fail without the change, show a demo for user-visible changes,
+   and run `git diff --check`. GitHub `Validate` runs the full suite on the pull request;
+   `pwsh ./scripts/validate.ps1 -Fast` and `-Full` are there for local diagnosis.
 5. Open a pull request, get one independent review, fix accepted findings in one pass, and merge after approval.
 6. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, or workflow change.
 
