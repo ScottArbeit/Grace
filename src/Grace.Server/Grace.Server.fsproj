@@ -23,7 +23,6 @@
         <DockerfileTag>scottarbeit/grace-server</DockerfileTag>
         <Dockerfile>./Dockerfile</Dockerfile>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-		<DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
         -->
 
         <WarningsAsErrors>FS0025</WarningsAsErrors>
