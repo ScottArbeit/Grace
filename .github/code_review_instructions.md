@@ -59,10 +59,10 @@ capability is a decision for Scott. A concern outside the issue's goal is a sugg
 
 ## Review passes
 
-- **First review:** return a verdict (pass, pass with accepted risk, needs repair, needs Scott's decision, or too big:
+- **First review:** read the whole change once, including the callers, consumers, and tests it affects. Return a verdict (pass, pass with accepted risk, needs repair, needs Scott's decision, or too big:
   split it) and a finite list of findings. Stop when the change has been reviewed once.
 - **Fix check:** after accepted findings are fixed, check only those findings, the repair diff, anything it directly
-  affects, and the current-head CI. If you happen to see a new blocker outside that scope, report it and stop.
+  affects, and the current-head CI. Don't reopen untouched code. If you happen to see a new blocker outside that scope, report it and stop.
 
 ## Finding format
 

@@ -339,7 +339,7 @@ Prometheus:
 ## Pull request checklist
 
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
-- [ ] Evidence for each "Done when" item is in the PR: new tests fail without the change, and user-visible changes
+- [ ] Evidence for each "Done when" item is in the PR: new or changed tests fail without the change, and user-visible changes
   include a demo
 - [ ] Independent review done, and accepted findings fixed and rechecked
 - [ ] GitHub `Validate` passed on the final PR revision

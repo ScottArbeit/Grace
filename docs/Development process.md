@@ -94,7 +94,8 @@ the kind of change; a change gets every row that applies.
 
 | Change | Proof |
 | --- | --- |
-| Mechanical: rename, move, formatting, docs, agent guidance | Build, existing tests, `npx --yes markdownlint-cli2 <files>`; no new tests |
+| Docs and agent guidance | `npx --yes markdownlint-cli2 <files>` and `git diff --check` |
+| Mechanical code: rename, move, formatting | Build and existing tests; no new tests |
 | Logic or contract types | Focused tests from the issue's examples; FsCheck properties where an invariant matters |
 | User-visible CLI, HTTP route, or SDK behavior | Tests plus a **demo** (below) |
 | Durable state, effect order, retries, restart | The algorithm witness first, then restart and retry tests through the server |
@@ -104,11 +105,16 @@ the kind of change; a change gets every row that applies.
 
 **Red-on-revert.** Every new or changed test must fail when the behavior it covers is absent. Run it against the base,
 or against the head with the change's logic reverted or stubbed out, and record "red without the change, green with it"
-in the PR. A test that can't go red only re-derives the code; rewrite it or drop it.
+in the PR. A compile error isn't red: for new API, stub the new member (throw or return a default) and show the test
+failing on an assertion. A test that can't go red only re-derives the code; rewrite it or drop it. Tests edited only by
+a mechanical change are exempt.
 
-**Demo.** For a change a user can see, start local Grace with `pwsh ./scripts/start-debuglocal.ps1`, set the environment
-it prints, and run the command or call the route the way a user would. Paste the command and trimmed output under the
-"Done when" item it proves, with tokens redacted. Changes users can't see skip this.
+**Demo.** For a change a user can see, stop any Grace already running on `:5000` (the script reuses a healthy server,
+which may be an old build), start local Grace with `pwsh ./scripts/start-debuglocal.ps1`, and set the environment it
+prints. Run the command or call the route the way a user would; for an SDK change, run a CLI command that goes through
+the changed path, or a short `dotnet fsi` script that calls the SDK. Paste the command and trimmed output under the
+"Done when" item it proves, with tokens redacted, and stop the AppHost with the `Stop-Process` command the script
+printed. Changes users can't see skip this.
 
 Formatting, build, and test commands are in `src/AGENTS.md`. Focused local proof shows a slice is correct; GitHub
 `Validate` certifies the pull request across the whole repository, so don't run the full suite locally just to repeat
@@ -130,7 +136,8 @@ wasn't verified.
 Every PR gets one independent review of the whole change, from a reviewer with fresh context (a different model family
 is preferred when available). Brief the reviewer with the issue and the diff, not the implementer's summary. The rubric
 is `.github/code_review_instructions.md`: check the evidence first, then look for what can be removed, then for defects.
-A defect finding comes with a failing test or a reproduction; speculative hardening is not a finding.
+A defect finding comes with a failing test, a reproduction, or direct static evidence; speculative hardening is not a
+finding.
 
 Decide once which findings to accept, fix them together in one pass, then have the same reviewer (or a fresh one) check
 only those fixes and anything they directly affect. Do not restart a whole-diff review because the head changed.
