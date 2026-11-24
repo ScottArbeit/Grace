@@ -547,6 +547,24 @@ module StartBannerTests =
                 .SetName("other-case schema draws no bar")
             TestCaseData([| "branch"; "status"; "--HELP" |], NoStartBanner)
                 .SetName("other-case help draws no bar")
+            TestCaseData([| "branch"; "get"; "-do"; "Json" |], NoStartBanner)
+                .SetName("bundled short options with output draw no bar")
+            TestCaseData([| "branch"; "get"; "-doJson" |], NoStartBanner)
+                .SetName("bundled attached output draws no bar")
+            TestCaseData([| "branch"; "get"; "@args.rsp" |], NoStartBanner)
+                .SetName("response file draws no bar")
+            TestCaseData([| "branch"; "get"; "-d" |], PlainStartBanner)
+                .SetName("short flag without o draws the plain bar")
+            TestCaseData(
+                [|
+                    "branch"
+                    "create"
+                    "--branch-name"
+                    "FOO"
+                |],
+                PlainStartBanner
+            )
+                .SetName("option values containing o draw the plain bar")
         ]
 
     /// Verifies the start bar predicted for each argument shape when a graceconfig.json exists.

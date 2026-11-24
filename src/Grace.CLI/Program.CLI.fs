@@ -957,7 +957,7 @@ module GraceCommand =
     ///
     /// A wrong "no early bar" is harmless, because `main` still draws the bar after parsing; a wrong early bar would put
     /// a rule in front of JSON on stdout. So any option form this can't read exactly (other casing, `:` or attached
-    /// values, a repeated `--output`) predicts no early bar.
+    /// values, bundled short options, response files, a repeated `--output`) predicts no early bar.
     let internal startBannerFromArgs (args: string array) (configurationExists: unit -> bool) =
         let tokens =
             if isNull args then
@@ -996,6 +996,13 @@ module GraceCommand =
                     && not (token.StartsWith("--", StringComparison.Ordinal))
                 then
                     Some(attachedValue "-o".Length token)
+                elif token.StartsWith("-", StringComparison.Ordinal)
+                     && not (token.StartsWith("--", StringComparison.Ordinal))
+                     && token
+                         .Substring(1)
+                         .Contains("o", StringComparison.OrdinalIgnoreCase) then
+                    // A bundle of short options such as `-do Json` may include -o; its value can't be read here.
+                    Some String.Empty
                 else
                     None)
 
@@ -1007,7 +1014,9 @@ module GraceCommand =
                 || token.StartsWith(OptionName.Schema, StringComparison.OrdinalIgnoreCase)
                 || token.StartsWith(OptionName.Examples, StringComparison.OrdinalIgnoreCase)
                 || token.StartsWith(OptionName.Select, StringComparison.OrdinalIgnoreCase)
-                || token.Equals("get-directory-version-observation", StringComparison.OrdinalIgnoreCase))
+                || token.Equals("get-directory-version-observation", StringComparison.OrdinalIgnoreCase)
+                // A response file (`@file`) can supply any option, including --output Json.
+                || token.StartsWith("@", StringComparison.Ordinal))
 
         let isRecognizedCommand =
             match tryGetTopLevelCommandFromArgs args false with
