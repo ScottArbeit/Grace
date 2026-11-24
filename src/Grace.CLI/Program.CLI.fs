@@ -866,7 +866,7 @@ module GraceCommand =
     /// Every top-level command's name and aliases, in help order, paired with the function that builds its subtree.
     ///
     /// Reading a command's `Build` value initializes that command's whole source file, so startup builds only the entry
-    /// the user asked for. A CLI test keeps this table in step with the full command tree.
+    /// the user asked for. A CLI test checks each entry against its command's declared name and aliases.
     let topLevelCommands: (string array * (unit -> Command)) array =
         [|
             [| "connect" |], (fun () -> Connect.Build)
@@ -994,7 +994,7 @@ module GraceCommand =
                 || isOption OptionName.Select token
                 || token.Equals("get-directory-version-observation", StringComparison.Ordinal))
 
-        let isBarredCommand =
+        let isRecognizedCommand =
             match tryGetTopLevelCommandFromArgs args false with
             | Some token when not (token.Equals("doctor", StringComparison.Ordinal)) ->
                 topLevelCommands
@@ -1003,7 +1003,7 @@ module GraceCommand =
                     |> Array.exists (fun name -> name.Equals(token, StringComparison.Ordinal)))
             | _ -> false
 
-        if not isBarredCommand || drawsNoBars then
+        if not isRecognizedCommand || drawsNoBars then
             NoStartBanner
         else
             match outputValue with
