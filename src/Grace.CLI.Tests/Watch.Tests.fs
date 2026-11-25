@@ -1823,6 +1823,58 @@ module WatchTests =
             |> Array.sort
             |> should equal [| "Added"; "Library" |])
 
+    /// Work queued before a catalog added a Library root is dropped when it falls under the new root, so Watch never
+    /// uploads it; queued version-controlled work is kept and Watch rescans with the wider exclusion.
+    [<Test; Category("WatchPathClassification")>]
+    let ``catalog change drops queued work under the added root and rescans`` () =
+        withTempRepo (fun root ->
+            use policy = Services.beginLibraryPolicy [| "Library" |]
+            activateWatchIgnoreSnapshot ()
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            let added = Path.Combine(root, "Added", "queued.txt")
+            let ordinary = Path.Combine(root, "ordinary.txt")
+
+            Directory.CreateDirectory(Path.GetDirectoryName(added))
+            |> ignore
+
+            File.WriteAllText(added, "queued before the Library root was added")
+            File.WriteAllText(ordinary, "ordinary version-controlled work")
+            let seenAt = DateTime.UtcNow
+
+            for path in [ added; ordinary ] do
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged path seenAt
+                |> ignore
+
+            Watch.processDueLocalObservationCandidatesForWatchTests (seenAt.AddMilliseconds(1.0))
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> Array.sort
+            |> should equal ([| added; ordinary |] |> Array.sort)
+
+            Watch.widenWatchLibraryExclusionForWatchTests [| "Added" |]
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal [| ordinary |]
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true)
+
+    /// Re-reading a catalog whose roots Watch already excludes changes nothing and requests no rescan.
+    [<Test; Category("WatchPathClassification")>]
+    let ``unchanged Library roots request no rescan`` () =
+        withTempRepo (fun _ ->
+            use policy = Services.beginLibraryPolicy [| "Library" |]
+            activateWatchIgnoreSnapshot ()
+            Watch.widenWatchLibraryExclusionForWatchTests [| "library" |]
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
     /// Verifies a configured ignore match cannot create a raw candidate, pending transition, IPC file, or callback output.
     [<Test; Category("WatchPathClassification"); Category("WatchSilentObservation")>]
     let ``raw ignored callback stops before ordinary Watch side effects`` () =

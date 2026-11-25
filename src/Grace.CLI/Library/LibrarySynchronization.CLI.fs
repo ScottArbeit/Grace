@@ -1345,6 +1345,33 @@ module internal LibrarySynchronization =
             return caughtUp
         }
 
+    /// Records why a run stopped. A requested stop isn't a failure: it records nothing and leaves the state as it was.
+    /// Any other failure is recorded with the operation being submitted, when there is one, and blocks the copy.
+    let internal finishFailedRun (configuration: GraceConfiguration) (submitting: PendingOperation option) (cancellationToken: CancellationToken) (ex: exn) =
+        if
+            not
+                (
+                    ex :? OperationCanceledException
+                    && cancellationToken.IsCancellationRequested
+                )
+        then
+            try
+                let path =
+                    submitting
+                    |> Option.map (fun operation -> operation.SourcePath)
+
+                let operationId =
+                    submitting
+                    |> Option.map (fun operation -> operation.OperationId)
+
+                describeFailure SyncFailureSource.Sync path operationId ex
+                |> recordFailure configuration.GraceStatusFile configuration.RepositoryId
+            with
+            // The original failure is raised either way; a failed status write must not replace it.
+            | _ -> ()
+
+            setState configuration.GraceStatusFile (state configuration) "blocked"
+
     /// Runs finite pending submissions and ordered pulls under the existing shared root lease.
     let run (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
@@ -1437,30 +1464,7 @@ module internal LibrarySynchronization =
                 return! status configuration
             with
             | ex ->
-                // Cancellation stops the run on request; it isn't a failure to report.
-                if
-                    not
-                        (
-                            ex :? OperationCanceledException
-                            && cancellationToken.IsCancellationRequested
-                        )
-                then
-                    try
-                        let path =
-                            submitting
-                            |> Option.map (fun operation -> operation.SourcePath)
-
-                        let operationId =
-                            submitting
-                            |> Option.map (fun operation -> operation.OperationId)
-
-                        describeFailure SyncFailureSource.Sync path operationId ex
-                        |> recordFailure configuration.GraceStatusFile configuration.RepositoryId
-                    with
-                    // The original failure is raised below either way; a failed status write must not replace it.
-                    | _ -> ()
-
-                setState configuration.GraceStatusFile (state configuration) "blocked"
+                finishFailedRun configuration submitting cancellationToken ex
                 return raise ex
         }
 

@@ -45,8 +45,8 @@ module internal LibraryWatch =
             ReadHealth: unit -> SyncHealth
             /// Records a failure for status.
             RecordFailure: SyncFailure -> unit
-            /// Clears recorded failures that a success of the same kind disproves.
-            ClearFailure: SyncFailureSource list -> unit
+            /// Clears the recorded failure of one source, after a success of the same kind disproves it.
+            ClearFailure: SyncFailureSource -> unit
             /// Logs a message to Watch's output.
             Log: string -> unit
         }
@@ -111,7 +111,7 @@ module internal LibraryWatch =
     let private clearIfNeeded (ports: Ports) source (state: State) =
         if state.MayHaveFailures.Contains source then
             try
-                ports.ClearFailure [ source ]
+                ports.ClearFailure source
                 { state with MayHaveFailures = state.MayHaveFailures.Remove source }
             with
             | ex ->
@@ -166,7 +166,7 @@ module internal LibraryWatch =
                     state <-
                         { state with
                             SyncFailures = failures
-                            NextSync = now + retryDelay failures
+                            NextSync = ports.Now() + retryDelay failures
                             MayHaveFailures = state.MayHaveFailures.Add SyncFailureSource.Watch
                         }
 
@@ -179,7 +179,8 @@ module internal LibraryWatch =
                     | ex when not (isStopping cancellationToken ex) ->
                         reportFailure ports SyncFailureSource.Sync tickStartTicks ex
                         let failures = state.SyncFailures + 1
-                        state <- { state with SyncFailures = failures; NextSync = now + retryDelay failures }
+                        // The backoff starts when the failed attempt ends, so a slow failure still gets its full rest.
+                        state <- { state with SyncFailures = failures; NextSync = ports.Now() + retryDelay failures }
 
             // Catalog refresh: keep the last catalog that was read. Watch widens its exclusion when State.Catalog changes.
             if now >= state.NextCatalogRefresh then
@@ -193,7 +194,7 @@ module internal LibraryWatch =
                         clearIfNeeded
                             ports
                             SyncFailureSource.Catalog
-                            { state with Catalog = catalog; CatalogFailures = 0; NextCatalogRefresh = now + pullInterval }
+                            { state with Catalog = catalog; CatalogFailures = 0; NextCatalogRefresh = ports.Now() + pullInterval }
                 with
                 | ex when not (isStopping cancellationToken ex) ->
                     let failure =
@@ -213,7 +214,7 @@ module internal LibraryWatch =
                     state <-
                         { state with
                             CatalogFailures = failures
-                            NextCatalogRefresh = now + retryDelay failures
+                            NextCatalogRefresh = ports.Now() + retryDelay failures
                             MayHaveFailures = state.MayHaveFailures.Add SyncFailureSource.Catalog
                         }
 

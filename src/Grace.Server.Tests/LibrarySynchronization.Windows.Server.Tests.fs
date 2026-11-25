@@ -1063,6 +1063,19 @@ module LibrarySynchronizationWindowsServerTests =
             prepare.Size <- 1L
             use! prepareResponse = contributorClient.PostAsync("/libraries/content/prepare", createJsonContent prepare)
             Assert.That(prepareResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            // A caller with no role in the repository is denied the catalog. A nonexistent repository fails ID validation
+            // with 400 before any route's permission check runs; that applies to every repository route, not just this one.
+            use outsiderClient = new HttpClient()
+            outsiderClient.BaseAddress <- Client.BaseAddress
+            outsiderClient.DefaultRequestHeaders.Add("x-grace-user-id", $"{Guid.NewGuid()}")
+
+            use! outsiderResponse =
+                outsiderClient.PostAsync("/libraries/catalog/get", createJsonContent (scoped (Parameters.Library.GetLibraryCatalogParameters())))
+
+            let! outsiderBody = outsiderResponse.Content.ReadAsStringAsync()
+            Assert.That(outsiderResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), outsiderBody)
+            Assert.That(outsiderBody, Does.Not.Contain("Library"), "The denial revealed catalog content.")
         }
 
     /// Proves committed object discovery, frozen-object upload and missing-reference blocking through actual CLI processes and the hosted server.

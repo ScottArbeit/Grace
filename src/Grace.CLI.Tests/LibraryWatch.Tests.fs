@@ -254,6 +254,96 @@ module LibraryWatchTests =
             Assert.That(status.NextStep, Is.EqualTo(Some "Another working copy created a file with this name first."))
         }
 
+    /// A catalog failure, and its recovery, never erase the reason a sync is still blocked.
+    [<Test>]
+    let ``catalog failure and recovery keep the blocked sync reason`` () =
+        task {
+            let! configuration, _ = workingCopy "enabled"
+            let db, repositoryId = configuration.GraceStatusFile, configuration.RepositoryId
+            let now = getCurrentInstant().ToUnixTimeTicks()
+
+            recordFailure
+                db
+                repositoryId
+                {
+                    Source = SyncFailureSource.Sync
+                    Message = "Library creation slot is occupied; saved bytes are retained."
+                    Path = Some "Library/same.txt"
+                    OperationId = None
+                    NextStep = "Another working copy created a file with this name first."
+                    AtUnixTicks = now
+                }
+
+            recordFailure
+                db
+                repositoryId
+                {
+                    Source = SyncFailureSource.Catalog
+                    Message = "The Library catalog route is unavailable."
+                    Path = None
+                    OperationId = None
+                    NextStep = "Grace Watch keeps using the last Library catalog it read and retries automatically."
+                    AtUnixTicks = now + 1L
+                }
+
+            let! duringOutage = LibrarySynchronization.status configuration
+            Assert.That(duringOutage.LastError, Is.EqualTo(Some "The Library catalog route is unavailable."))
+
+            clearFailure db repositoryId SyncFailureSource.Catalog
+            let! afterRecovery = LibrarySynchronization.status configuration
+            Assert.That(afterRecovery.LastError, Is.EqualTo(Some "Library creation slot is occupied; saved bytes are retained."))
+            Assert.That(afterRecovery.LastErrorPath, Is.EqualTo(Some "Library/same.txt"))
+
+            recordSyncSuccess db repositoryId (now + 2L)
+            let! afterSync = LibrarySynchronization.status configuration
+            Assert.That(afterSync.LastError, Is.EqualTo(None))
+            Assert.That(afterSync.LastSuccessfulSyncAt.IsSome, Is.True)
+        }
+
+    /// A failure that takes longer than its backoff still gets the full rest before the next attempt.
+    [<Test>]
+    let ``backoff starts when a slow failure ends`` () =
+        task {
+            let! configuration, startup = workingCopy "enabled"
+            let calls = Calls()
+            let start = DateTime.UtcNow
+            let now = ref start
+
+            // Each failed attempt takes 15 seconds, longer than the first 5-second backoff.
+            let run () =
+                now.Value <- now.Value + TimeSpan.FromSeconds 15.0
+                Task.FromException(TimeoutException("The Library request timed out."))
+
+            let tickPorts = ports configuration (fun () -> now.Value) calls (fun () -> Task.FromResult startup) run
+
+            let! first = LibraryWatch.tick tickPorts CancellationToken.None false false (LibraryWatch.initialState start startup)
+            Assert.That(calls.Runs, Is.EqualTo(1))
+            Assert.That(first.NextSync, Is.EqualTo(start + TimeSpan.FromSeconds 20.0))
+
+            now.Value <- now.Value + TimeSpan.FromSeconds 1.0
+            let! _ = LibraryWatch.tick tickPorts CancellationToken.None false false first
+            Assert.That(calls.Runs, Is.EqualTo(1), "The next timer tick retried before the backoff after the failure ended.")
+        }
+
+    /// A requested stop isn't a failure: the run records nothing and doesn't mark the copy blocked.
+    [<Test>]
+    let ``requested stop leaves status unchanged while other failures block`` () =
+        task {
+            let! configuration, _ = workingCopy "enabled"
+            use cancellation = new CancellationTokenSource()
+            cancellation.Cancel()
+
+            LibrarySynchronization.finishFailedRun configuration None cancellation.Token (OperationCanceledException(cancellation.Token))
+            let! stopped = LibrarySynchronization.status configuration
+            Assert.That(stopped.State, Is.EqualTo("current"))
+            Assert.That(stopped.LastError, Is.EqualTo(None))
+
+            LibrarySynchronization.finishFailedRun configuration None CancellationToken.None (InvalidOperationException("Simulated Library sync failure."))
+            let! failed = LibrarySynchronization.status configuration
+            Assert.That(failed.State, Is.EqualTo("blocked"))
+            Assert.That(failed.LastError, Is.EqualTo(Some "Simulated Library sync failure."))
+        }
+
     /// Stopping Watch is the one thing allowed to propagate out of a tick, and it isn't recorded as a failure.
     [<Test>]
     let ``cancellation propagates and is not recorded`` () =

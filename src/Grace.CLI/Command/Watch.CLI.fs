@@ -382,23 +382,7 @@ module Watch =
     /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
     let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
 
-    /// Widens Watch's Library exclusion to every root that any catalog read during this Watch lifetime marked as
-    /// Library-owned. Until a copy can adopt catalog changes, excluding both old and new roots means version control never
-    /// publishes a Library file. Call it from Watch's own async flow: the shared path policy it sets is async-local, and
-    /// Watch's startup policy lifetime restores the original value when Watch exits.
-    let private widenWatchLibraryExclusion (libraries: string array) =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let widened = HashSet<string>(snapshot.Libraries, StringComparer.OrdinalIgnoreCase)
 
-        libraries
-        |> Array.iter (fun library -> widened.Add(library) |> ignore)
-
-        let widenedLibraries = Seq.toArray widened
-        activeWatchIgnoreSnapshot <- Some { snapshot with Libraries = widenedLibraries }
-        beginLibraryPolicy widenedLibraries |> ignore
-
-    /// Widens Library exclusion for focused Watch tests.
-    let internal widenWatchLibraryExclusionForWatchTests libraries = widenWatchLibraryExclusion libraries
 
     /// Reads the Library catalog Watch needs before it starts; without it Grace can't tell which paths a Library owns.
     let private readStartupLibraryCatalog configuration correlationId =
@@ -4608,6 +4592,33 @@ module Watch =
 
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
+
+    /// Widens Watch's Library exclusion to every root that any catalog read during this Watch lifetime marked as
+    /// Library-owned. Until a copy can adopt catalog changes, excluding both old and new roots means version control never
+    /// publishes a Library file. Work Watch queued before a root was added was classified under the old catalog, so an
+    /// added root requests a resync that drops queued files the wider exclusion now covers and rescans with it. Call this
+    /// from Watch's own async flow: the shared path policy it sets is async-local, and Watch's startup policy lifetime
+    /// restores the original value when Watch exits.
+    let private widenWatchLibraryExclusion (libraries: string array) =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let widened = HashSet<string>(snapshot.Libraries, StringComparer.OrdinalIgnoreCase)
+
+        let added =
+            libraries
+            |> Array.filter (fun library -> widened.Add(library))
+
+        if added.Length > 0 then
+            let widenedLibraries = Seq.toArray widened
+            activeWatchIgnoreSnapshot <- Some { snapshot with Libraries = widenedLibraries }
+            beginLibraryPolicy widenedLibraries |> ignore
+
+            requestGraceWatchExplicitResyncCore $"""the Library catalog added {String.Join(", ", added)}""" (fun pendingFile ->
+                pendingFileWorkMatchesCurrentScope pendingFile
+                && classifyRepositoryPathForWatch RepositoryPathKind.FilePath pendingFile.FullPath
+                   <> RepositoryPathClassification.Library)
+
+    /// Widens Library exclusion for focused Watch tests.
+    let internal widenWatchLibraryExclusionForWatchTests libraries = widenWatchLibraryExclusion libraries
 
     let private pendingTransitionConfigurationReloadLock = obj ()
     let mutable private pendingTransitionConfigurationReloadReason: string option = None

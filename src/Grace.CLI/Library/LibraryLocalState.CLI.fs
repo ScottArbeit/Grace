@@ -105,7 +105,7 @@ module internal LibraryLocalState =
                  CREATE TABLE IF NOT EXISTS library_items(repository_id TEXT NOT NULL,item_id TEXT NOT NULL,item_json TEXT NOT NULL,PRIMARY KEY(repository_id,item_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE TABLE IF NOT EXISTS library_operations(repository_id TEXT NOT NULL,operation_id TEXT NOT NULL,direction TEXT NOT NULL CHECK(direction IN ('local','remote','baseline')),terminal INTEGER NOT NULL CHECK(terminal IN (0,1)),echo_pending INTEGER NOT NULL CHECK(echo_pending IN (0,1)),created_at_ticks INTEGER NOT NULL,operation_json TEXT NOT NULL,PRIMARY KEY(repository_id,operation_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE INDEX IF NOT EXISTS ix_library_operations_pending ON library_operations(repository_id,terminal,created_at_ticks);
-                 CREATE TABLE IF NOT EXISTS library_sync_health(repository_id TEXT PRIMARY KEY,failure_source TEXT NULL CHECK(failure_source IN ('sync','catalog','watch')),failure_message TEXT NULL,failure_path TEXT NULL,failure_operation_id TEXT NULL,failure_next_step TEXT NULL,failure_at_unix_ticks INTEGER NULL,last_success_at_unix_ticks INTEGER NULL);"
+                 CREATE TABLE IF NOT EXISTS library_sync_health(repository_id TEXT NOT NULL,source TEXT NOT NULL CHECK(source IN ('sync','catalog','watch')),failure_message TEXT NULL,failure_path TEXT NULL,failure_operation_id TEXT NULL,failure_next_step TEXT NULL,failure_at_unix_ticks INTEGER NULL,last_success_at_unix_ticks INTEGER NULL,PRIMARY KEY(repository_id,source),CHECK((failure_message IS NULL) = (failure_at_unix_ticks IS NULL)),CHECK(source='sync' OR last_success_at_unix_ticks IS NULL));"
                 []
             |> ignore
         }
@@ -850,53 +850,62 @@ module internal LibraryLocalState =
                 ]
             |> ignore)
 
-    /// Reads this copy's latest Library failure and successful sync, with or without participation.
+    /// Reads this copy's latest Library failure and successful sync, with or without participation. Each source keeps
+    /// its own failure, so a later failure of one kind never erases a still-unresolved failure of another; status shows
+    /// the most recent one.
     let readHealth dbPath (repositoryId: Guid) =
         use connection = openConnection dbPath
         use command = connection.CreateCommand()
 
         command.CommandText <-
-            "SELECT failure_source,failure_message,failure_path,failure_operation_id,failure_next_step,failure_at_unix_ticks,last_success_at_unix_ticks FROM library_sync_health WHERE repository_id=$repository;"
+            "SELECT source,failure_message,failure_path,failure_operation_id,failure_next_step,failure_at_unix_ticks,last_success_at_unix_ticks FROM library_sync_health WHERE repository_id=$repository;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
         |> ignore
 
         use reader = command.ExecuteReader()
+        let failures = ResizeArray<SyncFailure>()
+        let mutable lastSuccess = None
 
-        if reader.Read() then
+        while reader.Read() do
             let optionalString index = if reader.IsDBNull(index) then None else Some(reader.GetString(index))
 
-            let failure =
-                match optionalString 0 with
-                | None -> None
-                | Some source ->
-                    Some
-                        {
-                            Source =
-                                match source with
-                                | "sync" -> SyncFailureSource.Sync
-                                | "catalog" -> SyncFailureSource.Catalog
-                                | _ -> SyncFailureSource.Watch
-                            Message = reader.GetString(1)
-                            Path = optionalString 2
-                            OperationId = optionalString 3 |> Option.map Guid.Parse
-                            NextStep = reader.GetString(4)
-                            AtUnixTicks = reader.GetInt64(5)
-                        }
+            let source =
+                match reader.GetString(0) with
+                | "sync" -> SyncFailureSource.Sync
+                | "catalog" -> SyncFailureSource.Catalog
+                | _ -> SyncFailureSource.Watch
 
-            { LastFailure = failure; LastSuccessAtUnixTicks = if reader.IsDBNull(6) then None else Some(reader.GetInt64(6)) }
-        else
-            { LastFailure = None; LastSuccessAtUnixTicks = None }
+            if not (reader.IsDBNull(1)) then
+                failures.Add
+                    {
+                        Source = source
+                        Message = reader.GetString(1)
+                        Path = optionalString 2
+                        OperationId = optionalString 3 |> Option.map Guid.Parse
+                        NextStep = reader.GetString(4)
+                        AtUnixTicks = reader.GetInt64(5)
+                    }
 
-    /// Replaces the recorded failure with the latest one; the last successful sync is kept.
+            if not (reader.IsDBNull(6)) then lastSuccess <- Some(reader.GetInt64(6))
+
+        {
+            LastFailure =
+                failures
+                |> Seq.sortByDescending (fun failure -> failure.AtUnixTicks)
+                |> Seq.tryHead
+            LastSuccessAtUnixTicks = lastSuccess
+        }
+
+    /// Records the latest failure of one source; failures of other sources and the last successful sync are kept.
     let recordFailure dbPath (repositoryId: Guid) (failure: SyncFailure) =
         use connection = openConnection dbPath
 
         execute
             connection
             None
-            "INSERT INTO library_sync_health(repository_id,failure_source,failure_message,failure_path,failure_operation_id,failure_next_step,failure_at_unix_ticks) VALUES($repository,$source,$message,$path,$operation,$next,$at)
-             ON CONFLICT(repository_id) DO UPDATE SET failure_source=excluded.failure_source,failure_message=excluded.failure_message,failure_path=excluded.failure_path,failure_operation_id=excluded.failure_operation_id,failure_next_step=excluded.failure_next_step,failure_at_unix_ticks=excluded.failure_at_unix_ticks;"
+            "INSERT INTO library_sync_health(repository_id,source,failure_message,failure_path,failure_operation_id,failure_next_step,failure_at_unix_ticks) VALUES($repository,$source,$message,$path,$operation,$next,$at)
+             ON CONFLICT(repository_id,source) DO UPDATE SET failure_message=excluded.failure_message,failure_path=excluded.failure_path,failure_operation_id=excluded.failure_operation_id,failure_next_step=excluded.failure_next_step,failure_at_unix_ticks=excluded.failure_at_unix_ticks;"
             [
                 "$repository", box (repositoryId.ToString("D"))
                 "$source", box (sourceText failure.Source)
@@ -914,33 +923,43 @@ module internal LibraryLocalState =
             ]
         |> ignore
 
-    /// Clears a recorded failure when a later success of the same kind shows it no longer applies.
-    let clearFailure dbPath (repositoryId: Guid) (sources: SyncFailureSource list) =
-        use connection = openConnection dbPath
-
-        sources
-        |> List.iter (fun source ->
-            execute
-                connection
-                None
-                "UPDATE library_sync_health SET failure_source=NULL,failure_message=NULL,failure_path=NULL,failure_operation_id=NULL,failure_next_step=NULL,failure_at_unix_ticks=NULL WHERE repository_id=$repository AND failure_source=$source;"
-                [
-                    "$repository", box (repositoryId.ToString("D"))
-                    "$source", box (sourceText source)
-                ]
-            |> ignore)
-
-    /// Records a completed sync run. A run reads the catalog and local state itself, so it clears every failure.
-    let recordSyncSuccess dbPath (repositoryId: Guid) (atUnixTicks: int64) =
+    /// Clears one source's failure when a later success of the same kind shows it no longer applies.
+    let clearFailure dbPath (repositoryId: Guid) (source: SyncFailureSource) =
         use connection = openConnection dbPath
 
         execute
             connection
             None
-            "INSERT INTO library_sync_health(repository_id,last_success_at_unix_ticks) VALUES($repository,$at)
-             ON CONFLICT(repository_id) DO UPDATE SET failure_source=NULL,failure_message=NULL,failure_path=NULL,failure_operation_id=NULL,failure_next_step=NULL,failure_at_unix_ticks=NULL,last_success_at_unix_ticks=excluded.last_success_at_unix_ticks;"
+            "UPDATE library_sync_health SET failure_message=NULL,failure_path=NULL,failure_operation_id=NULL,failure_next_step=NULL,failure_at_unix_ticks=NULL WHERE repository_id=$repository AND source=$source;"
+            [
+                "$repository", box (repositoryId.ToString("D"))
+                "$source", box (sourceText source)
+            ]
+        |> ignore
+
+    /// Records a completed sync run. A run reads the catalog and local state itself, so it clears every failure.
+    let recordSyncSuccess dbPath (repositoryId: Guid) (atUnixTicks: int64) =
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        execute
+            connection
+            (Some transaction)
+            "UPDATE library_sync_health SET failure_message=NULL,failure_path=NULL,failure_operation_id=NULL,failure_next_step=NULL,failure_at_unix_ticks=NULL WHERE repository_id=$repository;"
+            [
+                "$repository", box (repositoryId.ToString("D"))
+            ]
+        |> ignore
+
+        execute
+            connection
+            (Some transaction)
+            "INSERT INTO library_sync_health(repository_id,source,last_success_at_unix_ticks) VALUES($repository,'sync',$at)
+             ON CONFLICT(repository_id,source) DO UPDATE SET last_success_at_unix_ticks=excluded.last_success_at_unix_ticks;"
             [
                 "$repository", box (repositoryId.ToString("D"))
                 "$at", box atUnixTicks
             ]
         |> ignore
+
+        transaction.Commit()
