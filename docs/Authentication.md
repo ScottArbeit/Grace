@@ -119,7 +119,11 @@ Library Content uses two additional repository-scoped roles:
 | `LibraryReader` | `RepositoryRead` and `LibraryRead` for roots, status, bootstrap, deltas, current state, receipts, authorized bytes, and wake subscriptions |
 | `LibraryWriter` | Reader access plus `LibraryWrite` for content preparation and change submission |
 
-`RepositoryAdmin` and the broader administrator roles include both library operations. Root add and remove require repository administration. A library reader or writer does not gain root-management permission merely by receiving the specialized role.
+Reading the Library catalog (the list of roots) needs only `RepositoryRead`. Every working copy needs the roots to
+keep Library files out of version control, so Watch must be able to read them for users who have no Library role.
+`RepositoryAdmin` and the broader administrator roles include both library operations. Root add and remove require
+repository administration. A library reader or writer does not gain root-management permission merely by receiving
+the specialized role.
 
 Library routes and SignalR wake registration resolve the stored repository resource before checking permission. Missing, denied, and cross-repository identifiers use the same hidden failure behavior so callers cannot use authorization errors as an existence oracle.
 

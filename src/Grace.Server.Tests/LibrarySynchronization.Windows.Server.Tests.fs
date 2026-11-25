@@ -646,16 +646,10 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", "retained.txt")), Is.EqualTo("retained original"))
         }
 
-    /// Exercises a running Watch process with real authentication while CLI pause/resume races its periodic work.
-    [<Test>]
-    let ``live Watch and CLI pause retain local saves while another copy continues`` () =
+    /// Connects a fresh working copy to the repository's main branch with saves enabled, as Watch requires, and returns
+    /// the branch, its initial root directory version and the token that Watch and the copy's CLI calls use.
+    let private connectWatchedCopyAsync (repositoryId: Guid) (copyA: string) =
         task {
-            if not (OperatingSystem.IsWindows()) then
-                Assert.Ignore("Windows filesystem contract.")
-
-            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "live-pause"
-            use proxy = createdProxy
-            let copyA = Path.Combine(Path.GetDirectoryName(copyB), "Watched")
             Directory.CreateDirectory(copyA) |> ignore
             // Watch requires an actual Reference boundary; the Library-only fixture starts with no branch content.
             let branchParameters = BranchServerTestHelpers.getBranchParameters (string repositoryId) ""
@@ -684,14 +678,6 @@ module LibrarySynchronizationWindowsServerTests =
             use! tokenResponse = Client.PostAsync("/authenticate/token/create", createJsonContent tokenParameters)
             let! token = requireReturnValueAsync<Grace.Types.PersonalAccessToken.PersonalAccessTokenCreated> tokenResponse
 
-            /// Uses the same real credentials for Watch and every CLI call from its directly configured copy.
-            let requireWatched arguments =
-                task {
-                    let! result = runGraceWithTokenAsync (Some token.Token) copyA graceServerBaseAddress arguments
-                    Assert.That(result.ExitCode, Is.Zero, result.StandardOutput + result.StandardError)
-                    return result.StandardOutput
-                }
-
             let! connected =
                 runGraceWithTokenAsync
                     (Some token.Token)
@@ -716,52 +702,84 @@ module LibrarySynchronizationWindowsServerTests =
             Directory.CreateDirectory(Path.Combine(copyA, "Library"))
             |> ignore
 
+            return branch, initialRoot, token.Token
+        }
+
+    /// Starts `grace watch` in a working copy with real credentials and collects its output lines.
+    let private startWatch (copyA: string) (token: string) =
+        let startInfo = ProcessStartInfo("dotnet")
+        startInfo.WorkingDirectory <- copyA
+        startInfo.UseShellExecute <- false
+        startInfo.CreateNoWindow <- true
+        startInfo.RedirectStandardOutput <- true
+        startInfo.RedirectStandardError <- true
+
+        startInfo.Environment[
+            Constants.EnvironmentVariables.GraceServerUri
+        ] <- graceServerBaseAddress
+
+        startInfo.Environment[
+            Constants.EnvironmentVariables.GraceToken
+        ] <- token
+
+        startInfo.ArgumentList.Add(
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net11.0", "grace.dll"))
+        )
+
+        startInfo.ArgumentList.Add("watch")
+        startInfo.ArgumentList.Add("--output")
+        startInfo.ArgumentList.Add("Verbose")
+        let watch = new Process(StartInfo = startInfo)
+        let output = ConcurrentQueue<string>()
+        watch.OutputDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
+        watch.ErrorDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
+        Assert.That(watch.Start(), Is.True)
+        watch.BeginOutputReadLine()
+        watch.BeginErrorReadLine()
+        watch, output
+
+    /// Waits for an observable condition while Watch keeps running, with Watch's output on failure.
+    let private waitWhileWatchRuns (watch: Process) (output: ConcurrentQueue<string>) condition =
+        task {
+            let timer = Stopwatch.StartNew()
+
+            while not (condition ())
+                  && not watch.HasExited
+                  && timer.Elapsed < TimeSpan.FromSeconds(45.0) do
+                do! Task.Delay(100)
+
+            Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+            Assert.That(condition (), Is.True, String.Join(Environment.NewLine, output))
+        }
+
+    /// Exercises a running Watch process with real authentication while CLI pause/resume races its periodic work.
+    [<Test>]
+    let ``live Watch and CLI pause retain local saves while another copy continues`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "live-pause"
+            use proxy = createdProxy
+            let copyA = Path.Combine(Path.GetDirectoryName(copyB), "Watched")
+            let! branch, initialRoot, token = connectWatchedCopyAsync repositoryId copyA
+
+            /// Uses the same real credentials for Watch and every CLI call from its directly configured copy.
+            let requireWatched arguments =
+                task {
+                    let! result = runGraceWithTokenAsync (Some token) copyA graceServerBaseAddress arguments
+                    Assert.That(result.ExitCode, Is.Zero, result.StandardOutput + result.StandardError)
+                    return result.StandardOutput
+                }
+
             let! _ = requireWatched (syncCommand "enable")
             let pathA = Path.Combine(copyA, "Library", "local.txt")
             let remoteA = Path.Combine(copyA, "Library", "remote.txt")
-            let startInfo = ProcessStartInfo("dotnet")
-            startInfo.WorkingDirectory <- copyA
-            startInfo.UseShellExecute <- false
-            startInfo.CreateNoWindow <- true
-            startInfo.RedirectStandardOutput <- true
-            startInfo.RedirectStandardError <- true
-
-            startInfo.Environment[
-                Constants.EnvironmentVariables.GraceServerUri
-            ] <- graceServerBaseAddress
-
-            startInfo.Environment[
-                Constants.EnvironmentVariables.GraceToken
-            ] <- token.Token
-
-            startInfo.ArgumentList.Add(
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net11.0", "grace.dll"))
-            )
-
-            startInfo.ArgumentList.Add("watch")
-            startInfo.ArgumentList.Add("--output")
-            startInfo.ArgumentList.Add("Verbose")
-            use watch = new Process(StartInfo = startInfo)
-            let output = ConcurrentQueue<string>()
-            watch.OutputDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
-            watch.ErrorDataReceived.Add(fun line -> if not (isNull line.Data) then output.Enqueue(line.Data))
-            Assert.That(watch.Start(), Is.True)
-            watch.BeginOutputReadLine()
-            watch.BeginErrorReadLine()
+            let watch, output = startWatch copyA token
+            use _watchProcess = watch
 
             /// Waits for an observable runtime condition with bounded process diagnostics on failure.
-            let waitUntil condition =
-                task {
-                    let timer = Stopwatch.StartNew()
-
-                    while not (condition ())
-                          && not watch.HasExited
-                          && timer.Elapsed < TimeSpan.FromSeconds(45.0) do
-                        do! Task.Delay(100)
-
-                    Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
-                    Assert.That(condition (), Is.True, String.Join(Environment.NewLine, output))
-                }
+            let waitUntil condition = waitWhileWatchRuns watch output condition
 
             try
                 do!
@@ -818,7 +836,7 @@ module LibrarySynchronizationWindowsServerTests =
                 let mutable index = 0
 
                 while index < verbs.Length do
-                    let! blocked = runGraceWithTokenAsync (Some token.Token) copyA graceServerBaseAddress (syncCommand verbs[index])
+                    let! blocked = runGraceWithTokenAsync (Some token) copyA graceServerBaseAddress (syncCommand verbs[index])
                     Assert.That(blocked.ExitCode, Is.Not.Zero)
                     Assert.That(blocked.StandardOutput, Does.Contain("sync resume"))
                     index <- index + 1
@@ -870,6 +888,174 @@ module LibrarySynchronizationWindowsServerTests =
                 if not watch.HasExited then watch.Kill(true)
                 watch.WaitForExit()
                 output |> Seq.iter TestContext.Progress.WriteLine
+        }
+
+    /// A Library failure never stops Watch: after two copies create the same filename, Watch keeps saving
+    /// version-controlled work, and status says what failed, where, and what to do next.
+    [<Test>]
+    let ``Watch keeps saving version-controlled work after a same-name Library create fails`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "watch-survives"
+            use proxy = createdProxy
+            let copyA = Path.Combine(Path.GetDirectoryName(copyB), "Watched")
+            let! branch, initialRoot, token = connectWatchedCopyAsync repositoryId copyA
+
+            /// Runs one CLI command in the Watched copy with the credentials Watch uses.
+            let runWatched arguments = runGraceWithTokenAsync (Some token) copyA graceServerBaseAddress arguments
+
+            let! enabled = runWatched (syncCommand "enable")
+            Assert.That(enabled.ExitCode, Is.Zero, enabled.StandardOutput + enabled.StandardError)
+
+            // The other copy creates the file first, and the server accepts it.
+            File.WriteAllText(Path.Combine(copyB, "Library", "same.txt"), "created first by the other copy")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            // The Watched copy saves different bytes under the same name before it has pulled the other copy's file.
+            let sameA = Path.Combine(copyA, "Library", "same.txt")
+            File.WriteAllText(sameA, "saved second by the Watched copy")
+
+            let watch, output = startWatch copyA token
+            use _watchProcess = watch
+
+            try
+                // Watch's first Library sync is rejected because the name is taken. Watch records it and keeps running.
+                do!
+                    waitWhileWatchRuns watch output (fun () ->
+                        (Grace.CLI.LibraryLocalState.readHealth (localDb copyA) repositoryId)
+                            .LastFailure
+                        |> Option.exists (fun failure -> failure.Path = Some "Library/same.txt"))
+
+                do!
+                    waitWhileWatchRuns watch output (fun () ->
+                        output
+                        |> Seq.exists (fun line -> line.Contains("Library sync failed")))
+
+                // Version-controlled work saved after the failure still produces a save reference.
+                File.WriteAllText(Path.Combine(copyA, "notes.txt"), "version-controlled work after the Library failure")
+                let timer = Stopwatch.StartNew()
+                let mutable saved = false
+
+                while not saved
+                      && not watch.HasExited
+                      && timer.Elapsed < TimeSpan.FromSeconds(60.0) do
+                    let! current = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
+
+                    saved <-
+                        current.LatestSave.DirectoryId
+                        <> initialRoot.DirectoryVersionId
+
+                    if not saved then do! Task.Delay(250)
+
+                Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+                Assert.That(saved, Is.True, "Watch didn't save version-controlled work after the Library failure.")
+
+                // Status says the copy is blocked, why, on which path, and what to do next.
+                let! status = runWatched (syncCommand "status")
+                Assert.That(status.ExitCode, Is.Zero, status.StandardOutput + status.StandardError)
+                Assert.That(status.StandardOutput, Does.Contain("\"State\": \"blocked\""))
+                Assert.That(status.StandardOutput, Does.Contain("Library creation slot is occupied"))
+                Assert.That(status.StandardOutput, Does.Contain("Library/same.txt"))
+                Assert.That(status.StandardOutput, Does.Contain("Another working copy created a file with this name first."))
+
+                // Both copies keep their own bytes.
+                Assert.That(File.ReadAllText(sameA), Is.EqualTo("saved second by the Watched copy"))
+                Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "same.txt")), Is.EqualTo("created first by the other copy"))
+                Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
+            finally
+                if not watch.HasExited then watch.Kill(true)
+                watch.WaitForExit()
+                output |> Seq.iter TestContext.Progress.WriteLine
+        }
+
+    /// A failed sync run is shown in status with its path and next step, and a later successful run clears it.
+    [<Test>]
+    let ``failed sync run is shown in status until a later run succeeds`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, _, repositoryId, createdProxy = enableCopiesAsync "status-recovery"
+            use proxy = createdProxy
+            File.WriteAllText(Path.Combine(copyA, "Library", "status.txt"), "saved while the server is unreachable")
+            proxy.BeforeNextSubmit(fun () -> Task.FromException(InvalidOperationException("Injected submit failure.")))
+
+            let! failed = runGraceAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(failed.ExitCode, Is.Not.Zero, failed.StandardOutput + failed.StandardError)
+
+            let! blocked = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "status")
+            Assert.That(blocked, Does.Contain("\"State\": \"blocked\""))
+
+            let failure =
+                (Grace.CLI.LibraryLocalState.readHealth (localDb copyA) repositoryId)
+                    .LastFailure
+
+            Assert.That(failure.IsSome, Is.True, blocked)
+            Assert.That(failure.Value.Path, Is.EqualTo(Some "Library/status.txt"))
+            Assert.That(failure.Value.NextStep, Is.EqualTo(LibrarySynchronization.retryNextStep))
+
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! current = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "status")
+            Assert.That(current, Does.Contain("\"State\": \"current\""))
+            let health = Grace.CLI.LibraryLocalState.readHealth (localDb copyA) repositoryId
+            Assert.That(health.LastFailure, Is.EqualTo(None))
+            Assert.That(health.LastSuccessAtUnixTicks.IsSome, Is.True)
+        }
+
+    /// A contributor with no Library role can read the catalog, which Watch needs on every copy, and still can't
+    /// call a Library content route.
+    [<Test>]
+    let ``repository contributor without a Library role reads the catalog but not Library content`` () =
+        task {
+            let! repositoryId = createRepositoryAsync ()
+            do! addLibraryAsync repositoryId
+            let contributor = $"{Guid.NewGuid()}"
+            let grant = Parameters.Access.GrantRoleParameters()
+            grant.OwnerId <- ownerId
+            grant.OrganizationId <- organizationId
+            grant.RepositoryId <- repositoryId.ToString("D")
+            grant.PrincipalType <- "User"
+            grant.PrincipalId <- contributor
+            grant.ScopeKind <- "repo"
+            grant.RoleId <- "RepositoryContributor"
+            grant.Source <- "test"
+            grant.CorrelationId <- generateCorrelationId ()
+            use! grantResponse = Client.PostAsync("/authorize/grant-role", createJsonContent grant)
+            let! grantBody = grantResponse.Content.ReadAsStringAsync()
+            Assert.That(grantResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), grantBody)
+
+            use contributorClient = new HttpClient()
+            contributorClient.BaseAddress <- Client.BaseAddress
+            contributorClient.DefaultRequestHeaders.Add("x-grace-user-id", contributor)
+
+            /// Fills the repository locator shared by every Library request.
+            let scoped (parameters: #Parameters.Library.LibraryParameters) =
+                parameters.OwnerId <- ownerId
+                parameters.OrganizationId <- organizationId
+                parameters.RepositoryId <- repositoryId.ToString("D")
+                parameters.CorrelationId <- generateCorrelationId ()
+                parameters
+
+            use! catalogResponse =
+                contributorClient.PostAsync("/libraries/catalog/get", createJsonContent (scoped (Parameters.Library.GetLibraryCatalogParameters())))
+
+            let! catalog = requireReturnValueAsync<LibraryCatalogDto> catalogResponse
+            Assert.That(catalog.Libraries, Is.EqualTo([| "Library" |]))
+
+            use! changesResponse =
+                contributorClient.PostAsync("/libraries/changes/get", createJsonContent (scoped (Parameters.Library.GetLibraryChangesParameters())))
+
+            Assert.That(changesResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let prepare = scoped (Parameters.Library.PrepareLibraryContentParameters())
+            prepare.OperationId <- Guid.NewGuid()
+            prepare.Blake3Hash <- String('a', 64)
+            prepare.Sha256Hash <- String('b', 64)
+            prepare.Size <- 1L
+            use! prepareResponse = contributorClient.PostAsync("/libraries/content/prepare", createJsonContent prepare)
+            Assert.That(prepareResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
     /// Proves committed object discovery, frozen-object upload and missing-reference blocking through actual CLI processes and the hosted server.
@@ -2426,7 +2612,7 @@ module LibrarySynchronizationWindowsServerTests =
                 connection.Open()
                 use command = connection.CreateCommand()
                 command.CommandText <- "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'library_%';"
-                Assert.That(Convert.ToInt32(command.ExecuteScalar()), Is.EqualTo(3))
+                Assert.That(Convert.ToInt32(command.ExecuteScalar()), Is.EqualTo(4))
                 command.CommandText <- "SELECT COUNT(*) FROM library_operations WHERE terminal=0;"
                 Assert.That(Convert.ToInt32(command.ExecuteScalar()), Is.Zero)
                 command.CommandText <- "SELECT COUNT(*) FROM library_operations WHERE direction='local';"

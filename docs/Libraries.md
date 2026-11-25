@@ -35,7 +35,7 @@ Libraries add two repository-scoped operations and roles:
 | `LibraryReader` | `RepositoryRead`, `LibraryRead` | Read the catalog, status, items, slots, bootstrap pages, change pages, receipts, bytes, and wake hints. |
 | `LibraryWriter` | Reader operations plus `LibraryWrite` | Prepare bytes and submit Library changes. |
 
-`RepositoryAdmin` manages the Library catalog and also carries Library read/write access. Broader administrator roles inherit the same operations through the existing scope hierarchy.
+Reading the catalog needs only `RepositoryRead`. Every working copy needs the Library roots to keep Library files out of version control, so `grace watch` reads them even for users with no Library role. `RepositoryAdmin` manages the Library catalog and also carries Library read/write access. Broader administrator roles inherit the same operations through the existing scope hierarchy.
 
 Authorization is rechecked against the stored repository identity before a read, write, catalog change, byte transfer, or wake subscription. Missing and cross-repository identifiers do not provide an existence oracle.
 
@@ -227,6 +227,38 @@ grace library sync resume
 Status shows `Enabled=true` and `Paused=true` independently of progress `State`. Watch skips Library capture, upload and incoming application while paused. `run`, `enable` and `rename` return a nonzero result directing you to resume. Catalog-based exclusion from version control remains in force; pause is not a fully offline Watch mode.
 
 Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or rebaseline requirement never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
+
+## When Library sync fails
+
+A Library problem doesn't stop `grace watch`. When Library sync fails, Watch keeps saving your version-controlled
+work, records what went wrong, and tries again later: after 5 seconds, then 10, then 20, doubling up to once every 5
+minutes. New saves and change notifications don't cut that wait short.
+
+`grace library sync status` shows what failed, where, and what to do next:
+
+```text
+Library synchronization: Enabled=True, Paused=False, State=blocked, Pending=1.
+Last error at 2026-11-25T10:00:00Z: Library creation slot is occupied; saved bytes are retained.
+Affected path: Library/same.txt
+Next step: Another working copy created a file with this name first. Your saved file is kept. ...
+Last successful sync: 2026-11-25T09:58:12Z
+```
+
+With `--output Json`, the same details are in `LastError`, `LastErrorAt`, `LastErrorPath`, `LastErrorOperationId`,
+`NextStep`, and `LastSuccessfulSyncAt`. Status reports failures even on a copy that doesn't sync Libraries, because
+Watch reads the Library catalog on every copy. When a later sync succeeds, the error clears.
+
+Watch reads the Library catalog when it starts and every 5 seconds after that:
+
+- If Watch can't read the catalog when it starts, it doesn't start, because without the catalog it can't tell which
+  files belong to a Library.
+- If a later read fails, Watch keeps using the last catalog it read and retries.
+- If the catalog changes while Watch runs, Watch keeps both the old and the new Library roots out of version control.
+  Library sync on that copy stops with a "catalog changed" error, because copies can't adopt catalog changes yet.
+
+Some failures need features that haven't shipped yet, such as keeping both files when two copies create the same
+name. For those, the next step says Library sync on this copy can't continue. Your saved files are kept, and
+version-control work isn't affected.
 
 ## Deferred capabilities
 

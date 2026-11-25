@@ -49,6 +49,7 @@
     <Compile Include="Library.CLI.Parsing.Tests.fs" />
     <Compile Include="Library.CLI.Tests.fs" />
     <Compile Include="LibraryLocalState.Tests.fs" />
+    <Compile Include="LibraryWatch.Tests.fs" />
     <Compile Include="LibraryBaseline.Tests.fs" />
     <Compile Include="Doctor.CLI.Tests.fs" />
     <Compile Include="CommandOutputContract.CLI.Tests.fs" />

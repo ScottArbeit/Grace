@@ -693,7 +693,7 @@ module LibraryLocalStateTests =
                 Assert.That(string (command.ExecuteScalar()), Is.EqualTo(expected))
 
             command.CommandText <- "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'library_%';"
-            Assert.That(Convert.ToInt32(command.ExecuteScalar()), Is.EqualTo(3))
+            Assert.That(Convert.ToInt32(command.ExecuteScalar()), Is.EqualTo(4))
 
             let fail (connection: SqliteConnection) (transaction: SqliteTransaction) =
                 use invalid = connection.CreateCommand()

@@ -1793,6 +1793,36 @@ module WatchTests =
             File.Exists(Services.IpcFileName())
             |> should equal false)
 
+    /// After a catalog change, Watch keeps both the old and the new Library roots out of version control.
+    [<Test; Category("WatchPathClassification")>]
+    let ``catalog change widens Watch Library exclusion to old and new roots`` () =
+        withTempRepo (fun root ->
+            use policy = Services.beginLibraryPolicy [| "Library" |]
+            activateWatchIgnoreSnapshot ()
+            let oldPath = Path.Combine(root, "Library", "kept.bin")
+            let newPath = Path.Combine(root, "Added", "new.bin")
+
+            for path in [ oldPath; newPath ] do
+                Directory.CreateDirectory(Path.GetDirectoryName(path))
+                |> ignore
+
+                File.WriteAllBytes(path, [| 1uy |])
+
+            Watch.shouldIgnoreFileForWatchTests newPath
+            |> should equal false
+
+            Watch.widenWatchLibraryExclusionForWatchTests [| "Added" |]
+
+            Watch.shouldIgnoreFileForWatchTests oldPath
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests newPath
+            |> should equal true
+
+            Services.currentLibraries ()
+            |> Array.sort
+            |> should equal [| "Added"; "Library" |])
+
     /// Verifies a configured ignore match cannot create a raw candidate, pending transition, IPC file, or callback output.
     [<Test; Category("WatchPathClassification"); Category("WatchSilentObservation")>]
     let ``raw ignored callback stops before ordinary Watch side effects`` () =

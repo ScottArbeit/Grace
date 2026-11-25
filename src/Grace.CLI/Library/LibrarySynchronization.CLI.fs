@@ -16,8 +16,9 @@ open System.IO
 open System.Threading
 
 /// Runs the Windows Library tracer using the existing SDK, local database, and shared root exclusion.
-/// Backs `grace library sync enable/run/pause/resume/status`, which owns Windows Library participation in exactly three
-/// tables of the existing local database (see LibraryLocalState).
+/// Backs `grace library sync enable/run/pause/resume/status`, which owns Windows Library participation and sync health in
+/// four tables of the existing local database (see LibraryLocalState). Every run records its failure, with the affected
+/// path and a next step, or its success, so status can tell the user what happened.
 /// Pause invariants: pause is independent from progress. Under the shared root lease, reread pause before capture,
 /// synchronization, echo classification or pruning. Only explicit resume clears pause; a racing Watch tick skips pause
 /// without hiding other failures. Catalog classification and version-control exclusion still apply while paused.
@@ -26,7 +27,7 @@ open System.Threading
 /// completion. Watch consumes `LibraryContentAvailable.v1` only as a pull hint.
 module internal LibrarySynchronization =
 
-    /// Exposes local participation and completed progress through the ordinary CLI result envelope.
+    /// Exposes local participation, completed progress and the latest failure through the ordinary CLI result envelope.
     [<CLIMutable>]
     type LibrarySynchronizationStatus =
         {
@@ -37,7 +38,36 @@ module internal LibrarySynchronization =
             CursorEpoch: LibraryCursorEpoch option
             AppliedCursor: string option
             PendingOperationCount: int
+            /// What failed most recently, until a later success shows it no longer applies.
+            LastError: string option
+            LastErrorAt: NodaTime.Instant option
+            /// The repository-relative Library path the failure affected, when known.
+            LastErrorPath: string option
+            LastErrorOperationId: Guid option
+            /// What the user can do about the failure.
+            NextStep: string option
+            LastSuccessfulSyncAt: NodaTime.Instant option
         }
+
+    /// A Library sync failure that knows the affected path and the next step a user can take.
+    type LibrarySyncFailureException(message: string, path: string option, operationId: Guid option, nextStep: string) =
+        inherit InvalidOperationException(message)
+
+        /// The repository-relative Library path the failure affected, when known.
+        member _.Path = path
+
+        /// The local operation the failure affected, when known.
+        member _.OperationId = operationId
+
+        /// What the user can do about the failure.
+        member _.NextStep = nextStep
+
+    /// Next step for a failure Grace knows nothing more about; Watch retries it on a backoff.
+    let internal retryNextStep = "Grace Watch retries automatically. Run 'grace library sync run' to retry now and see the full error."
+
+    /// Next step while this copy can't adopt a changed Library catalog.
+    let internal catalogChangedNextStep =
+        "The repository's Library catalog changed, and this copy can't adopt catalog changes yet, so Library sync is stopped here. Version-control work isn't affected."
 
     /// Applies the validated local repository locator to one SDK request.
     let private scoped (configuration: GraceConfiguration) correlationId (parameters: #LibraryParameters) =
@@ -150,19 +180,46 @@ module internal LibrarySynchronization =
     let status (configuration: GraceConfiguration) =
         task {
             do! initialize configuration.GraceStatusFile
+            let health = readHealth configuration.GraceStatusFile configuration.RepositoryId
+            let failure = health.LastFailure
+
+            let withHealth (value: LibrarySynchronizationStatus) =
+                { value with
+                    LastError = failure |> Option.map (fun value -> value.Message)
+                    LastErrorAt =
+                        failure
+                        |> Option.map (fun value -> NodaTime.Instant.FromUnixTimeTicks value.AtUnixTicks)
+                    LastErrorPath = failure |> Option.bind (fun value -> value.Path)
+                    LastErrorOperationId =
+                        failure
+                        |> Option.bind (fun value -> value.OperationId)
+                    NextStep =
+                        failure
+                        |> Option.map (fun value -> value.NextStep)
+                    LastSuccessfulSyncAt =
+                        health.LastSuccessAtUnixTicks
+                        |> Option.map NodaTime.Instant.FromUnixTimeTicks
+                }
+
+            let empty =
+                {
+                    Enabled = false
+                    Paused = false
+                    State = "disabled"
+                    LibraryCatalogVersion = None
+                    CursorEpoch = None
+                    AppliedCursor = None
+                    PendingOperationCount = 0
+                    LastError = None
+                    LastErrorAt = None
+                    LastErrorPath = None
+                    LastErrorOperationId = None
+                    NextStep = None
+                    LastSuccessfulSyncAt = None
+                }
 
             match readRepository configuration.GraceStatusFile configuration.RepositoryId with
-            | None ->
-                return
-                    {
-                        Enabled = false
-                        Paused = false
-                        State = "disabled"
-                        LibraryCatalogVersion = None
-                        CursorEpoch = None
-                        AppliedCursor = None
-                        PendingOperationCount = 0
-                    }
+            | None -> return withHealth empty
             | Some current ->
                 let count =
                     readOperations configuration.GraceStatusFile configuration.RepositoryId
@@ -170,16 +227,43 @@ module internal LibrarySynchronization =
                     |> Array.length
 
                 return
-                    {
-                        Enabled = true
-                        Paused = current.Paused
-                        State = current.State
-                        LibraryCatalogVersion = Some current.Catalog.Version
-                        CursorEpoch = Some current.CursorEpoch
-                        AppliedCursor = if current.AppliedCursor = "" then None else Some current.AppliedCursor
-                        PendingOperationCount = count
-                    }
+                    withHealth
+                        { empty with
+                            Enabled = true
+                            Paused = current.Paused
+                            State = current.State
+                            LibraryCatalogVersion = Some current.Catalog.Version
+                            CursorEpoch = Some current.CursorEpoch
+                            AppliedCursor = if current.AppliedCursor = "" then None else Some current.AppliedCursor
+                            PendingOperationCount = count
+                        }
         }
+
+    /// Converts any Library failure into the record status shows, keeping a typed failure's path and next step.
+    let internal describeFailure source (fallbackPath: string option) (fallbackOperationId: Guid option) (ex: exn) =
+        let message = if ex.Message.Length > 4000 then ex.Message.Substring(0, 4000) else ex.Message
+
+        match ex with
+        | :? LibrarySyncFailureException as failure ->
+            {
+                Source = source
+                Message = message
+                Path = failure.Path |> Option.orElse fallbackPath
+                OperationId =
+                    failure.OperationId
+                    |> Option.orElse fallbackOperationId
+                NextStep = failure.NextStep
+                AtUnixTicks = getCurrentInstant().ToUnixTimeTicks()
+            }
+        | _ ->
+            {
+                Source = source
+                Message = message
+                Path = fallbackPath
+                OperationId = fallbackOperationId
+                NextStep = retryNextStep
+                AtUnixTicks = getCurrentInstant().ToUnixTimeTicks()
+            }
 
     /// Binds baseline acquisition to existing SDK routes and retained immutable content reads.
     let private baselineRemote configuration correlationId : LibraryBaseline.Remote =
@@ -295,8 +379,17 @@ module internal LibrarySynchronization =
             let! result = Libraries.GetCatalog(scoped configuration correlationId (GetLibraryCatalogParameters()))
             let catalog = value result
 
-            if catalog <> expected.Catalog
-               || state configuration <> expected then
+            if catalog <> expected.Catalog then
+                raise (
+                    LibrarySyncFailureException(
+                        "Library catalog or applied predecessor changed; synchronization has stopped before local effects.",
+                        None,
+                        None,
+                        catalogChangedNextStep
+                    )
+                )
+
+            if state configuration <> expected then
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
         }
 
@@ -766,7 +859,14 @@ module internal LibrarySynchronization =
                                 let slot = value result
 
                                 if slot.OccupantItemId.IsSome then
-                                    invalidOp "Library creation slot is occupied; saved bytes are retained."
+                                    raise (
+                                        LibrarySyncFailureException(
+                                            "Library creation slot is occupied; saved bytes are retained.",
+                                            Some operation.SourcePath,
+                                            Some operation.OperationId,
+                                            "Another working copy created a file with this name first. Your saved file is kept. Library sync on this copy can't continue until Grace can keep both files, which is planned. Version-control work isn't affected."
+                                        )
+                                    )
 
                                 request.CreationSlotExpectation <-
                                     Some { Parent = slot.Parent; Name = slot.Name; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
@@ -823,8 +923,24 @@ module internal LibrarySynchronization =
                 | Some _ -> ()
                 | None when operation.Rename && receipt.Outcome = "rejected" ->
                     retireRejectedRename configuration.GraceStatusFile configuration.RepositoryId received
-                    invalidOp "Library rename was rejected; its receipt is retained and no local change was applied."
-                | None -> invalidOp $"Library submission returned {receipt.Outcome}: {receipt.ReasonCode}. Saved input remains pending."
+
+                    raise (
+                        LibrarySyncFailureException(
+                            "Library rename was rejected; its receipt is retained and no local change was applied.",
+                            Some operation.SourcePath,
+                            Some operation.OperationId,
+                            "The rename was withdrawn and no filenames changed. Run 'grace library rename' again if you still want it."
+                        )
+                    )
+                | None ->
+                    raise (
+                        LibrarySyncFailureException(
+                            $"Library submission returned {receipt.Outcome}: {receipt.ReasonCode}. Saved input remains pending.",
+                            Some operation.SourcePath,
+                            Some operation.OperationId,
+                            "The server rejected this change. Your saved file is kept. Library sync on this copy can't continue past it yet. Version-control work isn't affected."
+                        )
+                    )
         }
 
     /// Applies one ordered accepted result after saving any newer local bytes and rechecking exact local preconditions.
@@ -1199,7 +1315,14 @@ module internal LibrarySynchronization =
 
                 if page.Rebaseline.IsSome
                    || page.CursorEpoch <> before.CursorEpoch then
-                    invalidOp "Library rebaseline is required; local saved work is retained."
+                    raise (
+                        LibrarySyncFailureException(
+                            "Library rebaseline is required; local saved work is retained.",
+                            None,
+                            None,
+                            "This copy needs to restart from the server's current Library state, which Grace can't do automatically yet. Your saved work is kept. Version-control work isn't affected."
+                        )
+                    )
 
                 let mutable index = 0
 
@@ -1242,6 +1365,9 @@ module internal LibrarySynchronization =
             if original.Baseline.IsNone then
                 setState configuration.GraceStatusFile original "catchingUp"
 
+            // The local operation being submitted, so a failure without its own path still names what it affected.
+            let mutable submitting: PendingOperation option = None
+
             try
                 if (state configuration).Baseline.IsSome then
                     do! LibraryBaseline.resumeWith ignore (baselineRemote configuration correlationId) configuration cancellationToken
@@ -1271,7 +1397,9 @@ module internal LibrarySynchronization =
                            && not operation.Terminal
                            && operation.Accepted.IsNone
                            && originReady then
+                            submitting <- Some operation
                             do! submitLocal configuration correlationId operation
+                            submitting <- None
                             submitted <- true
 
                         index <- index + 1
@@ -1307,9 +1435,33 @@ module internal LibrarySynchronization =
 
                 setState configuration.GraceStatusFile current (if caughtUp && pendingCount = 0 then "current" else "catchingUp")
                 pruneClassified configuration.GraceStatusFile configuration.RepositoryId 128
+                recordSyncSuccess configuration.GraceStatusFile configuration.RepositoryId (getCurrentInstant().ToUnixTimeTicks())
                 return! status configuration
             with
             | ex ->
+                // Cancellation stops the run on request; it isn't a failure to report.
+                if
+                    not
+                        (
+                            ex :? OperationCanceledException
+                            && cancellationToken.IsCancellationRequested
+                        )
+                then
+                    try
+                        let path =
+                            submitting
+                            |> Option.map (fun operation -> operation.SourcePath)
+
+                        let operationId =
+                            submitting
+                            |> Option.map (fun operation -> operation.OperationId)
+
+                        describeFailure SyncFailureSource.Sync path operationId ex
+                        |> recordFailure configuration.GraceStatusFile configuration.RepositoryId
+                    with
+                    // The original failure is raised below either way; a failed status write must not replace it.
+                    | _ -> ()
+
                 setState configuration.GraceStatusFile (state configuration) "blocked"
                 return raise ex
         }
