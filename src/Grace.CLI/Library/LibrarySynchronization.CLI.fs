@@ -241,13 +241,11 @@ module internal LibrarySynchronization =
 
     /// Converts any Library failure into the record status shows, keeping a typed failure's path and next step.
     let internal describeFailure source (fallbackPath: string option) (fallbackOperationId: Guid option) (ex: exn) =
-        let message = if ex.Message.Length > 4000 then ex.Message.Substring(0, 4000) else ex.Message
-
         match ex with
         | :? LibrarySyncFailureException as failure ->
             {
                 Source = source
-                Message = message
+                Message = ex.Message
                 Path = failure.Path |> Option.orElse fallbackPath
                 OperationId =
                     failure.OperationId
@@ -258,7 +256,7 @@ module internal LibrarySynchronization =
         | _ ->
             {
                 Source = source
-                Message = message
+                Message = ex.Message
                 Path = fallbackPath
                 OperationId = fallbackOperationId
                 NextStep = retryNextStep

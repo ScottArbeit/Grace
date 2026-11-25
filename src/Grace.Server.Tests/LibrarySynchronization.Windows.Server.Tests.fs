@@ -950,7 +950,14 @@ module LibrarySynchronizationWindowsServerTests =
                     if not saved then do! Task.Delay(250)
 
                 Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
-                Assert.That(saved, Is.True, "Watch didn't save version-controlled work after the Library failure.")
+
+                Assert.That(
+                    saved,
+                    Is.True,
+                    "Watch didn't save version-controlled work after the Library failure."
+                    + Environment.NewLine
+                    + String.Join(Environment.NewLine, output)
+                )
 
                 // Status says the copy is blocked, why, on which path, and what to do next.
                 let! status = runWatched (syncCommand "status")
