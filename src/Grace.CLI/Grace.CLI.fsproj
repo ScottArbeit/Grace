@@ -47,6 +47,7 @@
 		<Compile Include="Library\LibraryManifestUpload.CLI.fs" />
 		<Compile Include="Library\LibraryBaseline.CLI.fs" />
 		<Compile Include="Library\LibrarySynchronization.CLI.fs" />
+		<Compile Include="Library\LibraryWatch.CLI.fs" />
 		<Compile Include="Command\Library.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />

@@ -214,11 +214,15 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest contains duplicate entries:{Environment.NewLine}{message}")
 
-    /// Verifies Library catalog changes remain repository-admin policy while ordinary Library operations use the specialized roles.
+    /// Verifies the catalog is readable with repository read, catalog changes stay repository-admin, and Library content
+    /// operations use the specialized Library roles.
     [<Test>]
     member _.LibraryContentRoutesUseAcceptedRepositoryPolicies() =
+        // Every working copy needs the Library roots to keep Library files out of version control, including copies
+        // whose users have no Library role, so reading the catalog needs only repository read.
+        assertRouteSecurity "POST" "/libraries/catalog/get" (Authorized(Operation.RepositoryRead, ResourceKind.Repository))
+
         [
-            "POST", "/libraries/catalog/get"
             "POST", "/libraries/list"
             "POST", "/libraries/bootstrap/start"
             "POST", "/libraries/bootstrap/continue"

@@ -222,7 +222,7 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
             endpoint "GET" "/healthz" AllowAnonymous
-            endpoint "POST" "/libraries/catalog/get" (Authorized(LibraryRead, Repository))
+            endpoint "POST" "/libraries/catalog/get" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/libraries/list" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/add" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/libraries/remove" (Authorized(RepositoryAdmin, Repository))

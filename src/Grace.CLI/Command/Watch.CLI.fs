@@ -382,6 +382,24 @@ module Watch =
     /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
     let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
 
+
+
+    /// Reads the Library catalog Watch needs before it starts; without it Grace can't tell which paths a Library owns.
+    let private readStartupLibraryCatalog configuration correlationId =
+        task {
+            try
+                return! LibrarySynchronization.catalog configuration correlationId
+            with
+            | ex ->
+                return
+                    raise (
+                        InvalidOperationException(
+                            $"Grace Watch can't start: it couldn't read this repository's Library catalog, which it needs to keep Library files out of version control. {ex.Message}",
+                            ex
+                        )
+                    )
+        }
+
     /// Reports whether a candidate path is the Grace internal directory itself or belongs to its descendant namespace.
     let private isPathWithinDirectoryForWatch (directoryPath: string) (candidatePath: string) =
         isPathWithinDirectoryWithComparison watchPathComparison directoryPath candidatePath
@@ -4574,6 +4592,33 @@ module Watch =
 
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
+
+    /// Widens Watch's Library exclusion to every root that any catalog read during this Watch lifetime marked as
+    /// Library-owned. Until a copy can adopt catalog changes, excluding both old and new roots means version control never
+    /// publishes a Library file. Work Watch queued before a root was added was classified under the old catalog, so an
+    /// added root requests a resync that drops queued files the wider exclusion now covers and rescans with it. Call this
+    /// from Watch's own async flow: the shared path policy it sets is async-local, and Watch's startup policy lifetime
+    /// restores the original value when Watch exits.
+    let private widenWatchLibraryExclusion (libraries: string array) =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let widened = HashSet<string>(snapshot.Libraries, StringComparer.OrdinalIgnoreCase)
+
+        let added =
+            libraries
+            |> Array.filter (fun library -> widened.Add(library))
+
+        if added.Length > 0 then
+            let widenedLibraries = Seq.toArray widened
+            activeWatchIgnoreSnapshot <- Some { snapshot with Libraries = widenedLibraries }
+            beginLibraryPolicy widenedLibraries |> ignore
+
+            requestGraceWatchExplicitResyncCore $"""the Library catalog added {String.Join(", ", added)}""" (fun pendingFile ->
+                pendingFileWorkMatchesCurrentScope pendingFile
+                && classifyRepositoryPathForWatch RepositoryPathKind.FilePath pendingFile.FullPath
+                   <> RepositoryPathClassification.Library)
+
+    /// Widens Library exclusion for focused Watch tests.
+    let internal widenWatchLibraryExclusionForWatchTests libraries = widenWatchLibraryExclusion libraries
 
     let private pendingTransitionConfigurationReloadLock = obj ()
     let mutable private pendingTransitionConfigurationReloadReason: string option = None
@@ -9730,7 +9775,7 @@ module Watch =
 
                     let initializedStatus = initializedState.Status
 
-                    let! libraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+                    let! libraryCatalog = readStartupLibraryCatalog cachedOperationalConfiguration (getCorrelationId parseResult)
                     use libraryPolicyLifetime = beginLibraryPolicy libraryCatalog.Libraries
                     let! _ = LibrarySynchronization.status cachedOperationalConfiguration
                     libraryObservedPaths.Clear()
@@ -9865,7 +9910,70 @@ module Watch =
 
                     use signalRConnection = createSignalRConnection signalRUrl
                     let mutable libraryRegistered = 0
-                    let mutable nextLibraryPull = DateTime.MinValue
+
+                    // Library work for each timer tick. A failure here is recorded and retried; it never stops Watch.
+                    let libraryWatchPorts: LibraryWatch.Ports =
+                        {
+                            Now = fun () -> DateTime.UtcNow
+                            ReadStatus = fun () -> LibrarySynchronization.status cachedOperationalConfiguration
+                            EnsureRegistered =
+                                fun () ->
+                                    task {
+                                        if Volatile.Read(&libraryRegistered) = 0
+                                           && signalRConnection.State = HubConnectionState.Connected then
+                                            do!
+                                                signalRConnection.InvokeAsync(
+                                                    "RegisterLibraryContent",
+                                                    operationalConfiguration.RepositoryId,
+                                                    cancellationToken
+                                                )
+
+                                            Interlocked.Exchange(&libraryRegistered, 1)
+                                            |> ignore
+                                    }
+                                    :> Task
+                            Classify =
+                                fun () ->
+                                    let observations = libraryObservedPaths.Keys |> Seq.toArray
+
+                                    observations
+                                    |> Array.iter (fun path -> libraryObservedPaths.TryRemove(path) |> ignore)
+
+                                    task {
+                                        try
+                                            do! LibrarySynchronization.classifyWatchObservations cachedOperationalConfiguration observations cancellationToken
+                                        with
+                                        | ex ->
+                                            // Keep the observations for the next attempt.
+                                            observations
+                                            |> Array.iter (fun path -> libraryObservedPaths[path] <- ())
+
+                                            return raise ex
+                                    }
+                                    :> Task
+                            Run =
+                                fun () ->
+                                    LibrarySynchronization.runFromWatch cachedOperationalConfiguration (getCorrelationId parseResult) cancellationToken :> Task
+                            ReadCatalog = fun () -> LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+                            ReadHealth =
+                                fun () ->
+                                    Grace.CLI.LibraryLocalState.readHealth
+                                        cachedOperationalConfiguration.GraceStatusFile
+                                        cachedOperationalConfiguration.RepositoryId
+                            RecordFailure =
+                                fun failure ->
+                                    Grace.CLI.LibraryLocalState.recordFailure
+                                        cachedOperationalConfiguration.GraceStatusFile
+                                        cachedOperationalConfiguration.RepositoryId
+                                        failure
+                            ClearFailure =
+                                fun sources ->
+                                    Grace.CLI.LibraryLocalState.clearFailure
+                                        cachedOperationalConfiguration.GraceStatusFile
+                                        cachedOperationalConfiguration.RepositoryId
+                                        sources
+                            Log = fun message -> logToAnsiConsole Colors.Error message
+                        }
 
                     use notifyLibraryContent =
                         signalRConnection.On<Grace.Types.Library.LibraryContentAvailable>(
@@ -10022,10 +10130,12 @@ module Watch =
                         logToAnsiConsole Colors.Error $"Grace Watch startup scan failure: {error}"
 
                     // Process any changes that occurred while not running.
-                    let! startupLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
+                    let! startupLibraryCatalog = readStartupLibraryCatalog cachedOperationalConfiguration (getCorrelationId parseResult)
 
                     if startupLibraryCatalog <> libraryCatalog then
-                        invalidOp "Library catalog changed during Watch startup. Restart Watch after resolving the Library policy change."
+                        widenWatchLibraryExclusion startupLibraryCatalog.Libraries
+
+                    let mutable libraryWatchState = LibraryWatch.initialState DateTime.UtcNow startupLibraryCatalog
 
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
@@ -10047,35 +10157,17 @@ module Watch =
 
                     while ticked
                           && not (cancellationToken.IsCancellationRequested) do
-                        let! libraryStatus = LibrarySynchronization.status cachedOperationalConfiguration
+                        let observedLibraryPaths = not libraryObservedPaths.IsEmpty
+                        let libraryWoke = takeLibraryWake ()
+                        let previousLibraryCatalog = libraryWatchState.Catalog
 
-                        if libraryStatus.Enabled && not libraryStatus.Paused then
-                            if Volatile.Read(&libraryRegistered) = 0
-                               && signalRConnection.State = HubConnectionState.Connected then
-                                do! signalRConnection.InvokeAsync("RegisterLibraryContent", operationalConfiguration.RepositoryId, cancellationToken)
+                        let! nextLibraryWatchState = LibraryWatch.tick libraryWatchPorts cancellationToken observedLibraryPaths libraryWoke libraryWatchState
 
-                                Interlocked.Exchange(&libraryRegistered, 1)
-                                |> ignore
+                        libraryWatchState <- nextLibraryWatchState
 
-                            let observations = libraryObservedPaths.Keys |> Seq.toArray
-
-                            for path in observations do
-                                libraryObservedPaths.TryRemove(path) |> ignore
-
-                            do! LibrarySynchronization.classifyWatchObservations cachedOperationalConfiguration observations cancellationToken
-                            let woke = takeLibraryWake ()
-
-                            if woke
-                               || observations.Length > 0
-                               || libraryStatus.State <> "current"
-                               || DateTime.UtcNow >= nextLibraryPull then
-                                do! LibrarySynchronization.runFromWatch cachedOperationalConfiguration (getCorrelationId parseResult) cancellationToken
-                                nextLibraryPull <- DateTime.UtcNow.AddSeconds(5.0)
-
-                        let! currentLibraryCatalog = LibrarySynchronization.catalog cachedOperationalConfiguration (getCorrelationId parseResult)
-
-                        if currentLibraryCatalog <> libraryCatalog then
-                            invalidOp "Library catalog changed during Watch. Restart Watch after resolving the Library policy change."
+                        if libraryWatchState.Catalog
+                           <> previousLibraryCatalog then
+                            widenWatchLibraryExclusion libraryWatchState.Catalog.Libraries
 
                         do!
                             processWatchTimerLocalRecoveryWithReplay

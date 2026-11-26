@@ -252,6 +252,44 @@ module LibraryCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Renders `grace library sync` status for people: the participation line, then the latest failure and what to do about it.
+    let internal synchronizationStatusText (status: LibrarySynchronization.LibrarySynchronizationStatus) =
+        let text = stringBuilderPool.Get()
+
+        try
+            text.AppendLine(
+                $"Library synchronization: Enabled={status.Enabled}, Paused={status.Paused}, State={status.State}, Pending={status.PendingOperationCount}."
+            )
+            |> ignore
+
+            match status.LastError with
+            | Some error ->
+                let at =
+                    status.LastErrorAt
+                    |> Option.map (fun value -> $" at {value}")
+                    |> Option.defaultValue ""
+
+                text.AppendLine($"Last error{at}: {error}")
+                |> ignore
+
+                status.LastErrorPath
+                |> Option.iter (fun path ->
+                    text.AppendLine($"Affected path: {path}")
+                    |> ignore)
+
+                status.NextStep
+                |> Option.iter (fun step -> text.AppendLine($"Next step: {step}") |> ignore)
+            | None -> ()
+
+            status.LastSuccessfulSyncAt
+            |> Option.iter (fun value ->
+                text.AppendLine($"Last successful sync: {value}")
+                |> ignore)
+
+            text.ToString()
+        finally
+            stringBuilderPool.Return(text)
+
     /// Exposes stable command fields while separating server rejection codes from local diagnostics.
     [<CLIMutable>]
     type RenameOutput = { OperationId: Guid; SourcePath: string; TargetPath: string; Outcome: string; ReasonCode: string option; Diagnostic: string option }
@@ -420,7 +458,7 @@ module LibraryCommand =
                     match verb with
                     | "pause" -> "Pause this onboarded copy locally, retaining saved and pending work."
                     | "resume" -> "Resume this paused copy and synchronize retained and latest saved work."
-                    | "status" -> "Show participation, pause setting and completed synchronization progress."
+                    | "status" -> "Show participation, pause setting, synchronization progress, and the latest failure with its next step."
                     | _ -> $"Library synchronization {verb}."
                 )
                 |> addScopeOptions
@@ -443,10 +481,7 @@ module LibraryCommand =
                                 match output with
                                 | Normal
                                 | Verbose
-                                | Minimal ->
-                                    Console.Out.WriteLine(
-                                        $"Library synchronization: Enabled={value.ReturnValue.Enabled}, Paused={value.ReturnValue.Paused}, State={value.ReturnValue.State}, Pending={value.ReturnValue.PendingOperationCount}."
-                                    )
+                                | Minimal -> Console.Out.Write(synchronizationStatusText value.ReturnValue)
                                 | _ -> ()
                             | _ -> ()
 

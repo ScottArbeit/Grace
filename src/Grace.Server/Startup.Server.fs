@@ -1733,7 +1733,7 @@ module Application =
                 subRoute
                     "/libraries"
                     [
-                        POST [ route "/catalog/get" (composeHandlers requireLibraryRead Library.GetCatalog)
+                        POST [ route "/catalog/get" (composeHandlers requireRepositoryRead Library.GetCatalog)
                                |> addMetadata typeof<GetLibraryCatalogParameters>
 
                                route "/list" (composeHandlers requireLibraryRead Library.ListLibraries)
