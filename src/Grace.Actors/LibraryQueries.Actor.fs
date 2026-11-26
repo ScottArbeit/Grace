@@ -515,33 +515,56 @@ module LibraryQueries =
             return total, count, control.CommittedCursor, started
         }
 
-    /// Establishes query-client visibility of the last committed item before baseline enumeration.
-    let waitForItemCursor (services: IServiceProvider) (repositoryId: RepositoryId) itemId expectedCursor cancellationToken =
+    /// The waits between checks for a committed item's visibility, about 6.75 seconds in all. A replica that hasn't caught
+    /// up only matters after the actor moves to a new silo, and replication finishes long before that move does.
+    let VisibilityRetryDelays =
+        [| 250; 500; 750; 1000; 1500; 2000 |]
+        |> Array.map (fun milliseconds -> TimeSpan.FromMilliseconds(float milliseconds))
+
+    /// Runs check until it reports true, waiting each delay in turn between attempts. Returns false when the check after
+    /// the last delay still reports false.
+    let internal retryUntil (delays: TimeSpan array) (wait: TimeSpan -> Task) (check: unit -> Task<bool>) =
+        task {
+            let! first = check ()
+            let mutable succeeded = first
+            let mutable index = 0
+
+            while not succeeded && index < delays.Length do
+                do! wait delays[index]
+                index <- index + 1
+                let! next = check ()
+                succeeded <- next
+
+            return succeeded
+        }
+
+    /// Establishes query-client visibility of the last committed item before a query that must cover every committed item.
+    let waitForItemCursor (services: IServiceProvider) (repositoryId: RepositoryId) itemId expectedCursor (cancellationToken: CancellationToken) =
         task {
             let container =
                 (database services)
                     .GetContainer LibraryRecords.CurrentContainerName
 
             let options = QueryRequestOptions(PartitionKey = Nullable(partition repositoryId "item"), MaxItemCount = Nullable 1)
-            let mutable visible = false
-            let mutable attempts = 0
 
-            while not visible && attempts < 8 do
-                attempts <- attempts + 1
+            let check () =
+                task {
+                    let query =
+                        QueryDefinition(
+                            "SELECT TOP 1 VALUE c.State.LastCursor FROM c WHERE c.PartitionKey = @repository AND c.PartitionKey2 = 'item' AND c.State.Item.ItemId = @itemId"
+                        )
+                            .WithParameter("@repository", repositoryId.ToString("D"))
+                            .WithParameter("@itemId", itemId)
 
-                let query =
-                    QueryDefinition(
-                        "SELECT TOP 1 VALUE c.State.LastCursor FROM c WHERE c.PartitionKey = @repository AND c.PartitionKey2 = 'item' AND c.State.Item.ItemId = @itemId"
-                    )
-                        .WithParameter("@repository", repositoryId.ToString("D"))
-                        .WithParameter("@itemId", itemId)
+                    use iterator = container.GetItemQueryIterator<int64>(query, requestOptions = options)
+                    let! cursor = firstResult iterator cancellationToken
 
-                use iterator = container.GetItemQueryIterator<int64>(query, requestOptions = options)
-                let! cursor = firstResult iterator cancellationToken
+                    return
+                        cursor
+                        |> Option.exists (fun value -> value >= expectedCursor)
+                }
 
-                visible <-
-                    cursor
-                    |> Option.exists (fun value -> value >= expectedCursor)
+            let! visible = retryUntil VisibilityRetryDelays (fun delay -> Task.Delay(delay, cancellationToken)) check
 
             if not visible then
                 invalidOp $"The current Library partition did not expose committed cursor {expectedCursor}."

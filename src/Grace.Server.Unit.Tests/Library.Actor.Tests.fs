@@ -886,6 +886,73 @@ type LibraryActorTests() =
             )
         }
 
+    /// Waiting for a committed item to become visible backs off on a fixed schedule, then gives up.
+    [<Test>]
+    member _.VisibilityWaitBacksOffOnTheFixedScheduleThenFails() =
+        task {
+            let waits = ResizeArray<TimeSpan>()
+            let checks = ref 0
+
+            let! visible =
+                LibraryQueries.retryUntil
+                    LibraryQueries.VisibilityRetryDelays
+                    (fun delay ->
+                        waits.Add delay
+                        Task.CompletedTask)
+                    (fun () ->
+                        checks.Value <- checks.Value + 1
+                        Task.FromResult false)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(visible, Is.False)
+                    Assert.That(checks.Value, Is.EqualTo(7), "One check before the first wait and one after each wait.")
+
+                    Assert.That(
+                        waits
+                        |> Seq.map (fun value -> value.TotalMilliseconds),
+                        Is.EqualTo(
+                            box [| 250.0
+                                   500.0
+                                   750.0
+                                   1000.0
+                                   1500.0
+                                   2000.0 |]
+                        )
+                    ))
+            )
+        }
+
+    /// A visibility wait stops as soon as the committed item is visible, without waiting again.
+    [<Test>]
+    member _.VisibilityWaitStopsAtTheFirstVisibleCheck() =
+        task {
+            let waits = ResizeArray<TimeSpan>()
+            let checks = ref 0
+
+            let! visible =
+                LibraryQueries.retryUntil
+                    LibraryQueries.VisibilityRetryDelays
+                    (fun delay ->
+                        waits.Add delay
+                        Task.CompletedTask)
+                    (fun () ->
+                        checks.Value <- checks.Value + 1
+                        Task.FromResult(checks.Value = 3))
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(visible, Is.True)
+                    Assert.That(checks.Value, Is.EqualTo(3))
+
+                    Assert.That(
+                        waits
+                        |> Seq.map (fun value -> value.TotalMilliseconds),
+                        Is.EqualTo(box [| 250.0; 500.0 |])
+                    ))
+            )
+        }
+
     /// A temporarily visible later segment cannot move a change page beyond a missing committed cursor.
     [<Test>]
     member _.ChangePagesStopAtVisibilityGapAndResumeContiguously() =
