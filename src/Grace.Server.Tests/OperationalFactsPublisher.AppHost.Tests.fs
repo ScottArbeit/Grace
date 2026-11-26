@@ -47,12 +47,6 @@ type OperationalFactsPublisherAppHostTests() =
                     "/PartitionKey2"
                     "/PartitionKey3"
                 |]
-                "grace-library-history",
-                [|
-                    "/PartitionKey"
-                    "/PartitionKey2"
-                    "/PartitionKey3"
-                |]
                 "grace-library-baselines",
                 [|
                     "/PartitionKey"

@@ -3572,29 +3572,6 @@ paths:
           $ref: '#/components/responses/410'
         '500':
           $ref: '#/components/responses/500'
-  /libraries/operations/get:
-    post:
-      tags:
-        - Libraries
-      summary: Get the stable receipt for one authorized Library operation identity.
-      operationId: GetLibraryOperation
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GetLibraryOperationParameters'
-      responses:
-        '200':
-          $ref: '#/components/responses/LibraryOperationReceiptResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '403':
-          $ref: '#/components/responses/403'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
   /libraries/content/prepare:
     post:
       tags:
@@ -3672,29 +3649,6 @@ paths:
           $ref: '#/components/responses/404'
         '410':
           $ref: '#/components/responses/410'
-        '500':
-          $ref: '#/components/responses/500'
-  /libraries/items/get:
-    post:
-      tags:
-        - Libraries
-      summary: Get one current Library item.
-      operationId: GetLibraryItem
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GetLibraryItemParameters'
-      responses:
-        '200':
-          $ref: '#/components/responses/LibraryItemResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '403':
-          $ref: '#/components/responses/403'
-        '404':
-          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
   /libraries/namespace/get-slot:
@@ -5629,16 +5583,11 @@ components:
       minLength: 1
       maxLength: 2048
       description: Opaque repository cursor. Clients must not parse or compare its contents.
-    LibraryCursorEpoch:
-      type: string
-      format: uuid
-      pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-      description: Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     LibraryPageToken:
       type: string
       minLength: 1
       maxLength: 2048
-      description: Opaque token for continuing one immutable page sequence.
+      description: Opaque token for continuing one immutable bootstrap page sequence.
     LibraryItemKind:
       type: string
       enum:
@@ -5657,12 +5606,9 @@ components:
       type: string
       enum:
         - accepted
-        - unchanged
         - rejected
         - conflictCopy
         - stalePolicy
-        - rebaselineRequired
-        - localIncomplete
     LibraryRejectionReason:
       type: string
       enum:
@@ -5921,22 +5867,6 @@ components:
         - LibraryCatalogVersion
         - Item
         - Conflict
-    LibraryRebaselineDto:
-      type: object
-      properties:
-        Reason:
-          type: string
-        CurrentEpoch:
-          $ref: '#/components/schemas/LibraryCursorEpoch'
-        ServiceFloorCursor:
-          $ref: '#/components/schemas/LibraryCursor'
-        RecommendedBootstrap:
-          type: boolean
-      required:
-        - Reason
-        - CurrentEpoch
-        - ServiceFloorCursor
-        - RecommendedBootstrap
     LibraryOperationReceiptDto:
       type: object
       properties:
@@ -5957,10 +5887,6 @@ components:
           allOf:
             - $ref: '#/components/schemas/LibraryCatalogDto'
           nullable: true
-        Rebaseline:
-          allOf:
-            - $ref: '#/components/schemas/LibraryRebaselineDto'
-          nullable: true
       required:
         - OperationId
         - RequestHash
@@ -5968,7 +5894,6 @@ components:
         - Change
         - ReasonCode
         - CurrentLibraryCatalog
-        - Rebaseline
     LibraryCatalogChangeResultDto:
       type: object
       properties:
@@ -5996,8 +5921,6 @@ components:
           $ref: '#/components/schemas/LibraryBootstrapId'
         BoundaryCursor:
           $ref: '#/components/schemas/LibraryCursor'
-        CursorEpoch:
-          $ref: '#/components/schemas/LibraryCursorEpoch'
         LibraryCatalog:
           $ref: '#/components/schemas/LibraryCatalogDto'
         Items:
@@ -6011,17 +5934,13 @@ components:
       required:
         - BootstrapId
         - BoundaryCursor
-        - CursorEpoch
         - LibraryCatalog
         - Items
         - NextPageToken
     LibraryChangePageDto:
       type: object
+      description: Accepted changes after the request's cursor, in journal order. Request the next page with LastCursor.
       properties:
-        Outcome:
-          $ref: '#/components/schemas/LibraryOutcomeKind'
-        CursorEpoch:
-          $ref: '#/components/schemas/LibraryCursorEpoch'
         Changes:
           type: array
           items:
@@ -6030,22 +5949,10 @@ components:
           $ref: '#/components/schemas/LibraryCursor'
         HasMore:
           type: boolean
-        NextPageToken:
-          allOf:
-            - $ref: '#/components/schemas/LibraryPageToken'
-          nullable: true
-        Rebaseline:
-          allOf:
-            - $ref: '#/components/schemas/LibraryRebaselineDto'
-          nullable: true
       required:
-        - Outcome
-        - CursorEpoch
         - Changes
         - LastCursor
         - HasMore
-        - NextPageToken
-        - Rebaseline
     LibraryContentPreparationDto:
       type: object
       properties:
@@ -6096,24 +6003,9 @@ components:
           $ref: '#/components/schemas/RepositoryId'
         LibraryCatalogVersion:
           $ref: '#/components/schemas/LibraryCatalogVersion'
-        IsCaughtUp:
-          type: boolean
-        RebaselineRequired:
-          type: boolean
-        IsBlocked:
-          type: boolean
         PendingOperationCount:
           type: integer
           format: int32
-          minimum: 0
-        OldestPendingAgeMilliseconds:
-          type: integer
-          format: int64
-          minimum: 0
-          nullable: true
-        ProjectionLagCount:
-          type: integer
-          format: int64
           minimum: 0
         LastCompletedAt:
           allOf:
@@ -6123,12 +6015,7 @@ components:
         - State
         - RepositoryId
         - LibraryCatalogVersion
-        - IsCaughtUp
-        - RebaselineRequired
-        - IsBlocked
         - PendingOperationCount
-        - OldestPendingAgeMilliseconds
-        - ProjectionLagCount
         - LastCompletedAt
     LibraryContentAvailable:
       type: object
@@ -6139,8 +6026,6 @@ components:
           const: LibraryContentAvailable.v1
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
-        CursorEpoch:
-          $ref: '#/components/schemas/LibraryCursorEpoch'
         AvailableAfterCursor:
           $ref: '#/components/schemas/LibraryCursor'
         LibraryCatalogVersion:
@@ -6152,7 +6037,6 @@ components:
       required:
         - EventName
         - RepositoryId
-        - CursorEpoch
         - AvailableAfterCursor
         - LibraryCatalogVersion
         - OccurredAt
@@ -6234,10 +6118,6 @@ components:
           properties:
             AfterCursor:
               $ref: '#/components/schemas/LibraryCursor'
-            PageToken:
-              allOf:
-                - $ref: '#/components/schemas/LibraryPageToken'
-              nullable: true
             PageSize:
               type: integer
               format: int32
@@ -6245,7 +6125,6 @@ components:
               maximum: 2000
           required:
             - AfterCursor
-            - PageToken
             - PageSize
     SubmitLibraryChangeParameters:
       allOf:
@@ -6292,15 +6171,6 @@ components:
             - LibraryCatalogVersion
             - ChangeKind
             - ItemKind
-    GetLibraryOperationParameters:
-      allOf:
-        - $ref: '#/components/schemas/LibraryParameters'
-        - type: object
-          properties:
-            OperationId:
-              $ref: '#/components/schemas/LibraryOperationId'
-          required:
-            - OperationId
     PrepareLibraryContentParameters:
       allOf:
         - $ref: '#/components/schemas/LibraryParameters'
@@ -6336,15 +6206,6 @@ components:
             - ItemId
             - ContentVersionId
             - ContentRevision
-    GetLibraryItemParameters:
-      allOf:
-        - $ref: '#/components/schemas/LibraryParameters'
-        - type: object
-          properties:
-            ItemId:
-              $ref: '#/components/schemas/LibraryItemId'
-          required:
-            - ItemId
     GetLibraryNamespaceSlotParameters:
       allOf:
         - $ref: '#/components/schemas/LibraryParameters'
@@ -6425,13 +6286,6 @@ components:
           properties:
             ReturnValue:
               $ref: '#/components/schemas/LibraryContentReadDto'
-    LibraryItemReturnValue:
-      allOf:
-        - $ref: '#/components/schemas/LibraryReturnValueBase'
-        - type: object
-          properties:
-            ReturnValue:
-              $ref: '#/components/schemas/LibraryItemDto'
     LibraryNamespaceSlotReturnValue:
       allOf:
         - $ref: '#/components/schemas/LibraryReturnValueBase'
@@ -9944,7 +9798,7 @@ components:
           schema:
             $ref: '#/components/schemas/LibraryBootstrapPageReturnValue'
     LibraryChangePageResponse:
-      description: Ordered accepted changes or a rebaseline instruction.
+      description: Accepted changes after the request's cursor, in journal order.
       content:
         application/json:
           schema:
@@ -9967,12 +9821,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/LibraryContentReadReturnValue'
-    LibraryItemResponse:
-      description: Current Library item state.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/LibraryItemReturnValue'
     LibraryNamespaceSlotResponse:
       description: Current occupied or remembered-vacant namespace slot.
       content:

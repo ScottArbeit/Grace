@@ -21,26 +21,6 @@ module Library =
     type LibraryContentVersionId = Guid
     type LibraryBootstrapId = Guid
     type LibraryCursor = string
-
-    /// Identifies one feed generation by equality, without ordering or timestamp meaning.
-    [<Struct; NoComparison>]
-    type LibraryCursorEpoch = LibraryCursorEpoch of Guid
-
-    /// Converts feed generation identities at GUID text boundaries without interpreting cursor tokens.
-    [<RequireQualifiedAccess>]
-    module LibraryCursorEpoch =
-        /// Wraps the server's existing generation identity without accepting another domain identifier implicitly.
-        let ofGuid value = LibraryCursorEpoch value
-
-        /// Writes the canonical hyphenated GUID representation used on the wire and in SQLite.
-        let toString (LibraryCursorEpoch value) = value.ToString("D")
-
-        /// Rejects malformed or non-D text before local state can authorize synchronization effects.
-        let parse (text: string) =
-            match Guid.TryParseExact(text, "D") with
-            | true, value when not (isNull text) && text.Length = 36 -> LibraryCursorEpoch value
-            | _ -> raise (FormatException("Library cursor epoch must be a GUID in D format."))
-
     type LibraryPageToken = string
 
     /// Provides the accepted lower-camel wire values for Library item kinds.
@@ -80,9 +60,6 @@ module Library =
         let Accepted = "accepted"
 
         [<Literal>]
-        let Unchanged = "unchanged"
-
-        [<Literal>]
         let Rejected = "rejected"
 
         [<Literal>]
@@ -90,12 +67,6 @@ module Library =
 
         [<Literal>]
         let StalePolicy = "stalePolicy"
-
-        [<Literal>]
-        let RebaselineRequired = "rebaselineRequired"
-
-        [<Literal>]
-        let LocalIncomplete = "localIncomplete"
 
     /// Provides the exact rejection reason values returned by remote change admission.
     [<RequireQualifiedAccess>]
@@ -126,6 +97,15 @@ module Library =
 
         [<Literal>]
         let OperationIdentityMismatch = "operationIdentityMismatch"
+
+    /// Explains why the server can't answer a change request for a cursor.
+    [<RequireQualifiedAccess>]
+    module LibraryCursorError =
+        [<Literal>]
+        let NotIssuedHere = "The Library cursor wasn't issued for this repository."
+
+        [<Literal>]
+        let AheadOfServer = "The Library cursor is ahead of this repository's committed changes, so this copy's Library state doesn't match the server."
 
     /// Provides the exact rejection values used by root configuration changes.
     [<RequireQualifiedAccess>]
@@ -338,20 +318,6 @@ module Library =
             Conflict: LibraryConflictProvenanceDto option
         }
 
-    /// Directs a client to restart from the current published baseline.
-    [<CLIMutable; GenerateSerializer>]
-    type LibraryRebaselineDto =
-        {
-            [<Id(0u)>]
-            Reason: string
-            [<Id(1u)>]
-            CurrentEpoch: LibraryCursorEpoch
-            [<Id(2u)>]
-            ServiceFloorCursor: LibraryCursor
-            [<Id(3u)>]
-            RecommendedBootstrap: bool
-        }
-
     /// Carries the stable result recorded for one normalized operation request.
     [<CLIMutable; GenerateSerializer>]
     type LibraryOperationReceiptDto =
@@ -368,8 +334,6 @@ module Library =
             ReasonCode: string option
             [<Id(5u)>]
             CurrentLibraryCatalog: LibraryCatalogDto option
-            [<Id(6u)>]
-            Rebaseline: LibraryRebaselineDto option
         }
 
     /// Carries one exact-version root add or remove result.
@@ -411,33 +375,24 @@ module Library =
             [<Id(1u)>]
             BoundaryCursor: LibraryCursor
             [<Id(2u)>]
-            CursorEpoch: LibraryCursorEpoch
-            [<Id(3u)>]
             LibraryCatalog: LibraryCatalogDto
-            [<Id(4u)>]
+            [<Id(3u)>]
             Items: LibraryItemDto array
-            [<Id(5u)>]
+            [<Id(4u)>]
             NextPageToken: LibraryPageToken option
         }
 
-    /// Carries ordered accepted changes or a typed rebaseline instruction.
+    /// Carries the accepted changes after a cursor, in journal order. The journal is permanent, so the next page is
+    /// always requested with the cursor of the last change applied.
     [<CLIMutable; GenerateSerializer>]
     type LibraryChangePageDto =
         {
             [<Id(0u)>]
-            Outcome: string
-            [<Id(1u)>]
-            CursorEpoch: LibraryCursorEpoch
-            [<Id(2u)>]
             Changes: LibraryChangeDto array
-            [<Id(3u)>]
+            [<Id(1u)>]
             LastCursor: LibraryCursor
-            [<Id(4u)>]
+            [<Id(2u)>]
             HasMore: bool
-            [<Id(5u)>]
-            NextPageToken: LibraryPageToken option
-            [<Id(6u)>]
-            Rebaseline: LibraryRebaselineDto option
         }
 
     /// Binds immutable bytes to the existing authorized upload session used by a later Library change.
@@ -472,7 +427,8 @@ module Library =
             ExpiresAt: Instant
         }
 
-    /// Reports server synchronization progress without exposing storage or content details.
+    /// Reports the server's stored Library state: whether a saved decision is waiting for repair, and when the last
+    /// change was accepted. Reading it never repairs anything.
     [<CLIMutable; GenerateSerializer>]
     type LibraryRepositoryStatusDto =
         {
@@ -483,18 +439,8 @@ module Library =
             [<Id(2u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
             [<Id(3u)>]
-            IsCaughtUp: bool
-            [<Id(4u)>]
-            RebaselineRequired: bool
-            [<Id(5u)>]
-            IsBlocked: bool
-            [<Id(6u)>]
             PendingOperationCount: int
-            [<Id(7u)>]
-            OldestPendingAgeMilliseconds: int64 option
-            [<Id(8u)>]
-            ProjectionLagCount: int64
-            [<Id(9u)>]
+            [<Id(4u)>]
             LastCompletedAt: Instant option
         }
 
@@ -507,48 +453,25 @@ module Library =
             [<Id(1u)>]
             RepositoryId: RepositoryId
             [<Id(2u)>]
-            CursorEpoch: LibraryCursorEpoch
-            [<Id(3u)>]
             AvailableAfterCursor: LibraryCursor
-            [<Id(4u)>]
+            [<Id(3u)>]
             LibraryCatalogVersion: LibraryCatalogVersion
-            [<Id(5u)>]
+            [<Id(4u)>]
             OccurredAt: Instant
-            [<Id(6u)>]
+            [<Id(5u)>]
             CorrelationId: CorrelationId
         }
 
         /// Builds the only Product V1 public wake event.
-        static member Create(repositoryId, cursorEpoch, availableAfterCursor, libraryCatalogVersion, occurredAt, correlationId) =
+        static member Create(repositoryId, availableAfterCursor, libraryCatalogVersion, occurredAt, correlationId) =
             {
                 EventName = "LibraryContentAvailable.v1"
                 RepositoryId = repositoryId
-                CursorEpoch = cursorEpoch
                 AvailableAfterCursor = availableAfterCursor
                 LibraryCatalogVersion = libraryCatalogVersion
                 OccurredAt = occurredAt
                 CorrelationId = correlationId
             }
-
-    /// Stores the exact serialized notification retained after a terminal Service Bus failure.
-    [<CLIMutable; GenerateSerializer>]
-    type FailedGraceEventEnvelope =
-        {
-            [<Id(0u)>]
-            TopicName: string
-            [<Id(1u)>]
-            MessageId: string
-            [<Id(2u)>]
-            Body: byte array
-            [<Id(3u)>]
-            ContentType: string
-            [<Id(4u)>]
-            Subject: string
-            [<Id(5u)>]
-            CorrelationId: CorrelationId
-            [<Id(6u)>]
-            ApplicationProperties: Collections.Generic.Dictionary<string, string>
-        }
 
     /// Carries one validated Library change after HTTP shape checks and before actor-owned state checks.
     type LibraryChangeCommand =
@@ -583,18 +506,8 @@ module Library =
             [<Id(5u)>]
             PriorNamespace: LibraryNamespaceDto option
             [<Id(6u)>]
-            PriorContentVersionId: LibraryContentVersionId option
-            [<Id(7u)>]
-            ConsumedNamespaceVersion: LibraryNamespaceVersion option
-            [<Id(8u)>]
-            ConsumedContentVersionId: LibraryContentVersionId option
-            [<Id(9u)>]
-            ConsumedContentRevision: LibraryCursor option
-            [<Id(10u)>]
-            ConsumedSlotVersion: LibraryNamespaceSlotVersion option
-            [<Id(11u)>]
             AddedItemRecord: bool
-            [<Id(12u)>]
+            [<Id(7u)>]
             AddedSlotRecord: bool
         }
 
@@ -603,7 +516,7 @@ module Library =
         | ItemChange of LibraryAcceptedChangeRecord
         | CatalogChange of LibraryOperationId * string * LibraryCatalogVersion * LibraryCatalogVersion * bool * string * Instant * PrincipalId
 
-    /// Persists the bounded serialized command lane and its independent background progress.
+    /// Persists the bounded serialized command lane: the catalog, the committed cursor and at most one saved decision.
     [<CLIMutable; GenerateSerializer>]
     type LibraryControlDocument =
         {
@@ -612,24 +525,16 @@ module Library =
             [<Id(1u)>]
             Catalog: LibraryCatalogDto
             [<Id(2u)>]
-            Epoch: Guid
-            [<Id(3u)>]
             CommittedCursor: int64
-            [<Id(4u)>]
-            ReplayFloor: int64
-            [<Id(5u)>]
+            [<Id(3u)>]
             Pending: LibraryPendingDecision option
-            [<Id(6u)>]
+            [<Id(4u)>]
             ItemRecordCount: int
-            [<Id(7u)>]
+            [<Id(5u)>]
             SlotRecordCount: int
-            [<Id(8u)>]
-            HistoryThrough: int64
-            [<Id(9u)>]
-            NotifyThrough: int64
         }
 
-    /// Stores one current item and the newest history segment that mentions it.
+    /// Stores one current item and the cursor of the change that last wrote it.
     [<CLIMutable; GenerateSerializer>]
     type LibraryCurrentItemDocument =
         {
@@ -639,11 +544,9 @@ module Library =
             Item: LibraryItemDto
             [<Id(2u)>]
             LastCursor: int64
-            [<Id(3u)>]
-            HistoryTailSegment: string option
         }
 
-    /// Stores one remembered parent/name slot and the newest history segment that mentions it.
+    /// Stores one remembered parent/name slot and the cursor of the change that last wrote it.
     [<CLIMutable; GenerateSerializer>]
     type LibraryCurrentSlotDocument =
         {
@@ -653,8 +556,6 @@ module Library =
             Slot: LibraryNamespaceSlotDto
             [<Id(2u)>]
             LastCursor: int64
-            [<Id(3u)>]
-            HistoryTailSegment: string option
         }
 
     /// Distinguishes the three durable operation-result forms stored at one receipt key.
@@ -675,18 +576,6 @@ module Library =
             RequestHash: string
             [<Id(3u)>]
             Outcome: LibraryOperationOutcome
-        }
-
-    /// Stores one compact exact-key history segment containing permanent journal cursors.
-    [<CLIMutable; GenerateSerializer>]
-    type LibraryHistorySegmentDocument =
-        {
-            [<Id(0u)>]
-            SchemaVersion: int
-            [<Id(1u)>]
-            PreviousSegment: string option
-            [<Id(2u)>]
-            Cursors: int64 array
         }
 
     /// Stores one immutable byte-bounded current-state baseline shard.
@@ -718,14 +607,12 @@ module Library =
             [<Id(0u)>]
             SchemaVersion: int
             [<Id(1u)>]
-            Epoch: Guid
-            [<Id(2u)>]
             BoundaryCursor: int64
-            [<Id(3u)>]
+            [<Id(2u)>]
             Catalog: LibraryCatalogDto
-            [<Id(4u)>]
+            [<Id(3u)>]
             CreatedAt: Instant
-            [<Id(5u)>]
+            [<Id(4u)>]
             Shards: LibraryBaselineShardReference array
         }
 

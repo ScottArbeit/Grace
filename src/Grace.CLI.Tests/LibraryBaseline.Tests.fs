@@ -129,7 +129,6 @@ module LibraryBaselineTests =
                 {
                     BootstrapId = Guid.NewGuid()
                     BoundaryCursor = "selected-boundary"
-                    CursorEpoch = LibraryCursorEpoch.parse "b1e68c2f-0abc-4139-a893-044d0d761593"
                     LibraryCatalog = catalog
                     Items = [| file; dead |]
                     NextPageToken = Some "second"
@@ -567,11 +566,9 @@ module LibraryBaselineTests =
             let selected =
                 {
                     RepositoryId = fixture.Configuration.RepositoryId
-                    WorkingCopyId = Guid.NewGuid()
                     Catalog = page.LibraryCatalog
-                    CursorEpoch = page.CursorEpoch
                     AppliedCursor = ""
-                    NextPageToken = None
+                    BaselinePageToken = None
                     State = "acquiringBaseline"
                     Paused = false
                     Baseline = Some { BootstrapId = page.BootstrapId; BoundaryCursor = page.BoundaryCursor; MetadataComplete = false; Applied = false }
@@ -611,7 +608,7 @@ module LibraryBaselineTests =
                 Action (fun () ->
                     match boundary with
                     | "page" -> saveBaselinePageWith sqliteFailure db (Some before) before fixture.Pages[1] false
-                    | "reset" -> saveBaselinePageWith sqliteFailure db (Some before) { before with NextPageToken = None } fixture.Pages[0] true
+                    | "reset" -> saveBaselinePageWith sqliteFailure db (Some before) { before with BaselinePageToken = None } fixture.Pages[0] true
                     | "item" ->
                         completeBaselineItemWith
                             sqliteFailure

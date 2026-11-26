@@ -308,16 +308,12 @@ paths:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1changes~1get'
   /libraries/changes/submit:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1changes~1submit'
-  /libraries/operations/get:
-    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1operations~1get'
   /libraries/content/prepare:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1prepare'
   /libraries/content/read:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1read'
   /libraries/content/{readToken}:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1{readToken}'
-  /libraries/items/get:
-    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1items~1get'
   /libraries/namespace/get-slot:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1namespace~1get-slot'
   /libraries/status/get:
@@ -638,8 +634,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryBootstrapId'
     LibraryCursor:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCursor'
-    LibraryCursorEpoch:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCursorEpoch'
     LibraryPageToken:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryPageToken'
     LibraryItemKind:
@@ -676,8 +670,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCreationSlotExpectationDto'
     LibraryChangeDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangeDto'
-    LibraryRebaselineDto:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryRebaselineDto'
     LibraryOperationReceiptDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptDto'
     LibraryCatalogChangeResultDto:
@@ -712,14 +704,10 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryChangesParameters'
     SubmitLibraryChangeParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/SubmitLibraryChangeParameters'
-    GetLibraryOperationParameters:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryOperationParameters'
     PrepareLibraryContentParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentParameters'
     PrepareLibraryContentReadParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentReadParameters'
-    GetLibraryItemParameters:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryItemParameters'
     GetLibraryNamespaceSlotParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryNamespaceSlotParameters'
     GetLibraryStatusParameters:
@@ -740,8 +728,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreparationReturnValue'
     LibraryContentReadReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadReturnValue'
-    LibraryItemReturnValue:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemReturnValue'
     LibraryNamespaceSlotReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotReturnValue'
     LibraryStatusReturnValue:

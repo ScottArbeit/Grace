@@ -71,11 +71,6 @@ type LibrarySizeDiagnosisTests() =
                     Conflict = None
                 }
             PriorNamespace = None
-            PriorContentVersionId = None
-            ConsumedNamespaceVersion = None
-            ConsumedContentVersionId = None
-            ConsumedContentRevision = None
-            ConsumedSlotVersion = None
             AddedItemRecord = false
             AddedSlotRecord = false
         }
@@ -270,18 +265,15 @@ type LibrarySizeDiagnosisTests() =
             do! LibraryDiagnosticAssertions.throws<OperationCanceledException> (fun () -> collect 2L rows [ a; b ] cancellation.Token :> Task)
         }
 
-    /// Exercises the final repository and epoch checks after a complete candidate has already accumulated.
+    /// Exercises the final repository and committed-prefix checks after a complete candidate has already accumulated.
     [<Test>]
-    member _.``publication rejects scope loss epoch change and cursor regression while allowing tail advancement``() =
+    member _.``publication rejects scope loss and cursor regression while allowing tail advancement``() =
         task {
-            let epoch = Guid.NewGuid()
-
             let result =
                 {
                     Scope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = repository }
                     DeclaredLogicalBytes = 30L
                     DistinctManifestCount = 2L
-                    Epoch = epoch
                     CommittedCursor = 205L
                     EnumerationStartedAt = now
                     EnumerationFinishedAt = now
@@ -289,9 +281,7 @@ type LibrarySizeDiagnosisTests() =
 
             let run check boundary = diagnoseContentSizeWith check (fun _ -> Task.FromResult result) (fun _ -> Task.FromResult boundary) CancellationToken.None
 
-            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (Guid.NewGuid(), 205L) :> Task)
-
-            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) (epoch, 204L) :> Task)
+            do! LibraryDiagnosticAssertions.throws<InvalidDataException> (fun () -> run (fun _ -> Task.FromResult(())) 204L :> Task)
 
             let mutable checks = 0
 
@@ -305,11 +295,11 @@ type LibrarySizeDiagnosisTests() =
                                 Task.FromException<unit>(InvalidDataException "scope lost")
                             else
                                 Task.FromResult(()))
-                        (epoch, 205L)
+                        205L
                     :> Task)
 
             Assert.That(checks, Is.EqualTo 2)
-            let! accepted = run (fun _ -> Task.FromResult(())) (epoch, 206L)
+            let! accepted = run (fun _ -> Task.FromResult(())) 206L
             Assert.That(accepted.CommittedCursor, Is.EqualTo 205L)
             Assert.That(accepted.DeclaredLogicalBytes, Is.EqualTo 30L)
         }
@@ -356,7 +346,6 @@ type LibrarySizeDiagnosisTests() =
                         Scope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = repository }
                         DeclaredLogicalBytes = 9007199254740993L
                         DistinctManifestCount = 2L
-                        Epoch = Guid.NewGuid()
                         CommittedCursor = Int64.MaxValue
                         EnumerationStartedAt =
                             NodaTime

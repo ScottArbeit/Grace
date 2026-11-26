@@ -110,14 +110,12 @@ module internal LibraryBaseline =
         }
 
     /// Creates an unapplied selection; received boundary metadata is never an applied cursor.
-    let private selection (configuration: GraceConfiguration) workingCopyId (page: LibraryBootstrapPageDto) =
+    let private selection (configuration: GraceConfiguration) (page: LibraryBootstrapPageDto) =
         {
             RepositoryId = configuration.RepositoryId
-            WorkingCopyId = workingCopyId
             Catalog = page.LibraryCatalog
-            CursorEpoch = page.CursorEpoch
             AppliedCursor = ""
-            NextPageToken = None
+            BaselinePageToken = None
             State = "acquiringBaseline"
             Paused = false
             Baseline = Some { BootstrapId = page.BootstrapId; BoundaryCursor = page.BoundaryCursor; MetadataComplete = false; Applied = false }
@@ -135,7 +133,7 @@ module internal LibraryBaseline =
 
             requireEmptyRoot configuration catalog |> ignore
             Directory.CreateDirectory(root) |> ignore
-            let selected = selection configuration (Guid.NewGuid()) page
+            let selected = selection configuration page
             saveBaselinePage configuration.GraceStatusFile None selected page false
             observe "page"
         }
@@ -159,7 +157,7 @@ module internal LibraryBaseline =
                 |> ignore
 
                 let baseline = expected.Baseline.Value
-                let! page = remote.Continue baseline.BootstrapId expected.NextPageToken.Value
+                let! page = remote.Continue baseline.BootstrapId expected.BaselinePageToken.Value
                 do! check remote configuration expected
 
                 requireEmptyRoot configuration expected.Catalog
@@ -174,7 +172,7 @@ module internal LibraryBaseline =
                     requireEmptyRoot configuration expected.Catalog
                     |> ignore
 
-                    let selected = selection configuration expected.WorkingCopyId page
+                    let selected = selection configuration page
 
                     if selected.Catalog <> expected.Catalog then
                         invalidOp "Expired baseline restart cannot adopt a changed catalog."

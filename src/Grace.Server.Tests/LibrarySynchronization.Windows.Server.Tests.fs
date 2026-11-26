@@ -45,11 +45,10 @@ module LibrarySynchronizationWindowsServerTests =
         let mutable beforeNextChangesGet: (unit -> unit) option = None
         let mutable beforeNextSubmit: (unit -> Task) option = None
         let mutable singleItemBootstrapPages = false
-        let mutable gapPage: byte array option = None
         let mutable injectGap = 0
-        let mutable changedFeed = 0
-        let pageTokens = ConcurrentQueue<string>()
-        let gapToken = "fixture-opaque-visibility-gap"
+        let mutable replacementCursor: string option = None
+        let mutable lastChangesStatus = 0
+        let requestedCursors = ConcurrentQueue<string>()
 
         let port =
             use probe = new TcpListener(IPAddress.Loopback, 0)
@@ -133,7 +132,6 @@ module LibrarySynchronizationWindowsServerTests =
                     | None -> ()
 
                 let mutable requestedCursor = ""
-                let mutable replayGap = false
 
                 if path = "/libraries/changes/get" then
                     let callback =
@@ -146,10 +144,17 @@ module LibrarySynchronizationWindowsServerTests =
                     let! requestJson = forward.Content.ReadAsStringAsync()
                     let request = deserialize<Parameters.Library.GetLibraryChangesParameters> requestJson
                     requestedCursor <- request.AfterCursor
-                    pageTokens.Enqueue(if isNull request.PageToken then "<none>" else request.PageToken)
-                    replayGap <- request.PageToken = gapToken
-                    if replayGap then request.PageToken <- null
-                    if Volatile.Read(&injectGap) = 1 then request.PageSize <- 2
+                    requestedCursors.Enqueue request.AfterCursor
+
+                    let replacement =
+                        lock manifestCallbackLock (fun () ->
+                            let next = replacementCursor in
+                            replacementCursor <- None
+                            next)
+
+                    replacement
+                    |> Option.iter (fun cursor -> request.AfterCursor <- cursor)
+
                     forward.Content <- createJsonContent request
 
                 use! response = client.SendAsync(forward)
@@ -169,53 +174,15 @@ module LibrarySynchronizationWindowsServerTests =
                     | Some action -> do! action ()
                     | None -> ()
 
+                if path = "/libraries/changes/get" then
+                    Volatile.Write(&lastChangesStatus, int response.StatusCode)
+
                 if response.IsSuccessStatusCode
-                   && path = "/libraries/changes/get" then
-                    let mode = Interlocked.Exchange(&changedFeed, 0)
-
-                    if mode <> 0 then
-                        let envelope = deserialize<GraceReturnValue<LibraryChangePageDto>> (System.Text.Encoding.UTF8.GetString(bytes))
-                        let page = envelope.ReturnValue
-
-                        let altered =
-                            if mode = 1 then
-                                { page with CursorEpoch = LibraryCursorEpoch.parse "ebf72ec5-aacd-438b-b74a-10ea4b30da2b" }
-                            elif mode = 3 then
-                                page
-                            else
-                                { page with
-                                    Rebaseline =
-                                        Some
-                                            {
-                                                Reason = "fixture service floor"
-                                                CurrentEpoch = page.CursorEpoch
-                                                ServiceFloorCursor = page.LastCursor
-                                                RecommendedBootstrap = true
-                                            }
-                                }
-
-                        bytes <- System.Text.Encoding.UTF8.GetBytes(serialize { envelope with ReturnValue = altered })
-
-                        if mode = 3 then
-                            bytes <-
-                                System.Text.Encoding.UTF8.GetBytes(
-                                    System
-                                        .Text
-                                        .Encoding
-                                        .UTF8
-                                        .GetString(bytes)
-                                        .Replace(LibraryCursorEpoch.toString page.CursorEpoch, "malformed-epoch")
-                                )
-
-                    if replayGap then
-                        bytes <- gapPage.Value
-                        gapPage <- None
-                    elif Interlocked.CompareExchange(&injectGap, 0, 1) = 1 then
-                        let envelope = deserialize<GraceReturnValue<LibraryChangePageDto>> (System.Text.Encoding.UTF8.GetString(bytes))
-                        Assert.That(envelope.ReturnValue.Changes.Length, Is.EqualTo(2))
-                        gapPage <- Some bytes
-                        let empty = { envelope.ReturnValue with Changes = [||]; LastCursor = requestedCursor; HasMore = true; NextPageToken = Some gapToken }
-                        bytes <- System.Text.Encoding.UTF8.GetBytes(serialize { envelope with ReturnValue = empty })
+                   && path = "/libraries/changes/get"
+                   && Interlocked.CompareExchange(&injectGap, 0, 1) = 1 then
+                    let envelope = deserialize<GraceReturnValue<LibraryChangePageDto>> (System.Text.Encoding.UTF8.GetString(bytes))
+                    let empty = { envelope.ReturnValue with Changes = [||]; LastCursor = requestedCursor; HasMore = true }
+                    bytes <- System.Text.Encoding.UTF8.GetBytes(serialize { envelope with ReturnValue = empty })
 
                 if response.IsSuccessStatusCode
                    && path = "/libraries/content/read" then
@@ -290,12 +257,14 @@ module LibrarySynchronizationWindowsServerTests =
         member _.BeforeNextSubmit(action) = lock manifestCallbackLock (fun () -> beforeNextSubmit <- Some action)
         /// Exercises the actual server's immutable continuation route with one item per page.
         member _.UseSingleItemBootstrapPages() = singleItemBootstrapPages <- true
-        /// Simulates one empty visibility page while retaining its real two-change response behind an opaque fixture continuation.
+        /// Simulates one empty visibility page in place of the real response; the real changes stay on the server.
         member _.InjectEmptyVisibilityPage() = Interlocked.Exchange(&injectGap, 1) |> ignore
-        /// Returns one changed-epoch or rebaseline HTTP response while retaining the real feed as its source.
-        member _.ChangeNextFeed(mode) = Interlocked.Exchange(&changedFeed, mode) |> ignore
-        /// Exposes received continuation values for restart assertions, without interpreting server cursors.
-        member _.PageTokens = pageTokens.ToArray()
+        /// Sends the next change request with this cursor instead of the copy's own, so the real server judges it.
+        member _.ReplaceNextChangesCursor(cursor: string) = lock manifestCallbackLock (fun () -> replacementCursor <- Some cursor)
+        /// Exposes the cursors the copy requested changes after, in order, without interpreting them.
+        member _.RequestedCursors = requestedCursors.ToArray()
+        /// Returns the HTTP status of the most recent change request the real server answered.
+        member _.LastChangesStatus = Volatile.Read(&lastChangesStatus)
         /// Counts actual submissions, including idempotent retries.
         member _.SubmitRequestCount = Volatile.Read(&submitRequestCount)
         /// Counts finalized source uploads.
@@ -592,8 +561,8 @@ module LibrarySynchronizationWindowsServerTests =
             return copyA, copyB, repositoryId, proxy
         }
 
-    /// Retains exact local state when resume encounters changed remote catalog, epoch or service-floor requirements.
-    [<TestCase("catalog"); TestCase("epoch"); TestCase("rebaseline"); TestCase("malformedEpoch")>]
+    /// Retains exact local state when resume meets a changed remote catalog or a cursor the server didn't issue.
+    [<TestCase("catalog"); TestCase("unrecognizedCursor")>]
     let ``resume stops active with retained state when remote participation boundary changes`` scenario =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -624,14 +593,13 @@ module LibrarySynchronizationWindowsServerTests =
                 let! _ = requireReturnValueAsync<LibraryCatalogChangeResultDto> response
                 ()
             else
-                proxy.ChangeNextFeed(
-                    if scenario = "epoch" then 1
-                    elif scenario = "malformedEpoch" then 3
-                    else 2
-                )
+                proxy.ReplaceNextChangesCursor("fixture-unrecognized-cursor")
 
             let! blocked = runGraceAsync copyA proxy.BaseAddress (syncCommand "resume")
             Assert.That(blocked.ExitCode, Is.Not.Zero)
+
+            if scenario = "unrecognizedCursor" then
+                Assert.That(proxy.LastChangesStatus, Is.EqualTo(400))
 
             Assert.That(
                 Grace.CLI.LibraryLocalState.readRepository (localDb copyA) repositoryId,
@@ -2223,9 +2191,10 @@ module LibrarySynchronizationWindowsServerTests =
             )
         }
 
-    /// Proves empty-page restart and a subsequent interruption between two item completions do not skip accepted changes.
+    /// Proves an empty page and a later interruption between two item completions don't skip accepted changes, because
+    /// every pull restarts from the applied cursor.
     [<Test>]
-    let ``empty visibility continuation and partial page restart preserve every change`` () =
+    let ``empty visibility page and partial page restart preserve every change`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
@@ -2268,7 +2237,7 @@ module LibrarySynchronizationWindowsServerTests =
                     .Value
 
             Assert.That(gap.AppliedCursor, Is.EqualTo(original.AppliedCursor))
-            Assert.That(gap.NextPageToken, Is.EqualTo(Some "fixture-opaque-visibility-gap"))
+            Assert.That(proxy.RequestedCursors |> Array.last, Is.EqualTo(original.AppliedCursor))
 
             Assert.That(
                 (Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId)
@@ -2291,13 +2260,7 @@ module LibrarySynchronizationWindowsServerTests =
             let completed = Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
             Assert.That(completed.Length, Is.EqualTo(1))
             Assert.That(partial.AppliedCursor, Is.EqualTo(completed[0].LastChangeCursor))
-            Assert.That(partial.NextPageToken, Is.EqualTo(None))
-
-            Assert.That(
-                proxy.PageTokens
-                |> Array.contains "fixture-opaque-visibility-gap",
-                Is.True
-            )
+            Assert.That(proxy.RequestedCursors |> Array.last, Is.EqualTo(original.AppliedCursor))
 
             localSql copyB "DROP TRIGGER fail_second_library_completion;"
             |> ignore
@@ -2314,7 +2277,11 @@ module LibrarySynchronizationWindowsServerTests =
                 Is.EqualTo("current")
             )
 
-            Assert.That(proxy.PageTokens |> Array.last, Is.EqualTo("<none>"))
+            Assert.That(
+                proxy.RequestedCursors
+                |> Array.contains partial.AppliedCursor,
+                Is.True
+            )
 
             for name in [ "one"; "two"; "three" ] do
                 Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", name)), Is.EqualTo($"exact {name} bytes"))

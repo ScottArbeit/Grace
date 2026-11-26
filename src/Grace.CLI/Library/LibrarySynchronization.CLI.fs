@@ -35,7 +35,6 @@ module internal LibrarySynchronization =
             Paused: bool
             State: string
             LibraryCatalogVersion: Guid option
-            CursorEpoch: LibraryCursorEpoch option
             AppliedCursor: string option
             PendingOperationCount: int
             /// What failed most recently, until a later success shows it no longer applies.
@@ -64,6 +63,10 @@ module internal LibrarySynchronization =
 
     /// Next step for a failure Grace knows nothing more about; Watch retries it on a backoff.
     let internal retryNextStep = "Grace Watch retries automatically. Run 'grace library sync run' to retry now and see the full error."
+
+    /// Next step when the server refuses this copy's applied cursor, because it's ahead of the server or from elsewhere.
+    let internal cursorMismatchNextStep =
+        "This copy's Library state doesn't match the server, and Grace can't reset a copy yet, so Library sync is stopped here. Your saved work is kept. Version-control work isn't affected."
 
     /// Next step while this copy can't adopt a changed Library catalog.
     let internal catalogChangedNextStep =
@@ -207,7 +210,6 @@ module internal LibrarySynchronization =
                     Paused = false
                     State = "disabled"
                     LibraryCatalogVersion = None
-                    CursorEpoch = None
                     AppliedCursor = None
                     PendingOperationCount = 0
                     LastError = None
@@ -233,7 +235,6 @@ module internal LibrarySynchronization =
                             Paused = current.Paused
                             State = current.State
                             LibraryCatalogVersion = Some current.Catalog.Version
-                            CursorEpoch = Some current.CursorEpoch
                             AppliedCursor = if current.AppliedCursor = "" then None else Some current.AppliedCursor
                             PendingOperationCount = count
                         }
@@ -1295,7 +1296,8 @@ module internal LibrarySynchronization =
     let internal applyChangeWith afterPublication configuration correlationId expected change =
         applyChangeWithCancellation afterPublication CancellationToken.None configuration correlationId expected change
 
-    /// Pulls contiguous changes; an empty HasMore page remains incomplete and is retried by a later run.
+    /// Pulls contiguous changes, always from the applied cursor, so an interrupted or long-paused pull resumes exactly
+    /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run.
     let private pull configuration correlationId (cancellationToken: CancellationToken) =
         task {
             let mutable continuePages = true
@@ -1307,20 +1309,16 @@ module internal LibrarySynchronization =
                 do! checkCatalog configuration correlationId before
                 let parameters = scoped configuration correlationId (GetLibraryChangesParameters())
                 parameters.AfterCursor <- before.AppliedCursor
-                parameters.PageToken <- before.NextPageToken |> Option.defaultValue null
                 let! result = Libraries.GetChanges parameters
-                let page = value result
 
-                if page.Rebaseline.IsSome
-                   || page.CursorEpoch <> before.CursorEpoch then
-                    raise (
-                        LibrarySyncFailureException(
-                            "Library rebaseline is required; local saved work is retained.",
-                            None,
-                            None,
-                            "This copy needs to restart from the server's current Library state, which Grace can't do automatically yet. Your saved work is kept. Version-control work isn't affected."
-                        )
-                    )
+                let page =
+                    match result with
+                    | Error error when
+                        error.Error = LibraryCursorError.AheadOfServer
+                        || error.Error = LibraryCursorError.NotIssuedHere
+                        ->
+                        raise (LibrarySyncFailureException(error.Error, None, None, cursorMismatchNextStep))
+                    | _ -> value result
 
                 let mutable index = 0
 
@@ -1334,13 +1332,7 @@ module internal LibrarySynchronization =
 
                 caughtUp <- not page.HasMore
                 continuePages <- page.HasMore && page.Changes.Length > 0
-
-                if page.HasMore && page.NextPageToken.IsNone then
-                    invalidOp "Library incomplete page omitted its continuation."
-
-                let completed = state configuration
-                do! checkCatalog configuration correlationId completed
-                recordPage configuration.GraceStatusFile completed (if page.HasMore then page.NextPageToken else None)
+                do! checkCatalog configuration correlationId (state configuration)
 
             return caughtUp
         }

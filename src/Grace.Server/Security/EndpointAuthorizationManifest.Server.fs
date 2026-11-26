@@ -230,11 +230,9 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/libraries/bootstrap/continue" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/changes/get" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/changes/submit" (Authorized(LibraryWrite, Repository))
-            endpoint "POST" "/libraries/operations/get" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/content/prepare" (Authorized(LibraryWrite, Repository))
             endpoint "POST" "/libraries/content/read" (Authorized(LibraryRead, Repository))
             endpoint "GET" "/libraries/content/%s" AllowAnonymous
-            endpoint "POST" "/libraries/items/get" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/namespace/get-slot" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/status/get" (Authorized(LibraryRead, Repository))
             endpoint

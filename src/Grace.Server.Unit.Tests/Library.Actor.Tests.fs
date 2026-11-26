@@ -64,7 +64,7 @@ type LibraryReplayTestStorage() =
         member _.ClearStateAsync<'T>(_, _, _: IGrainState<'T>) =
             Task.FromException(InvalidOperationException("The authorization replay harness must not clear Library records."))
 
-/// Verifies deterministic Library decisions, tokens, and notification effect ordering.
+/// Verifies deterministic Library decisions, tokens, and stored-result replay.
 [<Parallelizable(ParallelScope.All)>]
 type LibraryActorTests() =
 
@@ -75,49 +75,6 @@ type LibraryActorTests() =
     let catalogVersion = Guid.Parse("e014a230-2557-45ba-95fa-eb0191dfb657")
     let timestamp = Instant.FromUtc(2026, 9, 7, 8, 9, 10)
 
-    let envelope () =
-        let properties = Dictionary<string, string>()
-        properties["eventName"] <- "LibraryContentAvailable.v1"
-
-        {
-            TopicName = "grace-events"
-            MessageId = $"LibraryContentAvailable/{repositoryId:D}/00000000000000017"
-            Body = [| 10uy; 20uy; 30uy |]
-            ContentType = "application/json"
-            Subject = "LibraryContentAvailable.v1"
-            CorrelationId = "library-test-correlation"
-            ApplicationProperties = properties
-        }
-
-    let notificationAttempt sendFails advanceFails clearFails hasRetained =
-        let effects = ResizeArray<string>()
-
-        let send _ =
-            task {
-                effects.Add "send"
-
-                if sendFails then return raise (InvalidOperationException "send failed")
-            }
-
-        let advance () =
-            task {
-                effects.Add "advance"
-
-                if advanceFails then return raise (InvalidOperationException "advance failed")
-            }
-
-        let persist _ = task { effects.Add "persist" }
-
-        let clear () =
-            task {
-                effects.Add "clear"
-
-                if clearFails then return raise (InvalidOperationException "clear failed")
-            }
-
-        let run () = LibraryNotifications.attempt send advance persist clear hasRetained (envelope ())
-        effects, run
-
     let acceptedRecord cursor =
         {
             SchemaVersion = 1
@@ -126,11 +83,6 @@ type LibraryActorTests() =
             CorrelationId = $"correlation-{cursor}"
             Change = Unchecked.defaultof<LibraryChangeDto>
             PriorNamespace = None
-            PriorContentVersionId = None
-            ConsumedNamespaceVersion = None
-            ConsumedContentVersionId = None
-            ConsumedContentRevision = None
-            ConsumedSlotVersion = None
             AddedItemRecord = false
             AddedSlotRecord = false
         }
@@ -173,19 +125,7 @@ type LibraryActorTests() =
     let replayActor permission (receipt: LibraryReceiptDocument) =
         let catalog = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
 
-        let control =
-            {
-                SchemaVersion = 1
-                Catalog = catalog
-                Epoch = Guid.Parse("d805308a-a0cc-4e9f-8050-95170e60aefd")
-                CommittedCursor = 0L
-                ReplayFloor = 1L
-                Pending = None
-                ItemRecordCount = 0
-                SlotRecordCount = 0
-                HistoryThrough = 0L
-                NotifyThrough = 0L
-            }
+        let control = { SchemaVersion = 1; Catalog = catalog; CommittedCursor = 0L; Pending = None; ItemRecordCount = 0; SlotRecordCount = 0 }
 
         let storage = LibraryReplayTestStorage()
         storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), control)
@@ -206,7 +146,6 @@ type LibraryActorTests() =
                 LibraryRecords.ChangesStorageName
                 LibraryRecords.CurrentStorageName
                 LibraryRecords.ReceiptsStorageName
-                LibraryRecords.HistoryStorageName
                 LibraryRecords.BaselinesStorageName
             |] do
             services.AddKeyedSingleton<IGrainStorage>(storageName, storage)
@@ -288,7 +227,6 @@ type LibraryActorTests() =
                     Change = None
                     ReasonCode = Some "preparedContentExpired"
                     CurrentLibraryCatalog = Some catalog
-                    Rebaseline = None
                 }
 
             let submitReceipt =
@@ -370,7 +308,6 @@ type LibraryActorTests() =
                     Change = None
                     ReasonCode = Some "preparedContentExpired"
                     CurrentLibraryCatalog = Some catalog
-                    Rebaseline = None
                 }
 
             let submitReceipt =
@@ -405,62 +342,6 @@ type LibraryActorTests() =
             Assert.That(submitAuthorizationCalls (), Is.EqualTo(1))
             Assert.That(submitStorage.ReadCount, Is.GreaterThan(0))
         }
-
-    /// A first successful send advances the durable cursor without creating failure state.
-    [<Test>]
-    member _.FirstNotificationSuccessAdvancesWithoutRetainingEnvelope() =
-        let effects, run = notificationAttempt false false false false
-        let sent = run().GetAwaiter().GetResult()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(sent, Is.True)
-                Assert.That(effects.ToArray(), Is.EqualTo(box [| "send"; "advance" |])))
-        )
-
-    /// A first terminal send failure stores the exact envelope and leaves progress unchanged.
-    [<Test>]
-    member _.FirstNotificationFailureRetainsEnvelopeWithoutAdvancing() =
-        let effects, run = notificationAttempt true false false false
-        let sent = run().GetAwaiter().GetResult()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(sent, Is.False)
-                Assert.That(effects.ToArray(), Is.EqualTo(box [| "send"; "persist" |])))
-        )
-
-    /// A retained envelope is cleared only after its retry sends and advances successfully.
-    [<Test>]
-    member _.RetainedNotificationSuccessAdvancesBeforeClearingEnvelope() =
-        let effects, run = notificationAttempt false false false true
-        let sent = run().GetAwaiter().GetResult()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(sent, Is.True)
-                Assert.That(effects.ToArray(), Is.EqualTo(box [| "send"; "advance"; "clear" |])))
-        )
-
-    /// A retained-envelope retry failure neither rewrites the envelope nor advances progress.
-    [<Test>]
-    member _.RetainedNotificationFailureLeavesExistingEnvelopeUntouched() =
-        let effects, run = notificationAttempt true false false true
-        let sent = run().GetAwaiter().GetResult()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(sent, Is.False)
-                Assert.That(effects.ToArray(), Is.EqualTo(box [| "send" |])))
-        )
-
-    /// Failure to persist progress after sending leaves retained state available for an exact retry.
-    [<Test>]
-    member _.NotificationAdvanceFailureDoesNotClearRetainedEnvelope() =
-        let effects, run = notificationAttempt false true false true
-
-        Assert.That(Action(fun () -> run().GetAwaiter().GetResult() |> ignore), Throws.TypeOf<InvalidOperationException>())
-        Assert.That(effects.ToArray(), Is.EqualTo(box [| "send"; "advance" |]))
 
     /// Conflict names stay portable for Unicode input, huge extensions, and numbered retries.
     [<Test>]
@@ -503,7 +384,6 @@ type LibraryActorTests() =
             {
                 SchemaVersion = 2
                 LastCursor = 1L
-                HistoryTailSegment = None
                 Item =
                     {
                         ItemId = id
@@ -705,9 +585,8 @@ type LibraryActorTests() =
     [<Test>]
     member _.LibraryTokensBindPurposeRepositoryPayloadAndExpiry() =
         let key = Array.init 32 (fun index -> byte (index + 1))
-        let epoch = Guid.Parse("c9c8f144-2700-44bd-925a-34325f38572c")
-        let cursor = LibraryTokens.cursor key repositoryId epoch 17L
-        let page = LibraryTokens.page key "changes" repositoryId "baseline-id" 3 200L
+        let cursor = LibraryTokens.cursor key repositoryId 17L
+        let page = LibraryTokens.page key "baseline" repositoryId "baseline-id" 3 200L
         let content = LibraryTokens.contentRead key repositoryId itemId contentVersionId "cursor-17" 200L
 
         let tamperedContent =
@@ -716,7 +595,7 @@ type LibraryActorTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(LibraryTokens.tryCursor key repositoryId cursor, Is.EqualTo(Some(epoch, 17L)))
+                Assert.That(LibraryTokens.tryCursor key repositoryId cursor, Is.EqualTo(Some 17L))
 
                 Assert.That(
                     (LibraryTokens.tryCursor key (Guid.NewGuid()) cursor)
@@ -724,7 +603,7 @@ type LibraryActorTests() =
                     Is.True
                 )
 
-                Assert.That(LibraryTokens.tryPage key "changes" repositoryId 199L page, Is.EqualTo(Some("baseline-id", 3)))
+                Assert.That(LibraryTokens.tryPage key "baseline" repositoryId 199L page, Is.EqualTo(Some("baseline-id", 3)))
 
                 Assert.That(
                     (LibraryTokens.tryPage key "bootstrap" repositoryId 199L page)
@@ -733,7 +612,7 @@ type LibraryActorTests() =
                 )
 
                 Assert.That(
-                    (LibraryTokens.tryPage key "changes" repositoryId 200L page)
+                    (LibraryTokens.tryPage key "baseline" repositoryId 200L page)
                         .IsNone,
                     Is.True
                 )

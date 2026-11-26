@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Grace.Actors.Context
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -10,6 +11,7 @@ open Grace.Types.Library
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.UploadSession
+open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
 open System
@@ -35,19 +37,14 @@ type RepositoryLibraryActor
     let slotType = "Grace.Library.Slot.v2"
     let receiptType = "Grace.Library.Receipt.v2"
     let contentType = "Grace.Library.Content.v2"
-    let historyType = "Grace.Library.History.v2"
     let baselineShardType = "Grace.Library.BaselineShard.v2"
     let baselineManifestType = "Grace.Library.BaselineManifest.v2"
-    let failedEventType = "Grace.Library.FailedGraceEvent.v2"
 
     /// Builds a repository-scoped provider key.
     let key (repositoryId: RepositoryId) tail = LibraryRecords.key (repositoryId.ToString("D") :: tail)
 
     /// Returns the cursor-segment identity used by the permanent journal.
     let changeSegment cursor = ((cursor - 1L) / 200L).ToString("D20")
-
-    /// Returns the cursor-segment identity used by compact history indexes.
-    let historySegment cursor = ((cursor - 1L) / 512L).ToString("D20")
 
     /// Reads the control record and current provider ETag.
     let readControl repositoryId = LibraryRecords.read<LibraryControlDocument> services LibraryRecords.ControlStorageName controlType (key repositoryId [])
@@ -109,36 +106,8 @@ type RepositoryLibraryActor
                 ])
             receipt
 
-    /// Returns the stable broker identity reused after ambiguous Library wake delivery.
+    /// Returns the stable broker identity for one cursor's wake, so the broker can drop a duplicate sent by repair.
     let stableMessageId (repositoryId: RepositoryId) cursor = $"LibraryContentAvailable/{repositoryId:D}/{cursor:D20}"
-
-    /// Reads the one failure-only Library wake envelope retained for this repository.
-    let readFailedEvent repositoryId =
-        LibraryRecords.read<FailedGraceEventEnvelope>
-            services
-            LibraryRecords.ReceiptsStorageName
-            failedEventType
-            (key repositoryId [ "failed-event"; "single" ])
-
-    /// Retains the exact Library wake envelope after terminal transport failure.
-    let createFailedEvent repositoryId envelope =
-        LibraryRecords.createExact services LibraryRecords.ReceiptsStorageName failedEventType (key repositoryId [ "failed-event"; "single" ]) envelope
-
-    /// Clears the fixed failed-envelope slot through its last observed ETag.
-    let clearFailedEvent repositoryId =
-        task {
-            match! readFailedEvent repositoryId with
-            | Some (envelope, etag) ->
-                do!
-                    LibraryRecords.clear
-                        services
-                        LibraryRecords.ReceiptsStorageName
-                        failedEventType
-                        (key repositoryId [ "failed-event"; "single" ])
-                        etag
-                        envelope
-            | None -> ()
-        }
 
     /// Reads one current item projection.
     let readItem repositoryId (itemId: LibraryItemId) =
@@ -176,7 +145,7 @@ type RepositoryLibraryActor
     /// Writes an item projection idempotently at one accepted cursor.
     let writeItem repositoryId cursor (item: LibraryItemDto) =
         task {
-            let value = { SchemaVersion = 1; Item = item; LastCursor = cursor; HistoryTailSegment = None }
+            let value = { SchemaVersion = 1; Item = item; LastCursor = cursor }
 
             match! readItem repositoryId item.ItemId with
             | None ->
@@ -186,15 +155,9 @@ type RepositoryLibraryActor
                 return ()
             | Some (current, _) when current.LastCursor = cursor -> return ()
             | Some (current, _) when current.LastCursor > cursor -> return invalidOp "A newer Library item projection already exists."
-            | Some (current, etag) ->
+            | Some (_, etag) ->
                 let! _ =
-                    LibraryRecords.write
-                        services
-                        LibraryRecords.CurrentStorageName
-                        itemType
-                        (key repositoryId [ "item"; item.ItemId.ToString("D") ])
-                        etag
-                        { value with HistoryTailSegment = current.HistoryTailSegment }
+                    LibraryRecords.write services LibraryRecords.CurrentStorageName itemType (key repositoryId [ "item"; item.ItemId.ToString("D") ]) etag value
 
                 return ()
         }
@@ -203,7 +166,7 @@ type RepositoryLibraryActor
     let writeSlot repositoryId cursor (slot: LibraryNamespaceSlotDto) =
         task {
             let slotKey = LibraryDecision.slotKey slot.Parent slot.Name
-            let value = { SchemaVersion = 1; Slot = slot; LastCursor = cursor; HistoryTailSegment = None }
+            let value = { SchemaVersion = 1; Slot = slot; LastCursor = cursor }
 
             match! readSlot repositoryId slot.Parent slot.Name with
             | None ->
@@ -212,57 +175,8 @@ type RepositoryLibraryActor
                 return ()
             | Some (current, _) when current.LastCursor = cursor -> return ()
             | Some (current, _) when current.LastCursor > cursor -> return invalidOp "A newer Library slot projection already exists."
-            | Some (current, etag) ->
-                let! _ =
-                    LibraryRecords.write
-                        services
-                        LibraryRecords.CurrentStorageName
-                        slotType
-                        (key repositoryId [ "slot"; slotKey ])
-                        etag
-                        { value with HistoryTailSegment = current.HistoryTailSegment }
-
-                return ()
-        }
-
-    /// Advances one current item's exact-key history pointer without replacing a newer item value.
-    let updateItemHistoryTail repositoryId itemId cursor =
-        task {
-            match! readItem repositoryId itemId with
-            | None -> return invalidOp "A Library history cursor references a missing current item."
-            | Some (current, _) when current.LastCursor < cursor -> return invalidOp "Library item history advanced ahead of its current projection."
-            | Some (current, _) when current.HistoryTailSegment = Some(historySegment cursor) -> return ()
-            | Some (current, etag) ->
-                let! _ =
-                    LibraryRecords.write
-                        services
-                        LibraryRecords.CurrentStorageName
-                        itemType
-                        (key repositoryId [ "item"; itemId.ToString("D") ])
-                        etag
-                        { current with HistoryTailSegment = Some(historySegment cursor) }
-
-                return ()
-        }
-
-    /// Advances one current slot's exact-key history pointer without replacing a newer slot value.
-    let updateSlotHistoryTail repositoryId (slot: LibraryNamespaceDto) cursor =
-        task {
-            match! readSlot repositoryId slot.Parent slot.Name with
-            | None -> return invalidOp "A Library history cursor references a missing current slot."
-            | Some (current, _) when current.LastCursor < cursor -> return invalidOp "Library slot history advanced ahead of its current projection."
-            | Some (current, _) when current.HistoryTailSegment = Some(historySegment cursor) -> return ()
-            | Some (current, etag) ->
-                let slotKey = LibraryDecision.slotKey slot.Parent slot.Name
-
-                let! _ =
-                    LibraryRecords.write
-                        services
-                        LibraryRecords.CurrentStorageName
-                        slotType
-                        (key repositoryId [ "slot"; slotKey ])
-                        etag
-                        { current with HistoryTailSegment = Some(historySegment cursor) }
+            | Some (_, etag) ->
+                let! _ = LibraryRecords.write services LibraryRecords.CurrentStorageName slotType (key repositoryId [ "slot"; slotKey ]) etag value
 
                 return ()
         }
@@ -286,7 +200,6 @@ type RepositoryLibraryActor
                             Change = Some record.Change
                             ReasonCode = None
                             CurrentLibraryCatalog = None
-                            Rebaseline = None
                         }
                 | None -> return invalidOp "An accepted Library receipt references a missing journal record."
             | LibraryOperationOutcome.RejectedChange receipt -> return receipt
@@ -541,7 +454,42 @@ type RepositoryLibraryActor
             | _ -> ()
         }
 
-    /// Completes a saved item decision in the required journal, retention, projection, receipt, acknowledgement, control order.
+    /// Starts one advisory wake for a committed change and returns without waiting for it. A wake that fails or never
+    /// finishes is logged and never reaches the caller, because clients poll anyway.
+    let sendWake repositoryId (record: LibraryAcceptedChangeRecord) =
+        let payload =
+            LibraryContentAvailable.Create(
+                repositoryId,
+                LibraryTokens.cursor libraryTokenKey repositoryId record.Cursor,
+                record.Change.LibraryCatalogVersion,
+                record.Change.AcceptedAt,
+                record.CorrelationId
+            )
+
+        LibraryWake.start
+            (fun () ->
+                if LibraryWake.shouldFail repositoryId then
+                    invalidOp "A hosted test asked this repository's Library wakes to fail."
+
+                sendLibraryWake
+                    (stableMessageId repositoryId record.Cursor)
+                    (GraceEvent.LibraryContentAvailableEvent payload)
+                    (EventMetadata.New record.CorrelationId "RepositoryLibraryActor")
+                    CancellationToken.None)
+            (fun ex ->
+                // Created only on failure, so building the actor never needs a configured host.
+                loggerFactory
+                    .CreateLogger("RepositoryLibrary.Actor")
+                    .LogWarning(
+                        ex,
+                        "The Library wake for repository {RepositoryId} at cursor {Cursor} wasn't sent. Clients still find the change when they next poll. CorrelationId: {CorrelationId}.",
+                        repositoryId,
+                        record.Cursor,
+                        record.CorrelationId
+                    ))
+
+    /// Completes a saved item decision in the required journal, retention, projection, receipt, acknowledgement, control
+    /// order, then sends its wake. Whoever completes the decision sends the wake: the original Submit or a later repair.
     let completeItemPending repositoryId etag (control: LibraryControlDocument) (record: LibraryAcceptedChangeRecord) =
         task {
             let! _ = createChange repositoryId record
@@ -601,6 +549,7 @@ type RepositoryLibraryActor
                 }
 
             let! _ = writeControl repositoryId etag committed
+            sendWake repositoryId record
             return! resolveOutcome repositoryId receipt.OperationId receipt.RequestHash receipt.Outcome
         }
 
@@ -677,7 +626,6 @@ type RepositoryLibraryActor
                     Change = None
                     ReasonCode = Some reason
                     CurrentLibraryCatalog = Some catalog
-                    Rebaseline = None
                 }
 
             let receipt =
@@ -685,169 +633,6 @@ type RepositoryLibraryActor
 
             let! _ = createReceipt repositoryId receipt
             return publicResult
-        }
-
-    /// Appends one cursor to an exact compact history segment.
-    let appendHistory repositoryId identity cursor =
-        task {
-            let segment = historySegment cursor
-            let recordKey = key repositoryId [ identity; segment ]
-
-            match! LibraryRecords.read<LibraryHistorySegmentDocument> services LibraryRecords.HistoryStorageName historyType recordKey with
-            | Some (current, _) when current.Cursors |> Array.contains cursor -> return ()
-            | Some (current, etag) ->
-                if current.Cursors.Length >= 512 then
-                    return invalidOp "A Library history segment exceeded its cursor bound."
-
-                let updated = { current with Cursors = Array.append current.Cursors [| cursor |] }
-
-                if JsonSerializer
-                    .SerializeToUtf8Bytes(
-                        updated,
-                        Constants.JsonSerializerOptions
-                    )
-                    .Length > 900 * 1024 then
-                    return invalidOp "A Library history segment exceeded its byte bound."
-
-                let! _ = LibraryRecords.write services LibraryRecords.HistoryStorageName historyType recordKey etag updated
-                return ()
-            | None ->
-                let previous =
-                    let numeric = Int64.Parse segment
-                    if numeric = 0L then None else Some((numeric - 1L).ToString("D20"))
-
-                let value = { SchemaVersion = 1; PreviousSegment = previous; Cursors = [| cursor |] }
-                let! _ = LibraryRecords.write services LibraryRecords.HistoryStorageName historyType recordKey null value
-                return ()
-        }
-
-    /// Advances compact history indexes independently from synchronous acceptance.
-    let drainHistory repositoryId =
-        task {
-            let mutable keepGoing = true
-
-            while keepGoing do
-                match! readControl repositoryId with
-                | Some (control, etag) when
-                    control.Pending.IsNone
-                    && control.HistoryThrough < control.CommittedCursor
-                    ->
-                    let cursor = control.HistoryThrough + 1L
-
-                    match! readChange repositoryId cursor with
-                    | None -> return invalidOp "Committed Library history references a missing change."
-                    | Some (record, _) ->
-                        do! appendHistory repositoryId $"item:{record.Change.Item.ItemId:D}" cursor
-                        do! updateItemHistoryTail repositoryId record.Change.Item.ItemId cursor
-
-                        match record.PriorNamespace with
-                        | Some ns ->
-                            do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
-                            do! updateSlotHistoryTail repositoryId ns cursor
-                        | None -> ()
-
-                        match record.Change.Item.Namespace with
-                        | Some ns ->
-                            do! appendHistory repositoryId $"slot:{LibraryDecision.slotKey ns.Parent ns.Name}" cursor
-                            do! updateSlotHistoryTail repositoryId ns cursor
-                        | None -> ()
-
-                        let! _ = writeControl repositoryId etag { control with HistoryThrough = cursor }
-                        ()
-                | _ -> keepGoing <- false
-        }
-
-    /// Attempts background indexing without making accepted namespace state depend on it.
-    let tryDrainHistory repositoryId =
-        task {
-            try
-                do! drainHistory repositoryId
-            with
-            | _ -> ()
-        }
-
-    /// Reconstructs one deterministic content-free wake envelope from the permanent accepted-change journal.
-    let notificationEnvelope repositoryId (control: LibraryControlDocument) cursor =
-        task {
-            match! readChange repositoryId cursor with
-            | None -> return invalidOp "Committed Library notification progress references a missing change."
-            | Some (record, _) ->
-                let payload =
-                    LibraryContentAvailable.Create(
-                        repositoryId,
-                        LibraryCursorEpoch.ofGuid control.Epoch,
-                        LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch cursor,
-                        record.Change.LibraryCatalogVersion,
-                        record.Change.AcceptedAt,
-                        record.CorrelationId
-                    )
-
-                return
-                    tryCreateLibraryGraceEventEnvelope
-                        (stableMessageId repositoryId cursor)
-                        (GraceEvent.LibraryContentAvailableEvent payload)
-                        (EventMetadata.New record.CorrelationId "RepositoryLibraryActor")
-        }
-
-    /// Advances advisory Library wake delivery from NotifyThrough and stops at the first terminal transport failure.
-    let drainNotifications repositoryId =
-        task {
-            let mutable keepGoing = true
-
-            while keepGoing do
-                match! readControl repositoryId with
-                | None -> keepGoing <- false
-                | Some (control, etag) when control.Pending.IsSome -> keepGoing <- false
-                | Some (control, _) when control.NotifyThrough >= control.CommittedCursor ->
-                    do! clearFailedEvent repositoryId
-                    keepGoing <- false
-                | Some (control, etag) ->
-                    let cursor = control.NotifyThrough + 1L
-                    let expectedMessageId = stableMessageId repositoryId cursor
-                    let! retained = readFailedEvent repositoryId
-
-                    match retained with
-                    | Some (envelope, _) when envelope.MessageId <> expectedMessageId -> do! clearFailedEvent repositoryId
-                    | _ ->
-                        let! candidate =
-                            task {
-                                match retained with
-                                | Some (envelope, _) -> return Some envelope
-                                | None -> return! notificationEnvelope repositoryId control cursor
-                            }
-
-                        match candidate with
-                        | None ->
-                            let! _ = writeControl repositoryId etag { control with NotifyThrough = cursor }
-                            ()
-                        | Some envelope ->
-                            let! delivered =
-                                LibraryNotifications.attempt
-                                    (fun value -> task { do! sendGraceEventEnvelope value CancellationToken.None })
-                                    (fun () ->
-                                        task {
-                                            let! _ = writeControl repositoryId etag { control with NotifyThrough = cursor }
-                                            return ()
-                                        })
-                                    (fun value ->
-                                        task {
-                                            let! _ = createFailedEvent repositoryId value
-                                            return ()
-                                        })
-                                    (fun () -> clearFailedEvent repositoryId)
-                                    retained.IsSome
-                                    envelope
-
-                            if not delivered then keepGoing <- false
-        }
-
-    /// Attempts advisory wake delivery without making accepted changes or history depend on broker health.
-    let tryDrainNotifications repositoryId =
-        task {
-            try
-                do! drainNotifications repositoryId
-            with
-            | _ -> ()
         }
 
     /// Returns the current control state after synchronous repair.
@@ -879,8 +664,6 @@ type RepositoryLibraryActor
             let pendingControl = { control with Pending = Some(LibraryPendingDecision.ItemChange record) }
             let! pendingEtag = writeControl repositoryId etag pendingControl
             let! result = completeItemPending repositoryId pendingEtag pendingControl record
-            do! tryDrainHistory repositoryId
-            do! tryDrainNotifications repositoryId
             return result
         }
 
@@ -919,21 +702,9 @@ type RepositoryLibraryActor
 
         loop Set.empty parent
 
-    /// Builds one immutable accepted-change record from its chosen result and consumed concurrency facts.
-    let acceptedRecord
-        cursor
-        requestHash
-        correlationId
-        change
-        priorNamespace
-        priorContentVersionId
-        consumedNamespaceVersion
-        consumedContentVersionId
-        consumedContentRevision
-        consumedSlotVersion
-        addedItem
-        addedSlot
-        =
+    /// Builds one immutable accepted-change record: the change, the placement it vacated (which repair needs to write
+    /// the vacated slot), and whether it added an item or slot record (which the record counts need).
+    let acceptedRecord cursor requestHash correlationId change priorNamespace addedItem addedSlot =
         {
             SchemaVersion = 1
             Cursor = cursor
@@ -941,11 +712,6 @@ type RepositoryLibraryActor
             CorrelationId = correlationId
             Change = change
             PriorNamespace = priorNamespace
-            PriorContentVersionId = priorContentVersionId
-            ConsumedNamespaceVersion = consumedNamespaceVersion
-            ConsumedContentVersionId = consumedContentVersionId
-            ConsumedContentRevision = consumedContentRevision
-            ConsumedSlotVersion = consumedSlotVersion
             AddedItemRecord = addedItem
             AddedSlotRecord = addedSlot
         }
@@ -966,8 +732,8 @@ type RepositoryLibraryActor
     let boundedPageSize (pageSize: int) = Math.Clamp(pageSize, LibraryValidation.MinimumPageSize, LibraryValidation.MaximumPageSize)
 
     /// Derives a stable immutable baseline identity from its publication boundary.
-    let baselineId repositoryId (epoch: Guid) boundary (catalogVersion: LibraryCatalogVersion) =
-        LibraryDecision.deterministicGuid repositoryId catalogVersion $"baseline:{epoch:D}:{boundary}"
+    let baselineId repositoryId boundary (catalogVersion: LibraryCatalogVersion) =
+        LibraryDecision.deterministicGuid repositoryId catalogVersion $"baseline:{boundary}"
 
     /// Reads a published baseline manifest.
     let readBaselineManifest repositoryId (bootstrapId: LibraryBootstrapId) =
@@ -1028,7 +794,7 @@ type RepositoryLibraryActor
     /// Creates immutable byte-bounded baseline shards and publishes their manifest last.
     let buildBaseline repositoryId (control: LibraryControlDocument) =
         task {
-            let bootstrapId = baselineId repositoryId control.Epoch control.CommittedCursor control.Catalog.Version
+            let bootstrapId = baselineId repositoryId control.CommittedCursor control.Catalog.Version
 
             match! readBaselineManifest repositoryId bootstrapId with
             | Some (manifest, _) -> return bootstrapId, manifest
@@ -1094,7 +860,6 @@ type RepositoryLibraryActor
                 let manifest =
                     {
                         SchemaVersion = 1
-                        Epoch = control.Epoch
                         BoundaryCursor = control.CommittedCursor
                         Catalog = control.Catalog
                         CreatedAt = SystemClock.Instance.GetCurrentInstant()
@@ -1121,8 +886,6 @@ type RepositoryLibraryActor
         task {
             let repositoryId = this.GetPrimaryKey()
             do! repairPending repositoryId
-            do! tryDrainHistory repositoryId
-            do! tryDrainNotifications repositoryId
         }
         :> Task
 
@@ -1166,19 +929,7 @@ type RepositoryLibraryActor
                 match! readControl repositoryId with
                 | Some _ -> return ()
                 | None ->
-                    let control =
-                        {
-                            SchemaVersion = 1
-                            Catalog = catalog
-                            Epoch = LibraryDecision.deterministicGuid repositoryId Guid.Empty "epoch"
-                            CommittedCursor = 0L
-                            ReplayFloor = 1L
-                            Pending = None
-                            ItemRecordCount = 0
-                            SlotRecordCount = 0
-                            HistoryThrough = 0L
-                            NotifyThrough = 0L
-                        }
+                    let control = { SchemaVersion = 1; Catalog = catalog; CommittedCursor = 0L; Pending = None; ItemRecordCount = 0; SlotRecordCount = 0 }
 
                     let! _ = writeControl repositoryId null control
                     return ()
@@ -1326,7 +1077,6 @@ type RepositoryLibraryActor
                 | Denied reason -> return Error reason
                 | Allowed _ ->
                     do! repairPending repositoryId
-                    do! tryDrainNotifications repositoryId
 
                     match! readReceipt repositoryId operationId with
                     | Some (existing, _) when existing.RequestHash <> requestHash -> return Error RejectionReason.OperationIdentityMismatch
@@ -1346,7 +1096,7 @@ type RepositoryLibraryActor
                                 return Ok receipt
                             else
                                 let cursor = control.CommittedCursor + 1L
-                                let publicCursor = LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch cursor
+                                let publicCursor = LibraryTokens.cursor libraryTokenKey repositoryId cursor
                                 let now = SystemClock.Instance.GetCurrentInstant()
 
                                 let submit record =
@@ -1406,19 +1156,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.CreateFile now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord
-                                                    cursor
-                                                    requestHash
-                                                    correlationId
-                                                    change
-                                                    None
-                                                    None
-                                                    None
-                                                    None
-                                                    None
-                                                    (Some expectation.ExpectedSlotVersion)
-                                                    true
-                                                    existingSlot.IsNone
+                                                acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
                                                 |> submit
 
                                 | LibraryChangeCommand.CreateDirectory (_, _, _, expectation) ->
@@ -1465,19 +1203,7 @@ type RepositoryLibraryActor
                                         let change = acceptedChange operationId ChangeKind.CreateDirectory now principalId control.Catalog.Version item None
 
                                         return!
-                                            acceptedRecord
-                                                cursor
-                                                requestHash
-                                                correlationId
-                                                change
-                                                None
-                                                None
-                                                None
-                                                None
-                                                None
-                                                (Some expectation.ExpectedSlotVersion)
-                                                true
-                                                existingSlot.IsNone
+                                            acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
                                             |> submit
 
                                 | LibraryChangeCommand.UpdateContent (_, _, _, itemId, namespacePrecondition, contentPrecondition, uploadSessionId) ->
@@ -1513,21 +1239,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.UpdateContent now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord
-                                                    cursor
-                                                    requestHash
-                                                    correlationId
-                                                    change
-                                                    current.Item.Namespace
-                                                    (current.Item.Content
-                                                     |> Option.map (fun content -> content.ContentVersionId))
-                                                    (namespacePrecondition
-                                                     |> Option.map (fun expected -> expected.ExpectedNamespaceVersion))
-                                                    (Some contentPrecondition.ExpectedContentVersionId)
-                                                    (Some contentPrecondition.ExpectedContentRevision)
-                                                    None
-                                                    false
-                                                    false
+                                                acceptedRecord cursor requestHash correlationId change current.Item.Namespace false false
                                                 |> submit
                                         | Ok _ when control.ItemRecordCount >= 100000 -> return Error "The Library current-item capacity has been reached."
                                         | Ok location ->
@@ -1576,20 +1288,7 @@ type RepositoryLibraryActor
                                                         (Some conflict)
 
                                                 return!
-                                                    acceptedRecord
-                                                        cursor
-                                                        requestHash
-                                                        correlationId
-                                                        change
-                                                        None
-                                                        None
-                                                        (namespacePrecondition
-                                                         |> Option.map (fun expected -> expected.ExpectedNamespaceVersion))
-                                                        (Some contentPrecondition.ExpectedContentVersionId)
-                                                        (Some contentPrecondition.ExpectedContentRevision)
-                                                        (Some destinationSlot.SlotVersion)
-                                                        true
-                                                        destinationExists.IsNone
+                                                    acceptedRecord cursor requestHash correlationId change None true destinationExists.IsNone
                                                     |> submit
 
                                 | LibraryChangeCommand.Rename (_, _, _, itemId, namespacePrecondition, newName) ->
@@ -1631,20 +1330,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.Rename now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord
-                                                    cursor
-                                                    requestHash
-                                                    correlationId
-                                                    change
-                                                    (Some prior)
-                                                    (current.Item.Content
-                                                     |> Option.map (fun content -> content.ContentVersionId))
-                                                    (Some namespacePrecondition.ExpectedNamespaceVersion)
-                                                    None
-                                                    None
-                                                    (Some destination.SlotVersion)
-                                                    false
-                                                    destinationRecord.IsNone
+                                                acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
                                                 |> submit
 
                                 | LibraryChangeCommand.Move (_, _, _, itemId, namespacePrecondition, destinationParent) ->
@@ -1704,20 +1390,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.Move now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord
-                                                    cursor
-                                                    requestHash
-                                                    correlationId
-                                                    change
-                                                    (Some prior)
-                                                    (current.Item.Content
-                                                     |> Option.map (fun content -> content.ContentVersionId))
-                                                    (Some namespacePrecondition.ExpectedNamespaceVersion)
-                                                    None
-                                                    None
-                                                    (Some destination.SlotVersion)
-                                                    false
-                                                    destinationRecord.IsNone
+                                                acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
                                                 |> submit
 
                                 | LibraryChangeCommand.Delete (_, _, _, itemId, namespacePrecondition, contentPrecondition) ->
@@ -1769,19 +1442,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.Delete now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord
-                                                    cursor
-                                                    requestHash
-                                                    correlationId
-                                                    change
-                                                    (Some prior)
-                                                    None
-                                                    (Some namespacePrecondition.ExpectedNamespaceVersion)
-                                                    None
-                                                    None
-                                                    None
-                                                    false
-                                                    false
+                                                acceptedRecord cursor requestHash correlationId change (Some prior) false false
                                                 |> submit
                                     | Some (current, _) ->
                                         let prior = current.Item.Namespace.Value
@@ -1811,47 +1472,8 @@ type RepositoryLibraryActor
                                         let change = acceptedChange operationId ChangeKind.Delete now principalId control.Catalog.Version item None
 
                                         return!
-                                            acceptedRecord
-                                                cursor
-                                                requestHash
-                                                correlationId
-                                                change
-                                                (Some prior)
-                                                priorContent
-                                                (Some namespacePrecondition.ExpectedNamespaceVersion)
-                                                (contentPrecondition
-                                                 |> Option.map (fun expected -> expected.ExpectedContentVersionId))
-                                                (contentPrecondition
-                                                 |> Option.map (fun expected -> expected.ExpectedContentRevision))
-                                                None
-                                                false
-                                                false
+                                            acceptedRecord cursor requestHash correlationId change (Some prior) false false
                                             |> submit
-            }
-
-        member this.GetOperation operationId _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-                do! repairPending repositoryId
-
-                match! readReceipt repositoryId operationId with
-                | None -> return None
-                | Some (receipt, _) ->
-                    match receipt.Outcome with
-                    | LibraryOperationOutcome.CatalogResult _ -> return None
-                    | outcome ->
-                        let! publicResult = resolveOutcome repositoryId receipt.OperationId receipt.RequestHash outcome
-                        return Some publicResult
-            }
-
-        member this.GetItem itemId _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-                do! repairPending repositoryId
-
-                match! readItem repositoryId itemId with
-                | Some (record, _) -> return Some record.Item
-                | None -> return None
             }
 
         member this.GetSlot parent name _ =
@@ -1867,10 +1489,7 @@ type RepositoryLibraryActor
                 let! control, _ = currentControl repositoryId
 
                 match LibraryTokens.tryCursor libraryTokenKey repositoryId contentRevision with
-                | Some (epoch, cursor) when
-                    epoch = control.Epoch
-                    && cursor <= control.CommittedCursor
-                    ->
+                | Some cursor when cursor <= control.CommittedCursor ->
                     match! readChange repositoryId cursor with
                     | Some (record, _) -> return Some record.Change
                     | None -> return None
@@ -1908,8 +1527,7 @@ type RepositoryLibraryActor
                 return
                     {
                         BootstrapId = bootstrapId
-                        BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.Epoch manifest.BoundaryCursor
-                        CursorEpoch = LibraryCursorEpoch.ofGuid manifest.Epoch
+                        BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.BoundaryCursor
                         LibraryCatalog = manifest.Catalog
                         Items = items
                         NextPageToken =
@@ -1955,8 +1573,7 @@ type RepositoryLibraryActor
                             Some
                                 {
                                     BootstrapId = bootstrapId
-                                    BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.Epoch manifest.BoundaryCursor
-                                    CursorEpoch = LibraryCursorEpoch.ofGuid manifest.Epoch
+                                    BoundaryCursor = LibraryTokens.cursor libraryTokenKey repositoryId manifest.BoundaryCursor
                                     LibraryCatalog = manifest.Catalog
                                     Items = items
                                     NextPageToken =
@@ -1968,93 +1585,31 @@ type RepositoryLibraryActor
                 | _ -> return None
             }
 
-        member this.GetChanges afterCursor pageToken pageSize _ =
+        member this.GetChanges afterCursor pageSize _ =
             task {
                 let repositoryId = this.GetPrimaryKey()
                 let! control, _ = currentControl repositoryId
 
-                let now =
-                    SystemClock
-                        .Instance
-                        .GetCurrentInstant()
-                        .ToUnixTimeSeconds()
-
-                let parsed =
-                    match pageToken with
-                    | Some token ->
-                        match LibraryTokens.tryPage libraryTokenKey "changes" repositoryId now token with
-                        | Some (value, offset) ->
-                            match value.Split(':', StringSplitOptions.None) with
-                            | [| epoch; start; boundary |] ->
-                                match Guid.TryParse epoch, Int64.TryParse start, Int64.TryParse boundary with
-                                | (true, parsedEpoch), (true, parsedStart), (true, parsedBoundary) ->
-                                    Some(parsedEpoch, parsedStart + int64 offset, parsedBoundary)
-                                | _ -> None
-                            | _ -> None
-                        | None -> None
-                    | None ->
-                        match LibraryTokens.tryCursor libraryTokenKey repositoryId afterCursor with
-                        | Some (epoch, position) -> Some(epoch, position, control.CommittedCursor)
-                        | None -> None
-
-                match parsed with
-                | Some (epoch, position, boundary) when
-                    epoch = control.Epoch
-                    && position >= control.ReplayFloor - 1L
-                    && boundary <= control.CommittedCursor
-                    ->
+                // The journal is permanent, so every page starts at the caller's cursor and runs toward the committed
+                // cursor. There's no continuation to expire and no window to fall out of.
+                match LibraryTokens.tryCursor libraryTokenKey repositoryId afterCursor with
+                | None -> return Error LibraryCursorError.NotIssuedHere
+                | Some position when position > control.CommittedCursor -> return Error LibraryCursorError.AheadOfServer
+                | Some position ->
+                    let boundary = control.CommittedCursor
                     let size = boundedPageSize pageSize
                     let! records = LibraryQueries.readChanges services repositoryId position boundary (size + 1) CancellationToken.None
                     let selected, lastPosition, hasMore = LibraryQueries.changePageWindow position boundary size records
 
-                    let changes =
-                        selected
-                        |> Array.map (fun record -> record.Change)
-
-                    let expires =
-                        SystemClock
-                            .Instance
-                            .GetCurrentInstant()
-                            .Plus(Duration.FromMinutes 15L)
-                            .ToUnixTimeSeconds()
-
-                    let value = $"{epoch:D}:{position}:{boundary}"
-                    let offset = int (lastPosition - position)
-
                     return
-                        {
-                            Outcome = OutcomeKind.Accepted
-                            CursorEpoch = LibraryCursorEpoch.ofGuid epoch
-                            Changes = changes
-                            LastCursor = LibraryTokens.cursor libraryTokenKey repositoryId epoch lastPosition
-                            HasMore = hasMore
-                            NextPageToken =
-                                if hasMore then
-                                    Some(LibraryTokens.page libraryTokenKey "changes" repositoryId value offset expires)
-                                else
-                                    None
-                            Rebaseline = None
-                        }
-                | _ ->
-                    let floor = Math.Max(0L, control.ReplayFloor - 1L)
-
-                    return
-                        {
-                            Outcome = OutcomeKind.RebaselineRequired
-                            CursorEpoch = LibraryCursorEpoch.ofGuid control.Epoch
-                            Changes = Array.empty
-                            LastCursor = LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch control.CommittedCursor
-                            HasMore = false
-                            NextPageToken = None
-                            Rebaseline =
-                                Some
-                                    {
-                                        Reason = "cursorOutsideReplayWindow"
-                                        CurrentEpoch = LibraryCursorEpoch.ofGuid control.Epoch
-                                        ServiceFloorCursor = LibraryTokens.cursor libraryTokenKey repositoryId control.Epoch floor
-                                        RecommendedBootstrap = true
-                                    }
-                        }
+                        Ok
+                            {
+                                Changes =
+                                    selected
+                                    |> Array.map (fun record -> record.Change)
+                                LastCursor = LibraryTokens.cursor libraryTokenKey repositoryId lastPosition
+                                HasMore = hasMore
+                            }
             }
 
         member this.GetContentLocation contentVersionId _ =
@@ -2068,18 +1623,14 @@ type RepositoryLibraryActor
             task {
                 let repositoryId = this.GetPrimaryKey()
                 do! repairPending repositoryId
-                do! tryDrainHistory repositoryId
-                do! tryDrainNotifications repositoryId
             }
             :> Task
 
         member this.GetStatus _ =
             task {
                 let repositoryId = this.GetPrimaryKey()
-                do! repairPending repositoryId
-                do! tryDrainHistory repositoryId
-                do! tryDrainNotifications repositoryId
 
+                // A plain read: it reports a saved decision that is waiting for repair instead of repairing it.
                 match! readControl repositoryId with
                 | None ->
                     return
@@ -2087,19 +1638,10 @@ type RepositoryLibraryActor
                             State = "notInitialized"
                             RepositoryId = repositoryId
                             LibraryCatalogVersion = Guid.Empty
-                            IsCaughtUp = true
-                            RebaselineRequired = false
-                            IsBlocked = false
                             PendingOperationCount = 0
-                            OldestPendingAgeMilliseconds = None
-                            ProjectionLagCount = 0L
                             LastCompletedAt = None
                         }
                 | Some (control, _) ->
-                    let lag =
-                        control.CommittedCursor
-                        - Math.Min(control.HistoryThrough, control.NotifyThrough)
-
                     let! lastCompleted =
                         task {
                             if control.CommittedCursor = 0L then
@@ -2115,12 +1657,7 @@ type RepositoryLibraryActor
                             State = if control.Pending.IsSome then "repairing" else "ready"
                             RepositoryId = repositoryId
                             LibraryCatalogVersion = control.Catalog.Version
-                            IsCaughtUp = control.Pending.IsNone && lag = 0L
-                            RebaselineRequired = false
-                            IsBlocked = false
                             PendingOperationCount = if control.Pending.IsSome then 1 else 0
-                            OldestPendingAgeMilliseconds = None
-                            ProjectionLagCount = lag
                             LastCompletedAt = lastCompleted
                         }
             }

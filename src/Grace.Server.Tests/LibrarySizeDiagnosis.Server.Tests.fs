@@ -351,7 +351,6 @@ module LibrarySizeDiagnosisHttpTests =
             Assert.That(result.DeclaredLogicalBytes, Is.EqualTo(int64 (payloadA.Length + payloadB.Length)))
             Assert.That(result.DistinctManifestCount, Is.EqualTo 2L)
             Assert.That(result.CommittedCursor, Is.EqualTo 205L)
-            Assert.That(result.Epoch, Is.EqualTo empty.Epoch)
 
             TestContext.Error.WriteLine(
                 "LIBRARY_SIZE_DIAGNOSTIC_HOSTED_POSITIVE_JSON_BASE64:"

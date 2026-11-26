@@ -10,7 +10,7 @@ open System.Runtime.ExceptionServices
 open System.Text.Json
 open System.Threading.Tasks
 
-/// Reads and writes remote Library records through the six configured Orleans persistence purposes.
+/// Reads and writes remote Library records through the five configured Orleans persistence purposes.
 module LibraryRecords =
 
     /// Compares persisted values through the same stable JSON representation used by Grace storage.
@@ -37,9 +37,6 @@ module LibraryRecords =
     let ReceiptsStorageName = "GraceLibraryReceiptsStorage"
 
     [<Literal>]
-    let HistoryStorageName = "GraceLibraryHistoryStorage"
-
-    [<Literal>]
     let BaselinesStorageName = "GraceLibraryBaselinesStorage"
 
     [<Literal>]
@@ -53,9 +50,6 @@ module LibraryRecords =
 
     [<Literal>]
     let ReceiptsContainerName = "grace-library-receipts"
-
-    [<Literal>]
-    let HistoryContainerName = "grace-library-history"
 
     [<Literal>]
     let BaselinesContainerName = "grace-library-baselines"

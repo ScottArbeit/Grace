@@ -2237,7 +2237,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
-    /// Proves a complete prior v10 database is replaced instead of being read through as the v11 typed-selector shape.
+    /// Proves a complete prior v10 database is replaced instead of being read through as the current typed-selector shape.
     [<Test>]
     let ``ensureDbInitialized cleanly recreates v10 local state for typed Branch selectors`` () =
         withTempDir (fun _ configuration ->
@@ -2253,7 +2253,7 @@ module LocalStateDbTests =
                 use connection = openRawConnection configuration.GraceStatusFile
 
                 executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                |> should equal "11"
+                |> should equal LocalStateDb.SchemaVersion
 
                 let selectorColumn =
                     use command = connection.CreateCommand()

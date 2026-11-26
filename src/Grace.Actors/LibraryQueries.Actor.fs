@@ -285,17 +285,9 @@ module LibraryQueries =
             match stored with
             | Some (control, _) when
                 control.SchemaVersion = 1
-                && control.Epoch <> Guid.Empty
                 && control.CommittedCursor >= 0L
-                && control.ReplayFloor > 0L
-                && control.ReplayFloor - 1L
-                   <= control.CommittedCursor
                 && control.ItemRecordCount >= 0
                 && control.SlotRecordCount >= 0
-                && control.HistoryThrough >= 0L
-                && control.HistoryThrough <= control.CommittedCursor
-                && control.NotifyThrough >= 0L
-                && control.NotifyThrough <= control.CommittedCursor
                 && not (isNull (box control.Catalog))
                 && control.Catalog.RepositoryId = repositoryId
                 && control.Catalog.Version <> Guid.Empty
@@ -420,7 +412,7 @@ module LibraryQueries =
     /// Requires all selected source containers, even at zero, then reads permanent history through the captured control.
     /// Reads existing control directly through LibraryRecords, then the permanent accepted prefix and immutable content
     /// mappings. Never call RepositoryLibraryActor.currentControl or other repair paths from a diagnostic. Validate source
-    /// existence even at cursor zero, preserve exact cursor-gap rejection, and recheck the epoch/nonregression before
+    /// existence even at cursor zero, preserve exact cursor-gap rejection, and recheck nonregression before
     /// publishing. Manifest bytes here are declarations, not payload-presence evidence.
     let readDiagnosticContent (services: IServiceProvider) (repositoryId: RepositoryId) (token: CancellationToken) =
         task {
@@ -466,7 +458,7 @@ module LibraryQueries =
                         })
                     token
 
-            return total, count, control.Epoch, control.CommittedCursor, started
+            return total, count, control.CommittedCursor, started
         }
 
     /// Establishes query-client visibility of the last committed item before baseline enumeration.

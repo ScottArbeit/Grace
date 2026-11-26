@@ -2,7 +2,7 @@
 
 Question: can durable pause and explicit resume use the existing repository row and working-root lease while retaining every admitted operation family, without another queue, table, database or recovery owner?
 
-**Verdict: proven within the bounded model. All 56 cases passed.** The [accepted behavior](../Libraries.Design.md#pause-and-resume-accepted-next-slice) is Plan-ready for one Product V1 implementation slice, LIB-016 through LIB-018. No pause/resume production command is delivered by this experiment.
+**Verdict: proven within the bounded model. All 56 cases passed.** The [accepted behavior](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#pause-and-resume-accepted-next-slice) is Plan-ready for one Product V1 implementation slice, LIB-016 through LIB-018. No pause/resume production command is delivered by this experiment.
 
 The [owner decision and readiness record](https://github.com/ScottArbeit/Grace/issues/1037#issuecomment-5597448981) captures the five accepted choices. Source base is `66aea34838a65a9e4b220463f0d8366836ee328d`, freshly fetched after PR #1074. The intervening main changes are unrelated Operations work; Library source and documents match the delivered rename/type/object behavior.
 
@@ -84,7 +84,7 @@ Total: **56 passed, 0 failed**. The final program and wrapper hashes above ident
 | LIB-017: retain all selected work | `LibraryOperation`, existing saved capture/object reader/uploader, local operations, Windows application and echo handling | Actual captured frozen request survives pause, response loss and restart; real uploader uses original object; partial rename and saves at either path remain protected. Exercise a later saved edit with a compatible remote content change using actual server acceptance, plus zero-byte and damaged-object negatives. |
 | LIB-018: active resume failures and truthful status | Status/output registry and command handler; existing catalog/changes/rebaseline checks | Human and JSON `Paused` plus unchanged `Enabled`/progress fields and schema; failed resume remains active/blocked; ordinary retry after a recoverable failure; changed catalog/rebaseline does not reset or overwrite a participating copy. Actual A/B convergence and restart show no duplicate uploads or rewrites. |
 
-The [maintained design](../Libraries.Design.md#pause-and-resume-accepted-next-slice) and [type plan](Libraries.Type-Plan.md#pauseresume-propagation-accepted-not-implemented) contain the accepted commands, state/effect ordering, stable requirements, affected surfaces and stop conditions. Use a fresh mainline base and one Tier 2 implementation owner after issue readiness and a new run charter. No enabling production PR or integration branch is justified by this result.
+The [maintained design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#pause-and-resume-accepted-next-slice) and [type plan](Libraries.Type-Plan.md#pauseresume-propagation-accepted-not-implemented) contain the accepted commands, state/effect ordering, stable requirements, affected surfaces and stop conditions. Use a fresh mainline base and one Tier 2 implementation owner after issue readiness and a new run charter. No enabling production PR or integration branch is justified by this result.
 
 ## Limits
 

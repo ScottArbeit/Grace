@@ -4529,11 +4529,6 @@ module LibraryRestartScenarios =
 
                     let! currentSlotsBefore = LibraryActorSnapshots.readFrom<LibraryCurrentSlotDocument> state "grace-library-current" "Grace.Library.Slot.v2"
 
-                    let! historiesBefore =
-                        LibraryActorSnapshots.readFrom<LibraryHistorySegmentDocument> state "grace-library-history" "Grace.Library.History.v2"
-
-                    let! failedEventsBefore =
-                        LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
 
                     let! baselineManifestsBefore =
                         LibraryActorSnapshots.readFrom<LibraryBaselineManifestDocument> state "grace-library-baselines" "Grace.Library.BaselineManifest.v2"
@@ -4546,15 +4541,10 @@ module LibraryRestartScenarios =
                         currentItemsBefore
                         |> Array.find (fun value -> value.Item.ItemId = firstReceipt.Change.Value.Item.ItemId)
 
-                    let itemHistoryBefore =
-                        historiesBefore
-                        |> Array.find (fun value -> value.Cursors = [| 1L; 2L; 3L; 4L; 5L |])
 
                     let baselineManifestBefore =
                         baselineManifestsBefore
-                        |> Array.find (fun value ->
-                            value.Epoch = controlBefore.Epoch
-                            && value.BoundaryCursor = controlBefore.CommittedCursor)
+                        |> Array.find (fun value -> value.BoundaryCursor = controlBefore.CommittedCursor)
 
                     let counterBefore: RepositoryContentCounterDto =
                         before
@@ -4606,8 +4596,6 @@ module LibraryRestartScenarios =
 
                             let! controlsAfter = LibraryActorSnapshots.readFrom<LibraryControlDocument> state "grace-library-control" "Grace.Library.Control.v2"
 
-                            let! failedEventsAfter =
-                                LibraryActorSnapshots.readFrom<FailedGraceEventEnvelope> state "grace-library-receipts" "Grace.Library.FailedGraceEvent.v2"
 
                             let controlAfter =
                                 controlsAfter
@@ -4685,24 +4673,17 @@ module LibraryRestartScenarios =
                                     )
 
                                     Assert.That(repositoryStatus.State, Is.EqualTo("ready"))
-                                    Assert.That(repositoryStatus.IsCaughtUp, Is.True)
-                                    Assert.That(repositoryStatus.ProjectionLagCount, Is.EqualTo(0L))
                                     Assert.That(controlBefore.CommittedCursor, Is.EqualTo(6L))
-                                    Assert.That(controlBefore.HistoryThrough, Is.EqualTo(controlBefore.CommittedCursor))
-                                    Assert.That(controlBefore.NotifyThrough, Is.EqualTo(controlBefore.CommittedCursor))
                                     Assert.That(controlBefore.Pending, Is.EqualTo(None))
-                                    Assert.That(currentItemBefore.HistoryTailSegment, Is.EqualTo(Some "00000000000000000000"))
-                                    Assert.That(itemHistoryBefore.Cursors, Is.EqualTo(box [| 1L; 2L; 3L; 4L; 5L |]))
 
                                     Assert.That(
                                         currentSlotsBefore
                                         |> Array.filter (fun value ->
-                                            value.HistoryTailSegment.IsSome
+                                            value.LastCursor > 0L
                                             && value.Slot.Parent.LibraryPath = Some libraryPath),
                                         Has.Length.EqualTo(3)
                                     )
 
-                                    Assert.That(failedEventsBefore, Is.Empty)
                                     Assert.That(baselineManifestBefore.Catalog, Is.EqualTo(configuredCatalog))
 
                                     Assert.That(
@@ -4753,8 +4734,7 @@ module LibraryRestartScenarios =
                                     )
 
                                     Assert.That(workflowYAfter, Is.EqualTo(workflowYBefore))
-                                    Assert.That(controlAfter, Is.EqualTo(controlBefore))
-                                    Assert.That(failedEventsAfter, Is.Empty))
+                                    Assert.That(controlAfter, Is.EqualTo(controlBefore)))
                             )
 
                         }
@@ -4886,18 +4866,17 @@ module LibraryRestartScenarios =
                     retainedCursor200 <- Some retained
                 }
 
-            /// Restores the missing document and resumes from the unchanged continuation boundary.
+            /// Restores the missing document and asks again from the same cursor, which now returns the missing change.
             let verify () =
                 task {
-                    /// Reads after cursor 199, preserving any continuation token returned for the missing change.
-                    let getChanges pageToken =
+                    /// Reads after cursor 199; there is no continuation token, so a retry always starts from that cursor.
+                    let getChanges () =
                         task {
                             let parameters = Parameters.Library.GetLibraryChangesParameters()
                             parameters.OwnerId <- ownerId
                             parameters.OrganizationId <- organizationId
                             parameters.RepositoryId <- repositoryId
                             parameters.AfterCursor <- cursor199
-                            parameters.PageToken <- pageToken |> Option.toObj
                             parameters.PageSize <- 10
                             parameters.CorrelationId <- generateCorrelationId ()
                             use! response = Client.PostAsync("/libraries/changes/get", createJsonContent parameters)
@@ -4916,7 +4895,7 @@ module LibraryRestartScenarios =
                     let! initialGapResult =
                         task {
                             try
-                                return! getChanges None
+                                return! getChanges ()
                             with
                             | error -> return Choice2Of2 error
                         }
@@ -4937,11 +4916,10 @@ module LibraryRestartScenarios =
                         Action (fun () ->
                             Assert.That(initialGapPage.Changes, Is.Empty)
                             Assert.That(initialGapPage.LastCursor, Is.EqualTo(cursor199))
-                            Assert.That(initialGapPage.HasMore, Is.True)
-                            Assert.That(initialGapPage.NextPageToken.IsSome, Is.True))
+                            Assert.That(initialGapPage.HasMore, Is.True))
                     )
 
-                    let! resumedGapResult = getChanges initialGapPage.NextPageToken
+                    let! resumedGapResult = getChanges ()
 
                     let resumedGapPage =
                         match resumedGapResult with
@@ -4959,8 +4937,7 @@ module LibraryRestartScenarios =
                                 )
                             )
 
-                            Assert.That(resumedGapPage.HasMore, Is.False)
-                            Assert.That(resumedGapPage.NextPageToken, Is.EqualTo(None)))
+                            Assert.That(resumedGapPage.HasMore, Is.False))
                     )
                 }
 

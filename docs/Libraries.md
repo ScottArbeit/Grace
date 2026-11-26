@@ -32,7 +32,7 @@ Libraries add two repository-scoped operations and roles:
 
 | Role | Operations | Intended use |
 | --- | --- | --- |
-| `LibraryReader` | `RepositoryRead`, `LibraryRead` | Read the catalog, status, items, slots, bootstrap pages, change pages, receipts, bytes, and wake hints. |
+| `LibraryReader` | `RepositoryRead`, `LibraryRead` | Read the catalog, status, slots, bootstrap pages, change pages, bytes, and wake hints. |
 | `LibraryWriter` | Reader operations plus `LibraryWrite` | Prepare bytes and submit Library changes. |
 
 Reading the catalog needs only `RepositoryRead`. Every working copy needs the Library roots to keep Library files out of version control, so `grace watch` reads them even for users with no Library role. `RepositoryAdmin` manages the Library catalog and also carries Library read/write access. Broader administrator roles inherit the same operations through the existing scope hierarchy.
@@ -52,15 +52,15 @@ Each change request provides:
 The accepted order is:
 
 1. Validate and authorize the request against current repository state.
-1. Check the Product V1 item-head and namespace-slot bounds before reservation.
+1. Check the Product V1 item-head and namespace-slot bounds, and the 1,024-byte path limit, before reservation.
 1. Reserve the complete deterministic command.
 1. Create the immutable repository change.
 1. Retain one permanent content reference and complete its manifest workflow for a content-bearing change.
 1. Write the current item, affected slots, and stable receipt.
 1. Acknowledge the tracked content add, advance the committed cursor, and clear pending work.
-1. Resume compact history and best-effort content-free wake progress from the accepted change.
+1. Send one best-effort, content-free wake. Grace doesn't wait for it, and a failed wake is logged, not retried.
 
-Only a caught-up authorized command with exact catalog, item, namespace, content, and slot preconditions can create one accepted repository change. Each repository is limited to 100,000 current item-head documents and 100,000 current namespace-slot documents. A command that would exceed either bound is rejected before it reserves the control document.
+Only a caught-up authorized command with exact catalog, item, namespace, content, and slot preconditions can create one accepted repository change. Each repository is limited to 100,000 current item-head documents and 100,000 current namespace-slot documents. A command that would exceed either bound is rejected before it reserves the control document. A change whose resulting full path is longer than 1,024 UTF-8 bytes is rejected with `pathTooLong`. That applies to creates, renames, moves and conflict copies, and a directory rename or move checks the new path of every live item under it.
 
 Retrying the same operation ID with the same request returns the same receipt. Reusing that ID for a different request returns `operationIdentityMismatch`.
 
@@ -68,13 +68,15 @@ Retrying the same operation ID with the same request returns the same receipt. R
 
 Bootstrap pages read one immutable current-state baseline. The Windows client persists all selected metadata and opaque continuation tokens before installing files. Page order is unrelated to parent order. Once metadata is complete, the client validates the live parent graph, installs parents before children and reads each selected immutable content revision. Tombstones require no local filesystem effect or historical-parent lookup.
 
-After every required item is installed and verified, the client commits the selected baseline boundary as its applied cursor and calls `/libraries/changes/get`. Changes accepted after baseline selection then arrive through the existing ordered feed. A `rebaselineRequired` response stops this Windows client and preserves its work; automatic rebaseline of a participating copy remains deferred.
+After every required item is installed and verified, the client commits the selected baseline boundary as its applied cursor and calls `/libraries/changes/get`. Changes accepted after baseline selection then arrive through the ordered feed.
 
-An incomplete acquisition whose continuation returns HTTP 410 can restart before any Library content is installed, provided the root remains empty and the catalog unchanged. Each successful continuation renews the next fifteen-minute token. The client treats tokens as opaque. Complete metadata remains usable after page-token expiry and continues to select its original retained content revisions.
+`/libraries/changes/get` takes the cursor of the last change the client applied and a page size. It returns the changes after that cursor, the cursor of the last one, and whether more remain. There's no page token: the journal is permanent, so a client that slept for a day asks with the same cursor and continues where it stopped. A cursor this repository didn't issue, or one ahead of the server's committed changes, gets HTTP 400. The client stops and keeps its work, because that copy's Library state no longer matches the server.
 
-`LibraryRepositoryStatusDto` is content-free. It reports whether projections are caught up, whether rebaseline is required, whether work is blocked, pending-operation count and age, projection lag, and the last completion time. It does not expose container keys, ETags, grants, local paths, content names, or internal cursor numbers.
+Bootstrap pages still use tokens. An incomplete acquisition whose continuation returns HTTP 410 can restart before any Library content is installed, provided the root remains empty and the catalog unchanged. Each successful continuation renews the next fifteen-minute token. The client treats tokens as opaque. Complete metadata remains usable after page-token expiry and continues to select its original retained content revisions.
 
-`LibraryContentAvailable.v1` is a best-effort SignalR hint for authorized readers. It says only that the client should pull after a durable cursor. The wake can be lost or duplicated, and delivery failure does not change change acceptance or the durable result.
+`LibraryRepositoryStatusDto` is content-free, and reading it never repairs anything. It reports `ready`, or `repairing` when a saved decision is waiting to be finished, along with the catalog version, the pending count (0 or 1) and when the last change was accepted. It does not expose container keys, ETags, grants, local paths, content names, or internal cursor numbers. The user-facing account of sync health is the client's `grace library sync status`.
+
+`LibraryContentAvailable.v1` is a best-effort SignalR hint for authorized readers. It says only that the client should pull after a durable cursor. The server sends it once, after the change commits, and doesn't wait for the broker. The wake can be lost or duplicated, and a failed send never affects the accepted change. Clients poll anyway, so a lost wake only delays the next pull.
 
 ## Library CLI
 
@@ -124,7 +126,7 @@ grace library sync status --output Json
 
 Enable A, create nonempty files and nested directories in its Library, and run synchronization in A. A fresh B can then enable into its empty local Library root. B installs the selected content and catches up with later accepted changes before normal saved-file capture starts. Edit a file in B and run synchronization in B and A. `grace watch` invokes this same finite synchronization path from its existing timer, including interrupted onboarding.
 
-`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. Catalog changes and rebaseline responses stop application and retain saved work.
+`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. A catalog change or a refused cursor stops application and retains saved work.
 
 Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
 
@@ -136,7 +138,7 @@ A saved edit during an incoming file rename retains its original item and revisi
 
 Local state uses four Library tables in `.grace/grace-local.db`: repository participation/catalog/progress including baseline selection, materialized items, pending/terminal operations including selected baseline item work, and sync health. Sync health holds the latest failure and the last successful sync, and it exists even on copies that don't participate, because Watch reads the catalog on every copy. A Library connection uses WAL, foreign keys, and FULL synchronization. Baseline item completion commits the verified item and terminal work together without advancing the applied cursor. A separate transaction commits the boundary after all required work is verified. Genuine accepted-change completion then commits item, operation and cursor together. Restart reuses frozen requests and verifies already-published bytes, avoiding another logical operation or completed-file rewrite.
 
-An empty change page with `HasMore=true` retains its continuation and reports `catchingUp`. Page continuation is stored with repository progress. Each completed item clears the previous page token atomically, so interruption midway through a page resumes from the last applied cursor. A rebaseline response blocks synchronization and retains saved work; Product V1 does not run an automatic repair or bootstrap over existing files.
+An empty change page with `HasMore=true` reports `catchingUp`. Every pull starts from the applied cursor, which advances in the same transaction as each completed item, so an interruption midway through a page resumes exactly where application stopped. A refused cursor blocks synchronization and retains saved work; Product V1 does not reset a copy or bootstrap over existing files.
 
 Library application shares root exclusion with Branch, Connect, and Watch while retaining its own completion. It creates no Save, Reference, DirectoryVersion, Attachment, or WDU completion. Terminal operations retain exact Watch echo evidence until classification and safe bounded pruning.
 
@@ -169,7 +171,7 @@ bash / zsh:
 export grace__libraries__token_secret="$(openssl rand -base64 32)"
 ```
 
-The Aspire local topology generates this value for the development run and provisions the six Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
+The Aspire local topology generates this value for the development run and provisions the five Session-consistent Cosmos containers with their purpose-specific partition keys. Azure and externally configured modes require the operator-supplied secret. Storage placement and partition keys are internal implementation details, not public client contracts.
 
 ## Rename a synchronized file
 
@@ -226,7 +228,7 @@ grace library sync resume
 
 Status shows `Enabled=true` and `Paused=true` independently of progress `State`. Watch skips Library capture, upload and incoming application while paused. `run`, `enable` and `rename` return a nonzero result directing you to resume. Catalog-based exclusion from version control remains in force; pause is not a fully offline Watch mode.
 
-Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or rebaseline requirement never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
+Resume retains captured objects and exact pending requests, then captures the latest supported local save before applying incoming changes. It does not retain every intermediate save overwritten while paused. A failed resume stays active and blocked with saved work retained. Resolve the reported object, zero-byte or other obstruction before retrying; a changed catalog or a refused cursor never authorizes discarding local state. Pause and resume require completed onboarding and are safe to repeat.
 
 ## When Library sync fails
 
@@ -262,8 +264,8 @@ version-control work isn't affected.
 
 ## Deferred capabilities
 
-Explicit same-parent file rename follows the [delivered design](Libraries.Design.md#explicit-file-rename-delivered). Automatic recognition of a local Explorer rename remains deferred.
+Explicit same-parent file rename is delivered; its [original design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#explicit-file-rename-delivered) is in git history. Automatic recognition of a local Explorer rename remains deferred.
 
-The [pause/resume design](Libraries.Design.md#pause-and-resume-accepted-next-slice) and [validation mapping](design/Libraries.Pause-Validation.md) distinguish the 56-case readiness experiment from production command and Watch testing in Issue #1075.
+The [pause/resume design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#pause-and-resume-accepted-next-slice) and [validation mapping](design/Libraries.Pause-Validation.md) distinguish the 56-case readiness experiment from production command and Watch testing in Issue #1075.
 
 Product V1 includes the Windows synchronization commands, Watch wake handling and local persistence described above. Disable/offline/re-enable, per-Library participation, generalized repair, Cache, placeholders, and Linux/macOS execution remain deferred. Working Directory Update retains its separate ownership and never publishes Library content or records Library completion.

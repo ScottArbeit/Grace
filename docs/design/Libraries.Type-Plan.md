@@ -195,7 +195,7 @@ The `acquiringBaseline` and `installingBaseline` status values distinguish selec
 
 ## Explicit file rename propagation
 
-PR #1074 delivered requirements LIB-012 through LIB-015 in the [maintained design](../Libraries.Design.md#explicit-file-rename-delivered). The [rename experiment](Libraries.Rename-Experiment.md) established unchanged operation ordering; the [object experiment](Libraries.Object-Experiment.md) established the accepted saved-content capture sequence before production translation. Issue #1073 delivered the command and authorized redesign from base `2122f2e68f7f22a091ed2f4eadb93273169de8aa`, merged as `043c7a59bf1bb0fb421067ec3ae09556ec4088b9`. The historical server declaration inventory remains unchanged; the current local model is recorded below.
+PR #1074 delivered requirements LIB-012 through LIB-015 in the [maintained design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#explicit-file-rename-delivered). The [rename experiment](Libraries.Rename-Experiment.md) established unchanged operation ordering; the [object experiment](Libraries.Object-Experiment.md) established the accepted saved-content capture sequence before production translation. Issue #1073 delivered the command and authorized redesign from base `2122f2e68f7f22a091ed2f4eadb93273169de8aa`, merged as `043c7a59bf1bb0fb421067ec3ae09556ec4088b9`. The historical server declaration inventory remains unchanged; the current local model is recorded below.
 
 | Surface | Disposition and responsibility | Required production tests |
 | --- | --- | --- |
@@ -275,7 +275,7 @@ The [validation record](Libraries.Rename-Validation.md) maps production tests an
 
 ## Pause/resume propagation: Issue #1075
 
-The [accepted design](../Libraries.Design.md#pause-and-resume-accepted-next-slice) and [56-case experiment](Libraries.Pause-Experiment.md) establish LIB-016 through LIB-018 for one next Tier 2 mainline slice. Issue #1075 implements these surfaces; [production validation](Libraries.Pause-Validation.md) maps the acceptance tests separately from experiment evidence. Keep the delivered typed operation families, `Common.ItemKind`, frozen saved objects and rejected-input retention unchanged.
+The [accepted design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#pause-and-resume-accepted-next-slice) and [56-case experiment](Libraries.Pause-Experiment.md) establish LIB-016 through LIB-018 for one next Tier 2 mainline slice. Issue #1075 implements these surfaces; [production validation](Libraries.Pause-Validation.md) maps the acceptance tests separately from experiment evidence. Keep the delivered typed operation families, `Common.ItemKind`, frozen saved objects and rejected-input retention unchanged.
 
 | Surface | Required disposition and evidence |
 | --- | --- |
