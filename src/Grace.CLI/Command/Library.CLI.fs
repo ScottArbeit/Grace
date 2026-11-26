@@ -254,38 +254,41 @@ module LibraryCommand =
 
     /// Renders `grace library sync` status for people: the participation line, then the latest failure and what to do about it.
     let internal synchronizationStatusText (status: LibrarySynchronization.LibrarySynchronizationStatus) =
-        let text = System.Text.StringBuilder()
+        let text = stringBuilderPool.Get()
 
-        text.AppendLine(
-            $"Library synchronization: Enabled={status.Enabled}, Paused={status.Paused}, State={status.State}, Pending={status.PendingOperationCount}."
-        )
-        |> ignore
-
-        match status.LastError with
-        | Some error ->
-            let at =
-                status.LastErrorAt
-                |> Option.map (fun value -> $" at {value}")
-                |> Option.defaultValue ""
-
-            text.AppendLine($"Last error{at}: {error}")
+        try
+            text.AppendLine(
+                $"Library synchronization: Enabled={status.Enabled}, Paused={status.Paused}, State={status.State}, Pending={status.PendingOperationCount}."
+            )
             |> ignore
 
-            status.LastErrorPath
-            |> Option.iter (fun path ->
-                text.AppendLine($"Affected path: {path}")
+            match status.LastError with
+            | Some error ->
+                let at =
+                    status.LastErrorAt
+                    |> Option.map (fun value -> $" at {value}")
+                    |> Option.defaultValue ""
+
+                text.AppendLine($"Last error{at}: {error}")
+                |> ignore
+
+                status.LastErrorPath
+                |> Option.iter (fun path ->
+                    text.AppendLine($"Affected path: {path}")
+                    |> ignore)
+
+                status.NextStep
+                |> Option.iter (fun step -> text.AppendLine($"Next step: {step}") |> ignore)
+            | None -> ()
+
+            status.LastSuccessfulSyncAt
+            |> Option.iter (fun value ->
+                text.AppendLine($"Last successful sync: {value}")
                 |> ignore)
 
-            status.NextStep
-            |> Option.iter (fun step -> text.AppendLine($"Next step: {step}") |> ignore)
-        | None -> ()
-
-        status.LastSuccessfulSyncAt
-        |> Option.iter (fun value ->
-            text.AppendLine($"Last successful sync: {value}")
-            |> ignore)
-
-        text.ToString()
+            text.ToString()
+        finally
+            stringBuilderPool.Return(text)
 
     /// Exposes stable command fields while separating server rejection codes from local diagnostics.
     [<CLIMutable>]
