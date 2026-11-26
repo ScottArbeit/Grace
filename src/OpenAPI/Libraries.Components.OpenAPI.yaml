@@ -40,7 +40,7 @@
       enum: [accepted, rejected, conflictCopy, stalePolicy]
     LibraryRejectionReason:
       type: string
-      enum: [namespaceChanged, contentChanged, slotOccupied, itemMissing, itemTombstoned, directoryNotEmpty, kindMismatch, preparedContentExpired, operationIdentityMismatch]
+      enum: [namespaceChanged, contentChanged, slotOccupied, itemMissing, itemTombstoned, directoryNotEmpty, kindMismatch, preparedContentExpired, operationIdentityMismatch, pathTooLong]
     LibraryCatalogRejectionReason:
       type: string
       enum: [slotOccupied, outgoingSystemNotEmpty, libraryOverlap, libraryLimitExceeded, unsupportedPath]

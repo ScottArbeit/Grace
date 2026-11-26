@@ -64,6 +64,69 @@ type LibraryReplayTestStorage() =
         member _.ClearStateAsync<'T>(_, _, _: IGrainState<'T>) =
             Task.FromException(InvalidOperationException("The authorization replay harness must not clear Library records."))
 
+/// Stores Library records in memory with ETags, so admission runs through the real actor without Cosmos. Any path that
+/// needs a Cosmos query or an upload session fails here, which is how these tests prove a path doesn't take one.
+type LibraryMemoryTestStorage() =
+    let records = Dictionary<string, obj * string>(StringComparer.Ordinal)
+    let mutable writeCount = 0
+    let mutable nextETag = 0
+
+    let storageKey (grainType: string) (grainId: GrainId) = $"{grainType}|{grainId}"
+
+    /// Counts every write and clear the actor made.
+    member _.WriteCount = writeCount
+
+    /// Seeds one record as if an earlier turn had written it.
+    member _.Store<'T>(grainType, recordKey, value: 'T) =
+        nextETag <- nextETag + 1
+        records[storageKey grainType (GrainId.Create(grainType, recordKey))] <- (box value, $"etag-{nextETag}")
+
+    /// Reads one record back for assertions.
+    member _.TryGet<'T>(grainType, recordKey) =
+        match records.TryGetValue(storageKey grainType (GrainId.Create(grainType, recordKey))) with
+        | true, (value, _) -> Some(unbox<'T> value)
+        | _ -> None
+
+    interface IGrainStorage with
+        member _.ReadStateAsync<'T>(grainType, grainId, state: IGrainState<'T>) =
+            match records.TryGetValue(storageKey grainType grainId) with
+            | true, (value, etag) ->
+                state.State <- unbox<'T> value
+                state.ETag <- etag
+                state.RecordExists <- true
+            | _ ->
+                state.ETag <- null
+                state.RecordExists <- false
+
+            Task.CompletedTask
+
+        member _.WriteStateAsync<'T>(grainType, grainId, state: IGrainState<'T>) =
+            let key = storageKey grainType grainId
+
+            let stored =
+                match records.TryGetValue key with
+                | true, (_, etag) -> etag
+                | _ -> null
+
+            if stored <> state.ETag then
+                Task.FromException(InvalidOperationException($"ETag mismatch for {key}."))
+            else
+                writeCount <- writeCount + 1
+                nextETag <- nextETag + 1
+                let etag = $"etag-{nextETag}"
+                records[key] <- (box state.State, etag)
+                state.ETag <- etag
+                state.RecordExists <- true
+                Task.CompletedTask
+
+        member _.ClearStateAsync<'T>(grainType, grainId, _: IGrainState<'T>) =
+            writeCount <- writeCount + 1
+
+            records.Remove(storageKey grainType grainId)
+            |> ignore
+
+            Task.CompletedTask
+
 /// Verifies deterministic Library decisions, tokens, and stored-result replay.
 [<Parallelizable(ParallelScope.All)>]
 type LibraryActorTests() =
@@ -179,6 +242,127 @@ type LibraryActorTests() =
         actor :> Grace.Actors.Interfaces.IRepositoryLibraryActor, storage, provider, (fun () -> authorizationCalls), catalog
 
     let authorization = { OwnerId = Guid.Empty; OrganizationId = Guid.Empty; Principals = Array.empty; EffectiveClaims = Array.empty }
+
+    /// The token key the memory-backed actor signs cursors with.
+    let tokenKey = Array.create 32 7uy
+
+    /// A Library root of 883 UTF-8 bytes, so a short name fits under the 1,024-byte limit and a long one doesn't.
+    let longRoot =
+        [ 'a'; 'b'; 'c'; 'd' ]
+        |> List.map (fun letter -> String.replicate 220 (string letter))
+        |> String.concat "/"
+
+    /// The parent edge for items directly under longRoot.
+    let longRootParent = { Kind = "root"; LibraryPath = Some longRoot; ItemId = None }
+
+    /// A catalog whose only Library is longRoot.
+    let longRootCatalog =
+        {
+            RepositoryId = repositoryId
+            Version = catalogVersion
+            Libraries = [| longRoot |]
+            CreatedAt = timestamp
+            CreatedBy = "user:test"
+            PreviousVersion = None
+        }
+
+    /// Builds control for a catalog at a committed cursor, with no saved decision.
+    let controlWith catalog committed items slots =
+        { SchemaVersion = 1; Catalog = catalog; CommittedCursor = committed; Pending = None; ItemRecordCount = items; SlotRecordCount = slots }
+
+    /// Builds a real RepositoryLibraryActor over writable in-memory storage seeded with control and any other records.
+    let memoryActor (control: LibraryControlDocument) (seed: LibraryMemoryTestStorage -> unit) =
+        let storage = LibraryMemoryTestStorage()
+        storage.Store("Grace.Library.Control.v2", repositoryId.ToString("D"), control)
+        seed storage
+        let services = ServiceCollection()
+
+        for storageName in
+            [|
+                LibraryRecords.ControlStorageName
+                LibraryRecords.ChangesStorageName
+                LibraryRecords.CurrentStorageName
+                LibraryRecords.ReceiptsStorageName
+                LibraryRecords.BaselinesStorageName
+            |] do
+            services.AddKeyedSingleton<IGrainStorage>(storageName, storage)
+            |> ignore
+
+        let provider = services.BuildServiceProvider()
+
+        let authorize =
+            Func<RepositoryId, LibraryWriteAuthorization, CancellationToken, Task<PermissionCheckResult>>(fun _ _ _ -> Task.FromResult(Allowed "test"))
+
+        let actor = RepositoryLibraryActor(provider, null, authorize, tokenKey)
+        let context = DispatchProxy.Create<IGrainContext, LibraryTestGrainContextProxy>()
+
+        (context :?> LibraryTestGrainContextProxy).GrainId <- GrainId.Create(
+            GrainType.Create("Grace.RepositoryLibraryActor"),
+            GrainIdKeyExtensions.CreateGuidKey(repositoryId)
+        )
+
+        typeof<Grain>
+            .GetProperty(
+                "GrainContext",
+                BindingFlags.Instance
+                ||| BindingFlags.Public
+                ||| BindingFlags.NonPublic
+            )
+            .SetValue(actor, context)
+
+        actor :> Grace.Actors.Interfaces.IRepositoryLibraryActor, storage, provider
+
+    /// Seeds one live current item.
+    let seedItem (storage: LibraryMemoryTestStorage) (item: LibraryItemDto) =
+        storage.Store(
+            "Grace.Library.Item.v2",
+            LibraryRecords.key [ repositoryId.ToString("D")
+                                 "item"
+                                 item.ItemId.ToString("D") ],
+            { SchemaVersion = 1; Item = item; LastCursor = 1L }
+        )
+
+    /// Seeds one current slot record.
+    let seedSlot (storage: LibraryMemoryTestStorage) (slot: LibraryNamespaceSlotDto) =
+        storage.Store(
+            "Grace.Library.Slot.v2",
+            LibraryRecords.key [ repositoryId.ToString("D")
+                                 "slot"
+                                 LibraryDecision.slotKey slot.Parent slot.Name ],
+            { SchemaVersion = 1; Slot = slot; LastCursor = 1L }
+        )
+
+    /// Builds a live item directly under a parent.
+    let liveItem itemId kind parent name namespaceVersion =
+        {
+            ItemId = itemId
+            ItemKind = kind
+            LastChangeCursor = "cursor-1"
+            Namespace = Some { Parent = parent; Name = name; NamespaceVersion = namespaceVersion }
+            Content = None
+            ContentRevision = None
+            Tombstone = None
+        }
+
+    /// Builds a create-directory command that expects the slot's first vacancy.
+    let createDirectory operation (name: string) =
+        LibraryChangeCommand.CreateDirectory(
+            operation,
+            $"create-{name.Length}-{operation:N}",
+            catalogVersion,
+            {
+                Parent = longRootParent
+                Name = name
+                ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId longRootParent name
+                ExpectedState = "vacant"
+            }
+        )
+
+    /// Returns a successful receipt or fails the test with the actor's error.
+    let receiptOf (result: Result<LibraryOperationReceiptDto, string>) =
+        match result with
+        | Ok receipt -> receipt
+        | Error reason -> failwith $"Submit failed: {reason}"
 
     /// Verifies current denial prevents both permanent catalog and item receipt disclosure inside the actor turn.
     [<Test>]
@@ -419,9 +603,215 @@ type LibraryActorTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(LibraryDecision.movedDescendantPathsAreValid catalog "Media" movingId "moved" validDocuments, Is.True)
-                Assert.That(LibraryDecision.movedDescendantPathsAreValid catalog "Media" movingId "moved" oversizedDocuments, Is.False))
+                Assert.That(LibraryDecision.subtreeRejection catalog "Media" movingId "moved" validDocuments, Is.EqualTo(None))
+
+                Assert.That(LibraryDecision.subtreeRejection catalog "Media" movingId "moved" oversizedDocuments, Is.EqualTo(Some RejectionReason.PathTooLong))
+
+                Assert.That(LibraryDecision.subtreeRejection catalog "Elsewhere" movingId "moved" validDocuments, Is.EqualTo(Some OutcomeKind.StalePolicy)))
         )
+
+    /// A wake that throws, even before its first await, goes to the failure handler and never to the caller.
+    [<Test>]
+    member _.WakeFailureIsReportedAndNeverThrown() =
+        let failures = ResizeArray<exn>()
+
+        LibraryWake.start (fun () -> Task.FromException(InvalidOperationException "broker down")) failures.Add
+        LibraryWake.start (fun () -> raise (InvalidOperationException "thrown before await")) failures.Add
+        LibraryWake.start (fun () -> raise (InvalidOperationException "and the logger fails too")) (fun _ -> failwith "logger down")
+
+        Assert.That(failures |> Seq.map (fun ex -> ex.Message), Is.EquivalentTo([ "broker down"; "thrown before await" ]))
+
+    /// A wake that never finishes doesn't hold up the caller.
+    [<Test>]
+    member _.WakeThatNeverFinishesDoesNotBlock() =
+        let never = TaskCompletionSource()
+        let started = Diagnostics.Stopwatch.StartNew()
+        LibraryWake.start (fun () -> never.Task) (fun _ -> Assert.Fail("A pending wake isn't a failure."))
+        Assert.That(started.Elapsed, Is.LessThan(TimeSpan.FromSeconds 1.0))
+
+    /// Status reports a saved decision as it is stored and never repairs it.
+    [<Test>]
+    member _.StatusReadsSavedDecisionWithoutRepairingIt() =
+        task {
+            let control = { controlWith longRootCatalog 0L 0 0 with Pending = Some(LibraryPendingDecision.ItemChange(acceptedRecord 1L)) }
+            let actor, storage, provider = memoryActor control ignore
+            use _provider = provider
+
+            let! status = actor.GetStatus "corr-status"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(status.State, Is.EqualTo("repairing"))
+                    Assert.That(status.PendingOperationCount, Is.EqualTo(1))
+                    Assert.That(storage.WriteCount, Is.Zero, "Reading status must not write anything."))
+            )
+        }
+
+    /// A cursor ahead of the committed cursor, or one this repository didn't issue, is an error rather than "current".
+    [<Test>]
+    member _.ChangesRefuseCursorsTheServerDidNotIssueOrHasNotReached() =
+        task {
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 3L 0 0) ignore
+            use _provider = provider
+
+            let! ahead = actor.GetChanges (LibraryTokens.cursor tokenKey repositoryId 5L) 100 "corr-ahead"
+            let! foreign = actor.GetChanges (LibraryTokens.cursor tokenKey (Guid.NewGuid()) 1L) 100 "corr-foreign"
+            let! unreadable = actor.GetChanges "not-a-cursor" 100 "corr-unreadable"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(ahead, Is.EqualTo(Error LibraryCursorError.AheadOfServer: Result<LibraryChangePageDto, string>))
+                    Assert.That(foreign, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>))
+                    Assert.That(unreadable, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>)))
+            )
+        }
+
+    /// Adding a Library is decided without loading any items; only removal needs to look at what's under a root.
+    [<Test>]
+    member _.AddingLibraryLoadsNoItems() =
+        task {
+            let catalog = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
+            let actor, storage, provider = memoryActor (controlWith catalog 0L 0 0) ignore
+            use _provider = provider
+
+            let! result = actor.ChangeCatalog true catalog.Version "Shared" operationId "add-shared" "user:test" authorization true "corr-add"
+
+            match result with
+            | Ok added ->
+                Assert.That(added.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                Assert.That(added.LibraryCatalog.Libraries, Is.EqualTo([| "Shared" |]))
+
+                let stored = storage.TryGet<LibraryControlDocument>("Grace.Library.Control.v2", repositoryId.ToString("D"))
+
+                Assert.That(
+                    stored
+                    |> Option.map (fun control -> control.Catalog),
+                    Is.EqualTo(Some added.LibraryCatalog)
+                )
+            | Error reason -> Assert.Fail($"Adding a Library failed: {reason}")
+        }
+
+    /// A created directory whose full path would pass 1,024 bytes is rejected; a shorter one is accepted.
+    [<Test>]
+    member _.CreateRejectsResultingPathOverLimit() =
+        task {
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 0L 0 0) ignore
+            use _provider = provider
+
+            let! tooLong = actor.Submit (createDirectory (Guid.NewGuid()) (String.replicate 150 "n")) "user:test" authorization "corr-long"
+            let! fits = actor.Submit (createDirectory (Guid.NewGuid()) (String.replicate 100 "n")) "user:test" authorization "corr-fits"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((receiptOf tooLong).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
+                    Assert.That((receiptOf fits).Outcome, Is.EqualTo(OutcomeKind.Accepted)))
+            )
+        }
+
+    /// Renaming a file to a name that makes its full path pass 1,024 bytes is rejected.
+    [<Test>]
+    member _.RenameRejectsResultingPathOverLimit() =
+        task {
+            let fileId = Guid.NewGuid()
+            let namespaceVersion = Guid.NewGuid()
+            let file = liveItem fileId ItemKind.File longRootParent "short.txt" namespaceVersion
+
+            let seed storage =
+                seedItem storage file
+                seedSlot storage { Parent = longRootParent; Name = "short.txt"; SlotVersion = Guid.NewGuid(); OccupantItemId = Some fileId }
+
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 1L 1 1) seed
+            use _provider = provider
+
+            let rename =
+                LibraryChangeCommand.Rename(
+                    Guid.NewGuid(),
+                    "rename-long",
+                    catalogVersion,
+                    fileId,
+                    { ItemId = fileId; ExpectedNamespaceVersion = namespaceVersion },
+                    String.replicate 150 "r"
+                )
+
+            let! receipt = actor.Submit rename "user:test" authorization "corr-rename"
+            Assert.That((receiptOf receipt).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
+        }
+
+    /// Moving a file into a directory whose path leaves no room for its name is rejected.
+    [<Test>]
+    member _.MoveRejectsResultingPathOverLimit() =
+        task {
+            let directoryId = Guid.NewGuid()
+            let fileId = Guid.NewGuid()
+            let fileNamespace = Guid.NewGuid()
+            let directory = liveItem directoryId ItemKind.Directory longRootParent (String.replicate 120 "d") (Guid.NewGuid())
+            let file = liveItem fileId ItemKind.File longRootParent (String.replicate 30 "f") fileNamespace
+
+            let seed storage =
+                seedItem storage directory
+                seedItem storage file
+
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 2L 2 2) seed
+            use _provider = provider
+
+            let move =
+                LibraryChangeCommand.Move(
+                    Guid.NewGuid(),
+                    "move-long",
+                    catalogVersion,
+                    fileId,
+                    { ItemId = fileId; ExpectedNamespaceVersion = fileNamespace },
+                    { Kind = "item"; LibraryPath = None; ItemId = Some directoryId }
+                )
+
+            let! receipt = actor.Submit move "user:test" authorization "corr-move"
+            Assert.That((receiptOf receipt).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
+        }
+
+    /// One capacity rule: a change is refused only when it would add an item record or a slot record past the limit.
+    [<Test>]
+    member _.RecordCapacityCountsOnlyRecordsAChangeAdds() =
+        let full = LibraryDecision.MaximumRecordCount
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(LibraryDecision.exceedsRecordCapacity full 0 true false, Is.True)
+                Assert.That(LibraryDecision.exceedsRecordCapacity 0 full false true, Is.True)
+                Assert.That(LibraryDecision.exceedsRecordCapacity 0 full true false, Is.False)
+                Assert.That(LibraryDecision.exceedsRecordCapacity full full false false, Is.False)
+                Assert.That(LibraryDecision.exceedsRecordCapacity (full - 1) (full - 1) true true, Is.False))
+        )
+
+    /// At slot capacity, a create that needs a new slot record is refused, and one that reuses a vacated slot is not.
+    [<Test>]
+    member _.CreateAtSlotCapacityFollowsSharedRule() =
+        task {
+            let reusedName = "reused"
+            let reusedVersion = Guid.NewGuid()
+
+            let seed storage = seedSlot storage { Parent = longRootParent; Name = reusedName; SlotVersion = reusedVersion; OccupantItemId = None }
+
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 0L 0 LibraryDecision.MaximumRecordCount) seed
+            use _provider = provider
+
+            let! newSlot = actor.Submit (createDirectory (Guid.NewGuid()) "fresh") "user:test" authorization "corr-fresh"
+
+            let reuse =
+                LibraryChangeCommand.CreateDirectory(
+                    Guid.NewGuid(),
+                    "create-reused",
+                    catalogVersion,
+                    { Parent = longRootParent; Name = reusedName; ExpectedSlotVersion = reusedVersion; ExpectedState = "vacant" }
+                )
+
+            let! reused = actor.Submit reuse "user:test" authorization "corr-reused"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(Result.isError newSlot, Is.True, "A new slot record past the limit must be refused.")
+                    Assert.That((receiptOf reused).Outcome, Is.EqualTo(OutcomeKind.Accepted)))
+            )
+        }
 
     /// A temporarily visible later segment cannot move a change page beyond a missing committed cursor.
     [<Test>]

@@ -28,7 +28,9 @@
     <Compile Include="ArtifactSizeObservation.Server.Tests.fs" />
     <Compile Include="TextContentSizeDiagnosis.Server.Tests.fs" />
     <Compile Include="ArtifactSizeDiagnosis.Server.Tests.fs" />
+    <Compile Include="LibraryHttp.Server.Tests.fs" />
     <Compile Include="LibrarySizeDiagnosis.Server.Tests.fs" />
+    <Compile Include="LibraryAdmission.Server.Tests.fs" />
     <Compile Include="OperationsTracerBullet.Server.Tests.fs" />
     <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="Slop.Server.Tests.fs" />

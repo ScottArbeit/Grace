@@ -98,6 +98,10 @@ module Library =
         [<Literal>]
         let OperationIdentityMismatch = "operationIdentityMismatch"
 
+        /// The change would leave an item's full repository-relative path over the 1,024-byte limit.
+        [<Literal>]
+        let PathTooLong = "pathTooLong"
+
     /// Explains why the server can't answer a change request for a cursor.
     [<RequireQualifiedAccess>]
     module LibraryCursorError =

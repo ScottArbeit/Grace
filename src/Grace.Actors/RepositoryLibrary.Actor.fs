@@ -233,17 +233,6 @@ type RepositoryLibraryActor
 
         loop Set.empty parent
 
-    /// Resolves one item path from its current parent/name edge.
-    let resolveItemPath repositoryId catalog (item: LibraryItemDto) =
-        task {
-            let ns =
-                item.Namespace
-                |> Option.defaultWith (fun () -> invalidOp "A live Library item has no namespace edge.")
-
-            let! parentPath = resolveParentPath repositoryId catalog ns.Parent
-            return parentPath + "/" + ns.Name
-        }
-
     /// Returns the current or initial vacant slot observed by callers.
     let getSlot repositoryId parent name =
         task {
@@ -553,6 +542,14 @@ type RepositoryLibraryActor
             return! resolveOutcome repositoryId receipt.OperationId receipt.RequestHash receipt.Outcome
         }
 
+    /// Applies one catalog add or remove through the shared rules in Library.Validation. Deciding a change and finishing
+    /// a saved one both use it, so they can't disagree about the resulting catalog.
+    let catalogAfter add expectedVersion chosenVersion path acceptedAt principalId catalog =
+        if add then
+            LibraryValidation.addLibrary expectedVersion chosenVersion path acceptedAt principalId catalog
+        else
+            LibraryValidation.removeLibrary expectedVersion chosenVersion path acceptedAt principalId catalog
+
     /// Completes a saved catalog decision and records its exact public result.
     let completeCatalogPending
         repositoryId
@@ -568,26 +565,9 @@ type RepositoryLibraryActor
         principalId
         =
         task {
-            if control.Catalog.Version <> expectedVersion then
-                return invalidOp "The saved Library catalog decision no longer matches control."
-            else
-                let libraries =
-                    if add then
-                        Array.append control.Catalog.Libraries [| path |]
-                    else
-                        control.Catalog.Libraries
-                        |> Array.filter (fun current -> not (LibraryValidation.pathsEqual current path))
-
-                let catalog =
-                    {
-                        RepositoryId = repositoryId
-                        Version = chosenVersion
-                        Libraries = libraries
-                        CreatedAt = acceptedAt
-                        CreatedBy = principalId
-                        PreviousVersion = Some expectedVersion
-                    }
-
+            match catalogAfter add expectedVersion chosenVersion path acceptedAt principalId control.Catalog with
+            | Error _ -> return invalidOp "The saved Library catalog decision no longer matches control."
+            | Ok catalog ->
                 let result = { OperationId = operationId; Outcome = OutcomeKind.Accepted; LibraryCatalog = catalog; ReasonCode = None; RecordedAt = acceptedAt }
 
                 let receipt =
@@ -989,45 +969,36 @@ type RepositoryLibraryActor
                                         return Ok result
                                     }
 
+                                let chosenVersion = LibraryDecision.deterministicGuid repositoryId operationId "catalog"
+                                let acceptedAt = SystemClock.Instance.GetCurrentInstant()
+
+                                let ruleRejection =
+                                    match catalogAfter add expectedVersion chosenVersion normalized acceptedAt principalId control.Catalog with
+                                    | Error reason -> Some reason
+                                    | Ok _ -> None
+
                                 if control.Catalog.Version <> expectedVersion then
                                     return! rejectCatalog OutcomeKind.StalePolicy
                                 elif add && not outgoingSystemEmpty then
                                     return! rejectCatalog CatalogRejectionReason.OutgoingSystemNotEmpty
-                                elif add
-                                     && control.Catalog.Libraries.Length
-                                        >= LibraryValidation.MaximumRootCount then
-                                    return! rejectCatalog CatalogRejectionReason.LibraryLimitExceeded
-                                elif add
-                                     && control.Catalog.Libraries
-                                        |> Array.exists (fun current -> LibraryValidation.librariesOverlap current normalized) then
-                                    return! rejectCatalog CatalogRejectionReason.LibraryOverlap
-                                elif
-                                    not add
-                                    && not
-                                        (
-                                            control.Catalog.Libraries
-                                            |> Array.exists (LibraryValidation.pathsEqual normalized)
-                                        )
-                                then
-                                    return! rejectCatalog CatalogRejectionReason.UnsupportedPath
+                                elif ruleRejection.IsSome then
+                                    return! rejectCatalog ruleRejection.Value
                                 else
-                                    let! currentItems = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
-                                    let mutable occupied = false
-
-                                    if not add then
-                                        for document in currentItems do
-                                            if not occupied && document.Item.Tombstone.IsNone then
-                                                let! itemPath = resolveItemPath repositoryId control.Catalog document.Item
-
-                                                occupied <-
-                                                    LibraryValidation.configurationOwnsPath { control.Catalog with Libraries = [| normalized |] } itemPath
+                                    // Removing a root needs no live item under it. A live item's parent is always live, so
+                                    // the root's direct children decide it; tombstones don't count. Adding loads nothing.
+                                    let! occupied =
+                                        if add then
+                                            Task.FromResult false
+                                        else
+                                            LibraryQueries.hasLiveChildren
+                                                services
+                                                repositoryId
+                                                { Kind = "root"; LibraryPath = Some normalized; ItemId = None }
+                                                CancellationToken.None
 
                                     if occupied then
                                         return! rejectCatalog CatalogRejectionReason.SlotOccupied
                                     else
-                                        let chosenVersion = LibraryDecision.deterministicGuid repositoryId operationId "catalog"
-                                        let acceptedAt = SystemClock.Instance.GetCurrentInstant()
-
                                         let pending =
                                             LibraryPendingDecision.CatalogChange(
                                                 operationId,
@@ -1115,19 +1086,18 @@ type RepositoryLibraryActor
                                         + LibraryDecision.normalizeName expectation.Name
 
                                     let! exactVacancy = slotExpectationMatches repositoryId expectation
+                                    let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
+                                    let placement = LibraryDecision.placementRejection control.Catalog destinationPath
 
                                     if not exactVacancy then
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                         return Ok receipt
-                                    elif not (LibraryDecision.isInLibrary control.Catalog destinationPath) then
-                                        let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
+                                    elif placement.IsSome then
+                                        let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                         return Ok receipt
-                                    elif control.ItemRecordCount >= 100000
-                                         || control.SlotRecordCount >= 100000 then
+                                    elif LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true existingSlot.IsNone then
                                         return Error "The Library current-record capacity has been reached."
                                     else
-                                        let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
-
                                         match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
                                         | Error reason ->
                                             let! receipt = reject repositoryId operationId requestHash reason control.Catalog
@@ -1168,18 +1138,18 @@ type RepositoryLibraryActor
                                         + LibraryDecision.normalizeName expectation.Name
 
                                     let! exactVacancy = slotExpectationMatches repositoryId expectation
+                                    let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
+                                    let placement = LibraryDecision.placementRejection control.Catalog destinationPath
 
                                     if not exactVacancy then
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                         return Ok receipt
-                                    elif not (LibraryDecision.isInLibrary control.Catalog destinationPath) then
-                                        let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
+                                    elif placement.IsSome then
+                                        let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                         return Ok receipt
-                                    elif control.ItemRecordCount >= 100000
-                                         || control.SlotRecordCount >= 100000 then
+                                    elif LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true existingSlot.IsNone then
                                         return Error "The Library current-record capacity has been reached."
                                     else
-                                        let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
                                         let itemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
 
                                         let ns =
@@ -1241,10 +1211,12 @@ type RepositoryLibraryActor
                                             return!
                                                 acceptedRecord cursor requestHash correlationId change current.Item.Namespace false false
                                                 |> submit
-                                        | Ok _ when control.ItemRecordCount >= 100000 -> return Error "The Library current-item capacity has been reached."
                                         | Ok location ->
                                             let ns = current.Item.Namespace.Value
                                             let! conflictName, destinationSlot = chooseConflictSlot repositoryId ns.Parent ns.Name operationId
+                                            let! parentPath = resolveParentPath repositoryId control.Catalog ns.Parent
+                                            let! destinationExists = readSlot repositoryId ns.Parent conflictName
+                                            let placement = LibraryDecision.placementRejection control.Catalog (parentPath + "/" + conflictName)
                                             let conflictItemId = LibraryDecision.deterministicGuid repositoryId operationId "conflict-item"
 
                                             let conflictNamespace =
@@ -1272,10 +1244,18 @@ type RepositoryLibraryActor
                                                     Tombstone = None
                                                 }
 
-                                            let! destinationExists = readSlot repositoryId ns.Parent conflictName
-
                                             if destinationSlot.OccupantItemId.IsSome then
                                                 return Error "The selected conflict-copy slot is no longer vacant."
+                                            elif placement.IsSome then
+                                                let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
+                                                return Ok receipt
+                                            elif
+                                                LibraryDecision.exceedsRecordCapacity
+                                                    control.ItemRecordCount
+                                                    control.SlotRecordCount
+                                                    true
+                                                    destinationExists.IsNone then
+                                                return Error "The Library current-record capacity has been reached."
                                             else
                                                 let change =
                                                     acceptedChange
@@ -1309,14 +1289,25 @@ type RepositoryLibraryActor
                                         let! destinationRecord = readSlot repositoryId prior.Parent normalizedName
                                         let! parentPath = resolveParentPath repositoryId control.Catalog prior.Parent
 
+                                        // A renamed directory changes the path of every live item under it.
+                                        let! placement =
+                                            task {
+                                                if current.Item.ItemKind = ItemKind.Directory then
+                                                    let! items = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
+
+                                                    return LibraryDecision.subtreeRejection control.Catalog parentPath itemId normalizedName items
+                                                else
+                                                    return LibraryDecision.placementRejection control.Catalog (parentPath + "/" + normalizedName)
+                                            }
+
                                         if destination.OccupantItemId.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                             return Ok receipt
-                                        elif not (LibraryDecision.isInLibrary control.Catalog (parentPath + "/" + normalizedName)) then
-                                            let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
+                                        elif placement.IsSome then
+                                            let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                             return Ok receipt
-                                        elif destinationRecord.IsNone
-                                             && control.SlotRecordCount >= 100000 then
+                                        elif
+                                            LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount false destinationRecord.IsNone then
                                             return Error "The Library current-slot capacity has been reached."
                                         else
                                             let ns =
@@ -1357,14 +1348,15 @@ type RepositoryLibraryActor
                                         let! destination = getSlot repositoryId destinationParent prior.Name
                                         let! destinationRecord = readSlot repositoryId destinationParent prior.Name
 
-                                        let! descendantPathsValid =
+                                        // A moved directory changes the path of every live item under it.
+                                        let! placement =
                                             task {
                                                 if current.Item.ItemKind = ItemKind.Directory then
                                                     let! items = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
 
-                                                    return LibraryDecision.movedDescendantPathsAreValid control.Catalog parentPath itemId prior.Name items
+                                                    return LibraryDecision.subtreeRejection control.Catalog parentPath itemId prior.Name items
                                                 else
-                                                    return LibraryDecision.isInLibrary control.Catalog (parentPath + "/" + prior.Name)
+                                                    return LibraryDecision.placementRejection control.Catalog (parentPath + "/" + prior.Name)
                                             }
 
                                         if cycle then
@@ -1372,11 +1364,11 @@ type RepositoryLibraryActor
                                         elif destination.OccupantItemId.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                             return Ok receipt
-                                        elif not descendantPathsValid then
-                                            let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
+                                        elif placement.IsSome then
+                                            let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                             return Ok receipt
-                                        elif destinationRecord.IsNone
-                                             && control.SlotRecordCount >= 100000 then
+                                        elif
+                                            LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount false destinationRecord.IsNone then
                                             return Error "The Library current-slot capacity has been reached."
                                         else
                                             let ns =

@@ -26,14 +26,18 @@ module LibraryWake =
     let shouldFail (repositoryId: Guid) = faultRepositoryId.Value = Some repositoryId
 
     /// Starts one send and returns at once, without waiting for it. A failure, including one thrown before the send's
-    /// first await, goes to onFailure and never to the caller.
+    /// first await, goes to onFailure and never to the caller. If reporting the failure fails too, that is dropped.
     let start (send: unit -> Task) (onFailure: exn -> unit) =
         let sending =
             task {
                 try
                     do! send ()
                 with
-                | ex -> onFailure ex
+                | ex ->
+                    try
+                        onFailure ex
+                    with
+                    | _ -> ()
             }
 
         sending |> ignore

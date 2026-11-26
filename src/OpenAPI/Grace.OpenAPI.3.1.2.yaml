@@ -5621,6 +5621,7 @@ components:
         - kindMismatch
         - preparedContentExpired
         - operationIdentityMismatch
+        - pathTooLong
     LibraryCatalogRejectionReason:
       type: string
       enum:

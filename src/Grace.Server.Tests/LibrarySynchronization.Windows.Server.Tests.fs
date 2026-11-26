@@ -979,6 +979,15 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(health.LastSuccessAtUnixTicks.IsSome, Is.True)
         }
 
+    /// Fills the repository locator shared by every Library request. It lives outside the test's task because a generic
+    /// function inside one stops the task from compiling to a state machine.
+    let private scopedTo (repositoryId: Guid) (parameters: #Parameters.Library.LibraryParameters) =
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId.ToString("D")
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
     /// A contributor with no Library role can read the catalog, which Watch needs on every copy, and still can't
     /// call a Library content route.
     [<Test>]
@@ -1005,26 +1014,24 @@ module LibrarySynchronizationWindowsServerTests =
             contributorClient.BaseAddress <- Client.BaseAddress
             contributorClient.DefaultRequestHeaders.Add("x-grace-user-id", contributor)
 
-            /// Fills the repository locator shared by every Library request.
-            let scoped (parameters: #Parameters.Library.LibraryParameters) =
-                parameters.OwnerId <- ownerId
-                parameters.OrganizationId <- organizationId
-                parameters.RepositoryId <- repositoryId.ToString("D")
-                parameters.CorrelationId <- generateCorrelationId ()
-                parameters
-
             use! catalogResponse =
-                contributorClient.PostAsync("/libraries/catalog/get", createJsonContent (scoped (Parameters.Library.GetLibraryCatalogParameters())))
+                contributorClient.PostAsync(
+                    "/libraries/catalog/get",
+                    createJsonContent (scopedTo repositoryId (Parameters.Library.GetLibraryCatalogParameters()))
+                )
 
             let! catalog = requireReturnValueAsync<LibraryCatalogDto> catalogResponse
             Assert.That(catalog.Libraries, Is.EqualTo([| "Library" |]))
 
             use! changesResponse =
-                contributorClient.PostAsync("/libraries/changes/get", createJsonContent (scoped (Parameters.Library.GetLibraryChangesParameters())))
+                contributorClient.PostAsync(
+                    "/libraries/changes/get",
+                    createJsonContent (scopedTo repositoryId (Parameters.Library.GetLibraryChangesParameters()))
+                )
 
             Assert.That(changesResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let prepare = scoped (Parameters.Library.PrepareLibraryContentParameters())
+            let prepare = scopedTo repositoryId (Parameters.Library.PrepareLibraryContentParameters())
             prepare.OperationId <- Guid.NewGuid()
             prepare.Blake3Hash <- String('a', 64)
             prepare.Sha256Hash <- String('b', 64)
@@ -1039,7 +1046,7 @@ module LibrarySynchronizationWindowsServerTests =
             outsiderClient.DefaultRequestHeaders.Add("x-grace-user-id", $"{Guid.NewGuid()}")
 
             use! outsiderResponse =
-                outsiderClient.PostAsync("/libraries/catalog/get", createJsonContent (scoped (Parameters.Library.GetLibraryCatalogParameters())))
+                outsiderClient.PostAsync("/libraries/catalog/get", createJsonContent (scopedTo repositoryId (Parameters.Library.GetLibraryCatalogParameters())))
 
             let! outsiderBody = outsiderResponse.Content.ReadAsStringAsync()
             Assert.That(outsiderResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), outsiderBody)
