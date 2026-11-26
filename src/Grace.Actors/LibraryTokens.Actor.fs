@@ -34,7 +34,7 @@ module LibraryTokens =
 
     /// Returns a signed payload only when syntax, signature, and purpose all match.
     let tryVerify (key: byte array) purpose (token: string) =
-        match token.Split('.', StringSplitOptions.None) with
+        match (if isNull token then Array.empty else token.Split('.', StringSplitOptions.None)) with
         | [| encodedBody; encodedSignature |] ->
             match tryDecode encodedBody, tryDecode encodedSignature with
             | Some body, Some signature ->
@@ -53,22 +53,27 @@ module LibraryTokens =
             | _ -> None
         | _ -> None
 
-    /// Encodes one committed repository position for public synchronization responses.
-    let cursor key repositoryId epoch value = sign key "cursor" $"{repositoryId:D}|{epoch:D}|{value}"
+    /// Encodes one committed repository position for public synchronization responses. The journal is permanent, so a
+    /// cursor stays valid for as long as its repository exists.
+    let cursor key repositoryId value = sign key "cursor" $"{repositoryId:D}|{value}"
 
     /// Validates and parses one repository-bound public cursor.
     let tryCursor key repositoryId token =
         match tryVerify key "cursor" token with
         | Some payload ->
             match payload.Split('|', StringSplitOptions.None) with
-            | [| repository; epoch; value |] ->
-                match Guid.TryParse repository, Guid.TryParse epoch, Int64.TryParse value with
-                | (true, actualRepositoryId), (true, actualEpoch), (true, position) when actualRepositoryId = repositoryId -> Some(actualEpoch, position)
+            | [| repository; value |] ->
+                match Guid.TryParse repository, Int64.TryParse value with
+                | (true, actualRepositoryId), (true, position) when
+                    actualRepositoryId = repositoryId
+                    && position >= 0L
+                    ->
+                    Some position
                 | _ -> None
             | _ -> None
         | None -> None
 
-    /// Encodes one expiring bootstrap or change-page continuation.
+    /// Encodes one expiring bootstrap page continuation.
     let page key purpose repositoryId value offset expiresUnixSeconds = sign key ("page:" + purpose) $"{repositoryId:D}|{value}|{offset}|{expiresUnixSeconds}"
 
     /// Validates and parses one purpose-scoped page continuation.

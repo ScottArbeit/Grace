@@ -10,7 +10,7 @@ open System.Runtime.ExceptionServices
 open System.Text.Json
 open System.Threading.Tasks
 
-/// Reads and writes remote Library records through the six configured Orleans persistence purposes.
+/// Reads and writes remote Library records through the five configured Orleans persistence purposes.
 module LibraryRecords =
 
     /// Compares persisted values through the same stable JSON representation used by Grace storage.
@@ -37,9 +37,6 @@ module LibraryRecords =
     let ReceiptsStorageName = "GraceLibraryReceiptsStorage"
 
     [<Literal>]
-    let HistoryStorageName = "GraceLibraryHistoryStorage"
-
-    [<Literal>]
     let BaselinesStorageName = "GraceLibraryBaselinesStorage"
 
     [<Literal>]
@@ -55,9 +52,6 @@ module LibraryRecords =
     let ReceiptsContainerName = "grace-library-receipts"
 
     [<Literal>]
-    let HistoryContainerName = "grace-library-history"
-
-    [<Literal>]
     let BaselinesContainerName = "grace-library-baselines"
 
     /// Builds the provider key whose leading components form the configured hierarchical partition key.
@@ -68,6 +62,21 @@ module LibraryRecords =
             invalidArg (nameof components) "Library record keys require non-empty components."
 
         String.Join('|', components)
+
+    /// The grain type and key of one repository's control record.
+    let controlType = "Grace.Library.Control.v2"
+
+    /// The grain type of accepted journal records.
+    let changeType = "Grace.Library.Change.v2"
+
+    /// The key of the control record for one repository.
+    let controlKey (repositoryId: Guid) = key [ repositoryId.ToString("D") ]
+
+    /// The key of one accepted journal record: its cursor, in a partition of 200 consecutive cursors.
+    let changeKey (repositoryId: Guid) (cursor: int64) =
+        key [ repositoryId.ToString("D")
+              ((cursor - 1L) / 200L).ToString("D20")
+              cursor.ToString("D20") ]
 
     /// Reads one record into a fresh Orleans state wrapper so retries cannot reuse a stale ETag.
     let read<'T> (services: IServiceProvider) storageName grainType recordKey =

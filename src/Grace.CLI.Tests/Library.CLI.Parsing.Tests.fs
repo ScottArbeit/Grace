@@ -265,11 +265,9 @@ module LibraryCliParsingTests =
                   "ContinueBootstrap"
                   "GetChanges"
                   "SubmitChange"
-                  "GetOperation"
                   "PrepareContent"
                   "PrepareContentRead"
                   "DownloadContent"
-                  "GetItem"
                   "GetNamespaceSlot"
                   "GetStatus" ]
 

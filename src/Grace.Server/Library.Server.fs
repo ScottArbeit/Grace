@@ -28,13 +28,12 @@ open System.Threading.Tasks
 /// Implements the authenticated HTTP boundary for repository-owned remote Libraries.
 module Library =
 
-    /// Binds one complete committed Library declaration scan to its repository, selected epoch and non-interval read window.
+    /// Binds one complete committed Library declaration scan to its repository, committed cursor and non-interval read window.
     type LibraryContentSizeDiagnostic =
         {
             Scope: UsageFactScope
             DeclaredLogicalBytes: int64
             DistinctManifestCount: int64
-            Epoch: Guid
             CommittedCursor: int64
             EnumerationStartedAt: Instant
             EnumerationFinishedAt: Instant
@@ -49,11 +48,11 @@ module Library =
                 return! json (GraceReturnValue.Create result (Services.getCorrelationId context)) next context
             })
 
-    /// Discards a completed scan when access, live scope, epoch or the accepted prefix regresses before publication.
+    /// Discards a completed scan when access, live scope or the accepted prefix regresses before publication.
     let internal diagnoseContentSizeWith
         (checkScope: CancellationToken -> Task<unit>)
         (collect: CancellationToken -> Task<LibraryContentSizeDiagnostic>)
-        (readBoundary: CancellationToken -> Task<Guid * int64>)
+        (readBoundary: CancellationToken -> Task<int64>)
         (token: CancellationToken)
         =
         task {
@@ -61,11 +60,10 @@ module Library =
             do! checkScope token
             let! result = collect token
             do! checkScope token
-            let! epoch, cursor = readBoundary token
+            let! cursor = readBoundary token
 
-            if epoch <> result.Epoch
-               || cursor < result.CommittedCursor then
-                raise (InvalidDataException "The selected Library epoch or committed prefix changed.")
+            if cursor < result.CommittedCursor then
+                raise (InvalidDataException "The committed Library prefix regressed.")
 
             token.ThrowIfCancellationRequested()
             return { result with EnumerationFinishedAt = SystemClock.Instance.GetCurrentInstant() }
@@ -73,7 +71,7 @@ module Library =
 
     /// Serves the internal SystemAdmin declaration diagnostic without activating Library repair or accepting partial quantities.
     /// `POST /admin/library-content-size/diagnose` requires permission before parsing and again before serialization,
-    /// explicit three-ID scope, a live nondeleted repository before/after collection, and an unchanged epoch with no
+    /// explicit three-ID scope, a live nondeleted repository before/after collection, and no
     /// committed-position regression. The server-local result is the only response shape. Preserve exact Int64 JSON and
     /// nanosecond times; no source failure or cancellation may publish a partial quantity. The operator saves the full
     /// envelope byte-for-byte. It has no SQL observation, public SDK/CLI, broker, mutation or provisioning dependency.
@@ -107,7 +105,7 @@ module Library =
                                     })
                                 (fun token ->
                                     task {
-                                        let! total, count, epoch, cursor, started =
+                                        let! total, count, cursor, started =
                                             Grace.Actors.LibraryQueries.readDiagnosticContent context.RequestServices scope.RepositoryId token
 
                                         return
@@ -115,7 +113,6 @@ module Library =
                                                 Scope = scope
                                                 DeclaredLogicalBytes = total
                                                 DistinctManifestCount = count
-                                                Epoch = epoch
                                                 CommittedCursor = cursor
                                                 EnumerationStartedAt = started
                                                 EnumerationFinishedAt = started
@@ -124,7 +121,7 @@ module Library =
                                 (fun token ->
                                     task {
                                         let! control = Grace.Actors.LibraryQueries.readDiagnosticControl context.RequestServices scope.RepositoryId token
-                                        return control.Epoch, control.CommittedCursor
+                                        return control.CommittedCursor
                                     })
                                 context.RequestAborted
 
@@ -426,30 +423,6 @@ module Library =
                     | Error reason -> return! error StatusCodes.Status403Forbidden context reason
             }
 
-    /// Reads one permanent item-operation result.
-    let GetOperation: HttpHandler =
-        fun _ context ->
-            task {
-                let ids = Services.getGraceIds context
-                let! parameters = context.BindJsonAsync<GetLibraryOperationParameters>()
-
-                match! (libraryActor ids.RepositoryId).GetOperation parameters.OperationId (Services.getCorrelationId context) with
-                | Some receipt -> return! ok context receipt
-                | None -> return! Services.result404NotFound context
-            }
-
-    /// Reads one current Library item projection.
-    let GetItem: HttpHandler =
-        fun _ context ->
-            task {
-                let ids = Services.getGraceIds context
-                let! parameters = context.BindJsonAsync<GetLibraryItemParameters>()
-
-                match! (libraryActor ids.RepositoryId).GetItem parameters.ItemId (Services.getCorrelationId context) with
-                | Some item -> return! ok context item
-                | None -> return! Services.result404NotFound context
-            }
-
     /// Reads one exact parent/name slot, including a deterministic first-generation vacancy.
     let GetNamespaceSlot: HttpHandler =
         fun _ context ->
@@ -468,16 +441,13 @@ module Library =
                 | _ -> return! error StatusCodes.Status400BadRequest context "A parent and portable name are required."
             }
 
-    /// Returns content-free repository synchronization progress.
+    /// Returns the stored, content-free repository Library status. It reads storage directly instead of calling the
+    /// actor, because activating the actor would repair a saved decision.
     let GetStatus: HttpHandler =
         fun _ context ->
             task {
                 let ids = Services.getGraceIds context
-
-                let! status =
-                    (libraryActor ids.RepositoryId)
-                        .GetStatus(Services.getCorrelationId context)
-
+                let! status = Grace.Actors.LibraryQueries.readStatus context.RequestServices ids.RepositoryId
                 return! ok context status
             }
 
@@ -516,7 +486,7 @@ module Library =
                     | None -> return! error StatusCodes.Status410Gone context "The bootstrap page token is invalid or expired."
             }
 
-    /// Reads committed ordered changes or a typed rebaseline response.
+    /// Reads committed changes after the caller's cursor, in journal order.
     let GetChanges: HttpHandler =
         fun _ context ->
             task {
@@ -526,14 +496,9 @@ module Library =
                 if not (pageSizeIsValid parameters.PageSize) then
                     return! error StatusCodes.Status400BadRequest context "PageSize must be between 1 and 2000."
                 else
-                    let! page =
-                        (libraryActor ids.RepositoryId).GetChanges
-                            parameters.AfterCursor
-                            (Option.ofObj parameters.PageToken)
-                            parameters.PageSize
-                            (Services.getCorrelationId context)
-
-                    return! ok context page
+                    match! (libraryActor ids.RepositoryId).GetChanges parameters.AfterCursor parameters.PageSize (Services.getCorrelationId context) with
+                    | Ok page -> return! ok context page
+                    | Error message -> return! error StatusCodes.Status400BadRequest context message
             }
 
     /// Mints a short-lived signed read for bytes proven by one accepted content revision.

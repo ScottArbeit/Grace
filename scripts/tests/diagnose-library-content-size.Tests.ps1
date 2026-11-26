@@ -13,7 +13,7 @@ $oldUri = $env:GRACE_SERVER_URI
 $oldToken = $env:GRACE_TOKEN
 $env:GRACE_SERVER_URI = 'https://diagnostic.invalid'
 $env:GRACE_TOKEN = 'test-only'
-$report = @{ ReturnValue=@{ Scope=$scope; Epoch=[guid]::NewGuid().ToString(); CommittedCursor=0L; DeclaredLogicalBytes=0L; DistinctManifestCount=0L;
+$report = @{ ReturnValue=@{ Scope=$scope; CommittedCursor=0L; DeclaredLogicalBytes=0L; DistinctManifestCount=0L;
     EnumerationStartedAt='2026-09-07T00:00:00.123456789Z'; EnumerationFinishedAt='2026-09-07T00:00:00.123456790Z' };
     CorrelationId='test'; EventTime='2026-09-07T00:00:00.123456790Z'; Properties=@{} }
 $script:response = @{ StatusCode=200; Content=($report | ConvertTo-Json -Depth 8) }
@@ -73,7 +73,7 @@ try {
     $script:response.StatusCode = 503
     Assert-PreservedFailure 'HTTP failure'
     $script:response.StatusCode = 200
-    foreach ($case in @('scope','negative','count-negative','fraction','overflow','missing','epoch','cursor','nanoseconds','window','invalid-time','invalid-json','DirectoryVersion','TextContent')) {
+    foreach ($case in @('scope','negative','count-negative','fraction','overflow','missing','cursor','nanoseconds','window','invalid-time','invalid-json','DirectoryVersion','TextContent')) {
         $changed = $report | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable
         switch ($case) {
             scope { $changed.ReturnValue.Scope.RepositoryId = [guid]::NewGuid().ToString() }
@@ -82,7 +82,6 @@ try {
             fraction { $changed.ReturnValue.DeclaredLogicalBytes = 1.5 }
             overflow { $changed.ReturnValue.DeclaredLogicalBytes = [decimal]::Parse('9223372036854775808') }
             missing { $changed.ReturnValue.Remove('DistinctManifestCount') }
-            epoch { $changed.ReturnValue.Epoch = [guid]::Empty.ToString() }
             cursor { $changed.ReturnValue.CommittedCursor = -1 }
             nanoseconds { $changed.ReturnValue.EnumerationFinishedAt = '2026-09-07T00:00:00.123456788Z' }
             window { $changed.ReturnValue.EnumerationFinishedAt = '2026-09-06T00:00:00Z' }

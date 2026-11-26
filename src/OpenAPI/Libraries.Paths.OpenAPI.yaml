@@ -148,25 +148,6 @@
         '410': { $ref: './Responses.OpenAPI.yaml#/410' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
-  /libraries/operations/get:
-    post:
-      tags:
-        - Libraries
-      summary: Get the stable receipt for one authorized Library operation identity.
-      operationId: GetLibraryOperation
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryOperationParameters' }
-      responses:
-        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryOperationReceiptResponse' }
-        '400':
-          $ref: './Responses.OpenAPI.yaml#/400'
-        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
-        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
-        '500':
-          $ref: './Responses.OpenAPI.yaml#/500'
   /libraries/content/prepare:
     post:
       tags:
@@ -233,25 +214,6 @@
         '403': { $ref: './Responses.OpenAPI.yaml#/403' }
         '404': { $ref: './Responses.OpenAPI.yaml#/404' }
         '410': { $ref: './Responses.OpenAPI.yaml#/410' }
-        '500':
-          $ref: './Responses.OpenAPI.yaml#/500'
-  /libraries/items/get:
-    post:
-      tags:
-        - Libraries
-      summary: Get one current Library item.
-      operationId: GetLibraryItem
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryItemParameters' }
-      responses:
-        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryItemResponse' }
-        '400':
-          $ref: './Responses.OpenAPI.yaml#/400'
-        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
-        '404': { $ref: './Responses.OpenAPI.yaml#/404' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
   /libraries/namespace/get-slot:

@@ -119,7 +119,7 @@ module internal LibraryOperation =
     type AcceptedReceipt = { RequestHash: string; Change: LibraryChangeDto }
 
     /// Retains rejection metadata separately from accepted change and application state.
-    type RejectedReceipt = { RequestHash: string; ReasonCode: RejectionCode; CurrentCatalog: LibraryCatalogDto option; Rebaseline: LibraryRebaselineDto option }
+    type RejectedReceipt = { RequestHash: string; ReasonCode: RejectionCode; CurrentCatalog: LibraryCatalogDto option }
 
     /// Retains the upload stage and rejected saved content as valid unfinished work.
     [<RequireQualifiedAccess>]
@@ -270,7 +270,6 @@ module internal LibraryOperation =
                     Change = Some receipt.Change
                     ReasonCode = None
                     CurrentLibraryCatalog = None
-                    Rebaseline = None
                 }
         | _, Some receipt ->
             Some
@@ -281,7 +280,6 @@ module internal LibraryOperation =
                     Change = None
                     ReasonCode = Some(rejectionCodeText receipt.ReasonCode)
                     CurrentLibraryCatalog = receipt.CurrentCatalog
-                    Rebaseline = receipt.Rebaseline
                 }
         | _ -> None
 
@@ -512,18 +510,10 @@ module internal LibraryOperation =
                     && change.Conflict.IsSome)
                 && change.OperationId = operation.OperationId
                 && receipt.CurrentLibraryCatalog.IsNone
-                && receipt.Rebaseline.IsNone
                 ->
                 Some { RequestHash = receipt.RequestHash; Change = change }, None
             | OutcomeKind.Rejected, None, Some reason ->
-                None,
-                Some
-                    {
-                        RequestHash = receipt.RequestHash
-                        ReasonCode = rejectionCode reason
-                        CurrentCatalog = receipt.CurrentLibraryCatalog
-                        Rebaseline = receipt.Rebaseline
-                    }
+                None, Some { RequestHash = receipt.RequestHash; ReasonCode = rejectionCode reason; CurrentCatalog = receipt.CurrentLibraryCatalog }
             | _ -> invalidOp "Library receipt does not describe a supported acceptance or rejection."
 
         let work =

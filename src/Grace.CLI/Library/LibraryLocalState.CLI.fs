@@ -17,15 +17,15 @@ module internal LibraryLocalState =
     type BaselineSelection = { BootstrapId: Guid; BoundaryCursor: string; MetadataComplete: bool; Applied: bool }
 
     /// Owns this copy's participation and complete bounded catalog; its cursor describes completed local application.
+    /// BaselinePageToken continues an incomplete baseline download. Change pages have no token: each pull starts at
+    /// AppliedCursor.
     [<CLIMutable>]
     type RepositoryState =
         {
             RepositoryId: Guid
-            WorkingCopyId: Guid
             Catalog: LibraryCatalogDto
-            CursorEpoch: LibraryCursorEpoch
             AppliedCursor: string
-            NextPageToken: string option
+            BaselinePageToken: string option
             State: string
             Paused: bool
             Baseline: BaselineSelection option
@@ -101,7 +101,7 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,working_copy_id TEXT NOT NULL,catalog_json TEXT NOT NULL,cursor_epoch TEXT NOT NULL,applied_cursor TEXT NOT NULL,next_page_token TEXT NULL,lifecycle_state TEXT NOT NULL,paused INTEGER NOT NULL CHECK(paused IN (0,1)),baseline_json TEXT NULL);
+                "CREATE TABLE IF NOT EXISTS library_repository_state(repository_id TEXT PRIMARY KEY,catalog_json TEXT NOT NULL,applied_cursor TEXT NOT NULL,baseline_page_token TEXT NULL,lifecycle_state TEXT NOT NULL,paused INTEGER NOT NULL CHECK(paused IN (0,1)),baseline_json TEXT NULL);
                  CREATE TABLE IF NOT EXISTS library_items(repository_id TEXT NOT NULL,item_id TEXT NOT NULL,item_json TEXT NOT NULL,PRIMARY KEY(repository_id,item_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE TABLE IF NOT EXISTS library_operations(repository_id TEXT NOT NULL,operation_id TEXT NOT NULL,direction TEXT NOT NULL CHECK(direction IN ('local','remote','baseline')),terminal INTEGER NOT NULL CHECK(terminal IN (0,1)),echo_pending INTEGER NOT NULL CHECK(echo_pending IN (0,1)),created_at_ticks INTEGER NOT NULL,operation_json TEXT NOT NULL,PRIMARY KEY(repository_id,operation_id),FOREIGN KEY(repository_id) REFERENCES library_repository_state(repository_id));
                  CREATE INDEX IF NOT EXISTS ix_library_operations_pending ON library_operations(repository_id,terminal,created_at_ticks);
@@ -118,7 +118,7 @@ module internal LibraryLocalState =
         |> Option.iter (fun value -> command.Transaction <- value)
 
         command.CommandText <-
-            "SELECT working_copy_id,catalog_json,cursor_epoch,applied_cursor,lifecycle_state,next_page_token,baseline_json,paused FROM library_repository_state WHERE repository_id=$repository;"
+            "SELECT catalog_json,applied_cursor,lifecycle_state,baseline_page_token,baseline_json,paused FROM library_repository_state WHERE repository_id=$repository;"
 
         command.Parameters.AddWithValue("$repository", repositoryId.ToString("D"))
         |> ignore
@@ -129,18 +129,16 @@ module internal LibraryLocalState =
             Some
                 {
                     RepositoryId = repositoryId
-                    WorkingCopyId = Guid.Parse(reader.GetString(0))
-                    Catalog = deserialize<LibraryCatalogDto> (reader.GetString(1))
-                    CursorEpoch = LibraryCursorEpoch.parse (reader.GetString(2))
-                    AppliedCursor = reader.GetString(3)
-                    State = reader.GetString(4)
-                    Paused = reader.GetInt64(7) <> 0L
-                    NextPageToken = if reader.IsDBNull(5) then None else Some(reader.GetString(5))
+                    Catalog = deserialize<LibraryCatalogDto> (reader.GetString(0))
+                    AppliedCursor = reader.GetString(1)
+                    State = reader.GetString(2)
+                    BaselinePageToken = if reader.IsDBNull(3) then None else Some(reader.GetString(3))
                     Baseline =
-                        if reader.IsDBNull(6) then
+                        if reader.IsDBNull(4) then
                             None
                         else
-                            Some(deserialize<BaselineSelection> (reader.GetString(6)))
+                            Some(deserialize<BaselineSelection> (reader.GetString(4)))
+                    Paused = reader.GetInt64(5) <> 0L
                 }
         else
             None
@@ -155,16 +153,14 @@ module internal LibraryLocalState =
         execute
             connection
             transaction
-            "INSERT INTO library_repository_state(repository_id,working_copy_id,catalog_json,cursor_epoch,applied_cursor,next_page_token,lifecycle_state,paused,baseline_json) VALUES($repository,$copy,$catalog,$epoch,$cursor,$next,$state,$paused,$baseline);"
+            "INSERT INTO library_repository_state(repository_id,catalog_json,applied_cursor,baseline_page_token,lifecycle_state,paused,baseline_json) VALUES($repository,$catalog,$cursor,$next,$state,$paused,$baseline);"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
-                "$copy", box (state.WorkingCopyId.ToString("D"))
                 "$paused", box (if state.Paused then 1 else 0)
                 "$catalog", box (serialize state.Catalog)
-                "$epoch", box (LibraryCursorEpoch.toString state.CursorEpoch)
                 "$cursor", box state.AppliedCursor
                 "$next",
-                (state.NextPageToken
+                (state.BaselinePageToken
                  |> Option.map box
                  |> Option.defaultValue (box DBNull.Value))
                 "$state", box state.State
@@ -258,13 +254,12 @@ module internal LibraryLocalState =
         execute
             connection
             (Some transaction)
-            "UPDATE library_repository_state SET cursor_epoch=$epoch,applied_cursor=$cursor,next_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
+            "UPDATE library_repository_state SET applied_cursor=$cursor,baseline_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
-                "$epoch", box (LibraryCursorEpoch.toString state.CursorEpoch)
                 "$cursor", box state.AppliedCursor
                 "$next",
-                (state.NextPageToken
+                (state.BaselinePageToken
                  |> Option.map box
                  |> Option.defaultValue (box DBNull.Value))
                 "$state", box state.State
@@ -284,7 +279,6 @@ module internal LibraryLocalState =
         if baseline.BootstrapId <> page.BootstrapId
            || baseline.BoundaryCursor <> page.BoundaryCursor
            || selected.Catalog <> page.LibraryCatalog
-           || selected.CursorEpoch <> page.CursorEpoch
            || baseline.Applied
            || baseline.MetadataComplete then
             invalidOp "Baseline page does not match the selected metadata."
@@ -366,7 +360,7 @@ module internal LibraryLocalState =
             connection
             transaction
             { selected with
-                NextPageToken = page.NextPageToken
+                BaselinePageToken = page.NextPageToken
                 State = if page.NextPageToken.IsSome then "acquiringBaseline" else "installingBaseline"
                 Baseline = Some { baseline with MetadataComplete = page.NextPageToken.IsNone }
             }
@@ -460,7 +454,7 @@ module internal LibraryLocalState =
             transaction
             { expected with
                 AppliedCursor = baseline.BoundaryCursor
-                NextPageToken = None
+                BaselinePageToken = None
                 State = "catchingUp"
                 Baseline = Some { baseline with Applied = true }
             }
@@ -615,30 +609,6 @@ module internal LibraryLocalState =
         if changed <> 1 then
             invalidOp "Library rejected rename changed before retirement."
 
-    /// Retains a completed page's continuation, including an empty visibility gap, without advancing applied progress.
-    let recordPage dbPath (expected: RepositoryState) nextPageToken =
-        use connection = openConnection dbPath
-
-        let changed =
-            execute
-                connection
-                None
-                "UPDATE library_repository_state SET next_page_token=$next,lifecycle_state='catchingUp' WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog AND paused=$paused;"
-                [
-                    "$paused", box (if expected.Paused then 1 else 0)
-                    "$next",
-                    (nextPageToken
-                     |> Option.map box
-                     |> Option.defaultValue (box DBNull.Value))
-                    "$repository", box (expected.RepositoryId.ToString("D"))
-                    "$cursor", box expected.AppliedCursor
-                    "$epoch", box (LibraryCursorEpoch.toString expected.CursorEpoch)
-                    "$catalog", box (serialize expected.Catalog)
-                ]
-
-        if changed <> 1 then
-            invalidOp "Library page authority changed before continuation persistence."
-
     /// Sets a derived synchronization status without advancing applied progress.
     let setState dbPath (expected: RepositoryState) state =
         use connection = openConnection dbPath
@@ -647,13 +617,12 @@ module internal LibraryLocalState =
             execute
                 connection
                 None
-                "UPDATE library_repository_state SET lifecycle_state=$state WHERE repository_id=$repository AND applied_cursor=$cursor AND cursor_epoch=$epoch AND catalog_json=$catalog AND paused=$paused;"
+                "UPDATE library_repository_state SET lifecycle_state=$state WHERE repository_id=$repository AND applied_cursor=$cursor AND catalog_json=$catalog AND paused=$paused;"
                 [
                     "$state", box state
                     "$paused", box (if expected.Paused then 1 else 0)
                     "$repository", box (expected.RepositoryId.ToString("D"))
                     "$cursor", box expected.AppliedCursor
-                    "$epoch", box (LibraryCursorEpoch.toString expected.CursorEpoch)
                     "$catalog", box (serialize expected.Catalog)
                 ]
 
@@ -756,8 +725,7 @@ module internal LibraryLocalState =
         if completed <> 1 then
             invalidOp "Library exact pending operation changed before completion."
 
-        // Once any item commits, restart uses its applied cursor rather than replaying the previous page.
-        // A fully applied page subsequently checkpoints its next token, including an empty HasMore page.
+        // The applied cursor advances with the item and operation, so the next pull starts right after this change.
         if readRepositoryWith connection (Some transaction) expected.RepositoryId
            <> Some expected then
             invalidOp "Library repository changed during completion."
@@ -766,7 +734,7 @@ module internal LibraryLocalState =
             execute
                 connection
                 (Some transaction)
-                "UPDATE library_repository_state SET applied_cursor=$cursor,next_page_token=NULL,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
+                "UPDATE library_repository_state SET applied_cursor=$cursor,lifecycle_state='catchingUp' WHERE repository_id=$repository;"
                 [
                     "$cursor", box change.Item.LastChangeCursor
                     "$repository", box (expected.RepositoryId.ToString("D"))

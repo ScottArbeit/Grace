@@ -227,9 +227,7 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/libraries/bootstrap/start"
             "POST", "/libraries/bootstrap/continue"
             "POST", "/libraries/changes/get"
-            "POST", "/libraries/operations/get"
             "POST", "/libraries/content/read"
-            "POST", "/libraries/items/get"
             "POST", "/libraries/namespace/get-slot"
             "POST", "/libraries/status/get"
         ]

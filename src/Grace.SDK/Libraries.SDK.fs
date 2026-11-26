@@ -46,10 +46,6 @@ type Libraries() =
     static member public SubmitChange(parameters: SubmitLibraryChangeParameters) =
         postServer<SubmitLibraryChangeParameters, LibraryOperationReceiptDto> (parameters |> ensureCorrelationIdIsSet, "libraries/changes/submit")
 
-    /// Reads the deterministic receipt for one authorized operation identity.
-    static member public GetOperation(parameters: GetLibraryOperationParameters) =
-        postServer<GetLibraryOperationParameters, LibraryOperationReceiptDto> (parameters |> ensureCorrelationIdIsSet, "libraries/operations/get")
-
     /// Prepares exact immutable bytes for a later Library change.
     static member public PrepareContent(parameters: PrepareLibraryContentParameters) =
         postServer<PrepareLibraryContentParameters, LibraryContentPreparationDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/prepare")
@@ -57,10 +53,6 @@ type Libraries() =
     /// Creates one short-lived read descriptor for an accepted retained content revision.
     static member public PrepareContentRead(parameters: PrepareLibraryContentReadParameters) =
         postServer<PrepareLibraryContentReadParameters, LibraryContentReadDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/read")
-
-    /// Reads one current Library item after repository authorization.
-    static member public GetItem(parameters: GetLibraryItemParameters) =
-        postServer<GetLibraryItemParameters, LibraryItemDto> (parameters |> ensureCorrelationIdIsSet, "libraries/items/get")
 
     /// Reads one normalized namespace slot and its current vacancy token.
     static member public GetNamespaceSlot(parameters: GetLibraryNamespaceSlotParameters) =

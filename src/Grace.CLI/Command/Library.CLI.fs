@@ -318,6 +318,8 @@ module LibraryCommand =
             match result.Outcome with
             | LibrarySynchronization.RenameOutcome.Completed -> $"Library rename completed: '{result.SourcePath}' to '{result.TargetPath}'."
             | LibrarySynchronization.RenameOutcome.Rejected _ -> "Library rename rejected. This request changed no local filenames."
+            | LibrarySynchronization.RenameOutcome.AcceptedButObstructed (Some diagnostic) when diagnostic = LibrarySynchronization.renameCatchingUpDiagnostic ->
+                "Library rename accepted by the server; local application is incomplete."
             | LibrarySynchronization.RenameOutcome.AcceptedButObstructed _ ->
                 "Library rename accepted by the server; local application is incomplete. Resolve the obstruction and rerun the same command."
             | LibrarySynchronization.RenameOutcome.Ambiguous _ ->

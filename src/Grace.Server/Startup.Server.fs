@@ -1757,17 +1757,11 @@ module Application =
                                route "/changes/submit" (composeHandlers requireLibraryWrite Library.SubmitChange)
                                |> addMetadata typeof<SubmitLibraryChangeParameters>
 
-                               route "/operations/get" (composeHandlers requireLibraryRead Library.GetOperation)
-                               |> addMetadata typeof<GetLibraryOperationParameters>
-
                                route "/content/prepare" (composeHandlers requireLibraryWrite Library.PrepareContent)
                                |> addMetadata typeof<PrepareLibraryContentParameters>
 
                                route "/content/read" (composeHandlers requireLibraryRead Library.PrepareContentRead)
                                |> addMetadata typeof<PrepareLibraryContentReadParameters>
-
-                               route "/items/get" (composeHandlers requireLibraryRead Library.GetItem)
-                               |> addMetadata typeof<GetLibraryItemParameters>
 
                                route "/namespace/get-slot" (composeHandlers requireLibraryRead Library.GetNamespaceSlot)
                                |> addMetadata typeof<GetLibraryNamespaceSlotParameters>

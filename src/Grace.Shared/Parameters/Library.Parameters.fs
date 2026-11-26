@@ -49,7 +49,6 @@ module Library =
     type GetLibraryChangesParameters() =
         inherit LibraryParameters()
         member val AfterCursor = String.Empty with get, set
-        member val PageToken: string = null with get, set
         member val PageSize = 500 with get, set
 
     /// Submits one exact idempotent Library namespace or content change.
@@ -67,11 +66,6 @@ module Library =
         member val DestinationName: string = null with get, set
         member val UploadSessionId: Nullable<Guid> = Nullable() with get, set
 
-    /// Reads the deterministic receipt for one authorized operation identity.
-    type GetLibraryOperationParameters() =
-        inherit LibraryParameters()
-        member val OperationId = Guid.Empty with get, set
-
     /// Prepares exact immutable bytes for a later Library change.
     type PrepareLibraryContentParameters() =
         inherit LibraryParameters()
@@ -86,11 +80,6 @@ module Library =
         member val ItemId = Guid.Empty with get, set
         member val ContentVersionId = Guid.Empty with get, set
         member val ContentRevision = String.Empty with get, set
-
-    /// Reads one current Library item after repository authorization.
-    type GetLibraryItemParameters() =
-        inherit LibraryParameters()
-        member val ItemId = Guid.Empty with get, set
 
     /// Reads one normalized namespace slot and its current vacancy token.
     type GetLibraryNamespaceSlotParameters() =

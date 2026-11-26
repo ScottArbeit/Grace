@@ -155,8 +155,31 @@ module LibraryDecision =
         + suffix
         + extension
 
-    /// Checks every live descendant path against root ownership and the Product V1 path-byte bound after a directory move.
-    let movedDescendantPathsAreValid catalog destinationPath movingItemId movingName (documents: LibraryCurrentItemDocument array) =
+    /// The most item records, and separately the most slot records, one repository keeps. Tombstones and vacated slots
+    /// count, because their records remain.
+    [<Literal>]
+    let MaximumRecordCount = 100000
+
+    /// The one capacity rule for every change: refuse it when it would add an item record, or a slot record, past the
+    /// limit. Creates, conflict copies, renames and moves all use it.
+    let exceedsRecordCapacity itemRecordCount slotRecordCount addsItemRecord addsSlotRecord =
+        (addsItemRecord
+         && itemRecordCount >= MaximumRecordCount)
+        || (addsSlotRecord
+            && slotRecordCount >= MaximumRecordCount)
+
+    /// Reports whether a complete repository-relative path is over the Product V1 limit of 1,024 UTF-8 bytes.
+    let pathTooLong (path: string) = Encoding.UTF8.GetByteCount path > Library.MaximumPathBytes
+
+    /// Returns why a single item placed at this full path can't be accepted, or None when it can.
+    let placementRejection catalog (path: string) =
+        if pathTooLong path then Some RejectionReason.PathTooLong
+        elif not (isInLibrary catalog path) then Some OutcomeKind.StalePolicy
+        else None
+
+    /// Returns why a directory can't move or be renamed to destinationPath/movingName, or None when it can. Every live
+    /// item under it gets a new path, and each one must stay inside a Library and within the path limit.
+    let subtreeRejection catalog destinationPath movingItemId movingName (documents: LibraryCurrentItemDocument array) =
         let children = Dictionary<LibraryItemId, ResizeArray<LibraryItemDto>>()
 
         documents
@@ -177,22 +200,21 @@ module LibraryDecision =
         let rootPath = destinationPath + "/" + movingName
         let pending = Stack<struct (LibraryItemId * string)>()
         pending.Push(struct (movingItemId, rootPath))
-        let mutable valid = true
+        let mutable rejection = None
 
-        while valid && pending.Count > 0 do
+        while rejection.IsNone && pending.Count > 0 do
             let struct (parentId, parentPath) = pending.Pop()
 
-            match Library.normalizeRepositoryRelativePath parentPath with
-            | Error _ -> valid <- false
-            | Ok normalized when not (isInLibrary catalog normalized) -> valid <- false
-            | Ok normalized ->
+            match placementRejection catalog parentPath with
+            | Some reason -> rejection <- Some reason
+            | None ->
                 match children.TryGetValue parentId with
                 | true, values ->
                     values
                     |> Seq.iter (fun item ->
                         match item.Namespace with
-                        | Some ns -> pending.Push(struct (item.ItemId, normalized + "/" + ns.Name))
+                        | Some ns -> pending.Push(struct (item.ItemId, parentPath + "/" + ns.Name))
                         | None -> ())
                 | false, _ -> ()
 
-        valid
+        rejection

@@ -82,7 +82,6 @@ module LibraryLocalStateTests =
         let state =
             {
                 RepositoryId = repositoryId
-                WorkingCopyId = Guid.NewGuid()
                 Catalog =
                     {
                         RepositoryId = repositoryId
@@ -92,9 +91,8 @@ module LibraryLocalStateTests =
                         CreatedBy = "library-test"
                         PreviousVersion = None
                     }
-                CursorEpoch = LibraryCursorEpoch.parse "d6adb687-e197-4b0d-a90e-a485736c105a"
                 AppliedCursor = "opaque-before"
-                NextPageToken = None
+                BaselinePageToken = None
                 State = "catchingUp"
                 Paused = false
                 Baseline = None
@@ -182,39 +180,6 @@ module LibraryLocalStateTests =
             return configuration, (readRepository db initial.RepositoryId).Value, first.Accepted.Value.Item
         }
 
-    /// Reads canonical epochs from SQLite and rejects corrupt identity text without modifying retained work.
-    [<TestCase("invalid-epoch");
-      TestCase("d6adb687e1974b0da90ea485736c105a");
-      TestCase("{d6adb687-e197-4b0d-a90e-a485736c105a}");
-      TestCase(" d6adb687-e197-4b0d-a90e-a485736c105a ")>]
-    let ``SQLite epoch boundary rejects malformed text and retains pending rows`` (invalidEpoch: string) =
-        task {
-            let _, db = location ()
-            do! initialize db
-            let current, operation = prepared ()
-            enable db current
-
-            insertOperation db current.RepositoryId operation
-            |> ignore
-
-            Assert.That(readRepository db current.RepositoryId, Is.EqualTo(Some current))
-            let retained = readOperations db current.RepositoryId
-            use connection = openConnection db
-            use command = connection.CreateCommand()
-            command.CommandText <- "SELECT cursor_epoch FROM library_repository_state;"
-            Assert.That(command.ExecuteScalar(), Is.EqualTo(LibraryCursorEpoch.toString current.CursorEpoch))
-            command.CommandText <- "UPDATE library_repository_state SET cursor_epoch=$epoch;"
-
-            command.Parameters.AddWithValue("$epoch", invalidEpoch)
-            |> ignore
-
-            command.ExecuteNonQuery() |> ignore
-            throws<FormatException> (fun () -> readRepository db current.RepositoryId |> ignore)
-            Assert.That(readOperations db current.RepositoryId, Is.EqualTo<PendingOperation>(retained))
-            command.CommandText <- "SELECT cursor_epoch FROM library_repository_state;"
-            Assert.That(command.ExecuteScalar(), Is.EqualTo(invalidEpoch))
-        }
-
     /// Checks persisted pause against real saved/terminal rows, capture, classification and stale completion callers.
     [<Test>]
     let ``pause preserves progress and exact work while stale callers cannot complete`` () =
@@ -242,7 +207,6 @@ module LibraryLocalStateTests =
 
             Assert.That(readOperations db repository, Is.EqualTo<PendingOperation>(retained))
             throws<InvalidOperationException> (fun () -> setState db before "blocked")
-            throws<InvalidOperationException> (fun () -> recordPage db before (Some "stale-page"))
             throws<InvalidOperationException> (fun () -> setPaused db before false)
             let! _ = LibrarySynchronization.changePause configuration false System.Threading.CancellationToken.None
             Assert.That(readRepository db repository, Is.EqualTo(Some before))
@@ -331,7 +295,6 @@ module LibraryLocalStateTests =
             let! disabled = LibrarySynchronization.status configuration
             let decoded = deserialize<LibrarySynchronization.LibrarySynchronizationStatus> (serialize disabled)
             Assert.That(decoded.Enabled, Is.False)
-            Assert.That(decoded.CursorEpoch, Is.EqualTo(None))
 
             if incomplete then
                 enable
@@ -552,7 +515,6 @@ module LibraryLocalStateTests =
                     Change = None
                     ReasonCode = Some "NamespaceVersionMismatch"
                     CurrentLibraryCatalog = None
-                    Rebaseline = None
                 }
 
             let rejected = LibraryOperation.receive receipt request
@@ -1240,42 +1202,6 @@ module LibraryLocalStateTests =
             Assert.That(restarted, Is.Not.Null)
         }
 
-    /// Retains empty-page continuation across connection restart and abandons the old page only with atomic item completion.
-    [<Test>]
-    let ``page continuation survives an empty gap and partial page completion`` () =
-        task {
-            let _, db = location ()
-            do! initialize db
-            let state, pending = prepared ()
-            enable db state
-            insertOperation db state.RepositoryId pending
-            recordPage db state (Some "opaque-gap-page")
-            let restarted = (readRepository db state.RepositoryId).Value
-            Assert.That(restarted.NextPageToken, Is.EqualTo(Some "opaque-gap-page"))
-            Assert.That(restarted.AppliedCursor, Is.EqualTo(state.AppliedCursor))
-            Assert.That(restarted.State, Is.EqualTo("catchingUp"))
-            throws<InvalidOperationException> (fun () -> recordPage db { restarted with AppliedCursor = "wrong" } None)
-            complete db restarted pending
-            let completed = (readRepository db state.RepositoryId).Value
-            Assert.That(completed.NextPageToken, Is.EqualTo(None))
-            Assert.That(completed.AppliedCursor, Is.EqualTo(pending.Accepted.Value.Item.LastChangeCursor))
-
-            Assert.That(
-                (readOperations db state.RepositoryId).[0]
-                    .Terminal,
-                Is.True
-            )
-
-            recordPage db completed (Some "opaque-next-page")
-
-            Assert.That(
-                (readRepository db state.RepositoryId)
-                    .Value
-                    .NextPageToken,
-                Is.EqualTo(Some "opaque-next-page")
-            )
-        }
-
     /// Keeps the shared payload-free kind explicit while leaving existing Library wire strings unchanged.
     [<TestCase("file"); TestCase("directory")>]
     let ``shared item kind adapters preserve Library wire values`` wire =
@@ -1360,7 +1286,6 @@ module LibraryLocalStateTests =
                     Change = None
                     ReasonCode = Some RejectionReason.PreparedContentExpired
                     CurrentLibraryCatalog = None
-                    Rebaseline = None
                 }
 
             let rejected = LibraryOperation.receive rejection uploaded

@@ -1,6 +1,6 @@
 # Library pause and resume validation
 
-[Issue #1075](https://github.com/ScottArbeit/Grace/issues/1075) implements LIB-016 through LIB-018 from the [accepted design](../Libraries.Design.md#pause-and-resume-accepted-next-slice). [PR #1076](https://github.com/ScottArbeit/Grace/pull/1076) records the delivery state, independent review, Shape Review and final-head GitHub Validate.
+[Issue #1075](https://github.com/ScottArbeit/Grace/issues/1075) implements LIB-016 through LIB-018 from the [accepted design](https://github.com/ScottArbeit/Grace/blob/75932033/docs/Libraries.Design.md#pause-and-resume-accepted-next-slice). [PR #1076](https://github.com/ScottArbeit/Grace/pull/1076) records the delivery state, independent review, Shape Review and final-head GitHub Validate.
 
 The [56-case experiment](Libraries.Pause-Experiment.md) is preserved unchanged as historical readiness evidence. Its modeled remote and Watch entry calls are distinct from the production tests below. Reproduce it with the source dependencies pinned by that report: its string-epoch fixtures are not compatible with the later GUID-backed epoch type. Its effect-order evidence remains relevant, but no current-source reproduction is claimed. The supported world remains onboarded Windows copies under one unchanged catalog, with existing saved-content, rename and zero-byte protections.
 

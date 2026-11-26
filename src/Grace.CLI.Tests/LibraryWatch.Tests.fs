@@ -46,11 +46,9 @@ module LibraryWatchTests =
                     configuration.GraceStatusFile
                     {
                         RepositoryId = configuration.RepositoryId
-                        WorkingCopyId = Guid.NewGuid()
                         Catalog = startup
-                        CursorEpoch = LibraryCursorEpoch.parse "d6adb687-e197-4b0d-a90e-a485736c105a"
                         AppliedCursor = "opaque-applied"
-                        NextPageToken = None
+                        BaselinePageToken = None
                         State = "current"
                         Paused = (participation = "paused")
                         Baseline = None
@@ -397,7 +395,6 @@ module LibraryWatchTests =
                 Paused = false
                 State = "blocked"
                 LibraryCatalogVersion = None
-                CursorEpoch = None
                 AppliedCursor = None
                 PendingOperationCount = 1
                 LastError = Some "Library creation slot is occupied; saved bytes are retained."

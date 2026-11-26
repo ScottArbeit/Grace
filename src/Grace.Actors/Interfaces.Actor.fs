@@ -781,12 +781,6 @@ module Interfaces =
             correlationId: CorrelationId ->
                 Task<Result<LibraryOperationReceiptDto, string>>
 
-        /// Returns the exact durable operation receipt after repairing matching pending work.
-        abstract member GetOperation: operationId: LibraryOperationId -> correlationId: CorrelationId -> Task<LibraryOperationReceiptDto option>
-
-        /// Returns one current Library item projection after repairing pending work.
-        abstract member GetItem: itemId: LibraryItemId -> correlationId: CorrelationId -> Task<LibraryItemDto option>
-
         /// Returns one current Library namespace slot after repairing pending work.
         abstract member GetSlot: parent: LibraryParentDto -> name: string -> correlationId: CorrelationId -> Task<LibraryNamespaceSlotDto>
 
@@ -804,9 +798,9 @@ module Interfaces =
             correlationId: CorrelationId ->
                 Task<LibraryBootstrapPageDto option>
 
-        /// Returns committed accepted changes after one repository-bound cursor.
-        abstract member GetChanges:
-            afterCursor: LibraryCursor -> pageToken: LibraryPageToken option -> pageSize: int -> correlationId: CorrelationId -> Task<LibraryChangePageDto>
+        /// Returns committed accepted changes after one repository-bound cursor, or an error when the cursor isn't one
+        /// this repository issued or is ahead of the committed cursor.
+        abstract member GetChanges: afterCursor: LibraryCursor -> pageSize: int -> correlationId: CorrelationId -> Task<Result<LibraryChangePageDto, string>>
 
         /// Returns the retained immutable-content location for a current content identity.
         abstract member GetContentLocation:
@@ -815,8 +809,6 @@ module Interfaces =
         /// Repairs any pending accepted operation without admitting another command.
         abstract member Repair: correlationId: CorrelationId -> Task
 
-        /// Returns truthful content-free Library repository status after repair.
-        abstract member GetStatus: correlationId: CorrelationId -> Task<LibraryRepositoryStatusDto>
 
     /// Defines the operations for the AccessControl actor.
     [<Interface>]

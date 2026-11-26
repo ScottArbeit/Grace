@@ -156,6 +156,64 @@ module LibraryQueries =
             return values.ToArray()
         }
 
+    /// Reads one repository's stored Library status straight from storage, without activating its actor. Activation
+    /// repairs a saved decision, so reading status this way is the only way it never repairs anything.
+    let readStatus (services: IServiceProvider) (repositoryId: RepositoryId) =
+        task {
+            match! LibraryRecords.read<LibraryControlDocument>
+                       services
+                       LibraryRecords.ControlStorageName
+                       LibraryRecords.controlType
+                       (LibraryRecords.controlKey repositoryId)
+                with
+            | None ->
+                return
+                    {
+                        State = "notInitialized"
+                        RepositoryId = repositoryId
+                        LibraryCatalogVersion = Guid.Empty
+                        PendingOperationCount = 0
+                        LastCompletedAt = None
+                    }
+            | Some (control, _) ->
+                let! lastCompleted =
+                    task {
+                        if control.CommittedCursor = 0L then
+                            return None
+                        else
+                            match! LibraryRecords.read<LibraryAcceptedChangeRecord>
+                                       services
+                                       LibraryRecords.ChangesStorageName
+                                       LibraryRecords.changeType
+                                       (LibraryRecords.changeKey repositoryId control.CommittedCursor)
+                                with
+                            | Some (record, _) -> return Some record.Change.AcceptedAt
+                            | None -> return None
+                    }
+
+                return
+                    {
+                        State = if control.Pending.IsSome then "repairing" else "ready"
+                        RepositoryId = repositoryId
+                        LibraryCatalogVersion = control.Catalog.Version
+                        PendingOperationCount = if control.Pending.IsSome then 1 else 0
+                        LastCompletedAt = lastCompleted
+                    }
+        }
+
+    /// Returns a query's first result, reading as many pages as it takes. Cosmos can return an empty page that still has
+    /// a continuation, so one empty page doesn't mean there are no results.
+    let private firstResult<'T> (iterator: FeedIterator<'T>) (cancellationToken: CancellationToken) =
+        task {
+            let mutable found = None
+
+            while found.IsNone && iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync(cancellationToken)
+                found <- page.Resource |> Seq.tryHead
+
+            return found
+        }
+
     /// Reports whether a live item directly occupies one parent identity.
     let hasLiveChildren (services: IServiceProvider) (repositoryId: RepositoryId) (parent: LibraryParentDto) cancellationToken =
         task {
@@ -186,12 +244,8 @@ module LibraryQueries =
                 | _ -> invalidArg (nameof parent) "A Library parent must identify one root or directory item."
 
             use iterator = container.GetItemQueryIterator<bool>(query, requestOptions = options)
-
-            if iterator.HasMoreResults then
-                let! page = iterator.ReadNextAsync(cancellationToken)
-                return page.Resource |> Seq.isEmpty |> not
-            else
-                return false
+            let! found = firstResult iterator cancellationToken
+            return found.IsSome
         }
 
     /// Appends only the visible contiguous journal prefix and reports the first missing cursor.
@@ -285,17 +339,9 @@ module LibraryQueries =
             match stored with
             | Some (control, _) when
                 control.SchemaVersion = 1
-                && control.Epoch <> Guid.Empty
                 && control.CommittedCursor >= 0L
-                && control.ReplayFloor > 0L
-                && control.ReplayFloor - 1L
-                   <= control.CommittedCursor
                 && control.ItemRecordCount >= 0
                 && control.SlotRecordCount >= 0
-                && control.HistoryThrough >= 0L
-                && control.HistoryThrough <= control.CommittedCursor
-                && control.NotifyThrough >= 0L
-                && control.NotifyThrough <= control.CommittedCursor
                 && not (isNull (box control.Catalog))
                 && control.Catalog.RepositoryId = repositoryId
                 && control.Catalog.Version <> Guid.Empty
@@ -420,7 +466,7 @@ module LibraryQueries =
     /// Requires all selected source containers, even at zero, then reads permanent history through the captured control.
     /// Reads existing control directly through LibraryRecords, then the permanent accepted prefix and immutable content
     /// mappings. Never call RepositoryLibraryActor.currentControl or other repair paths from a diagnostic. Validate source
-    /// existence even at cursor zero, preserve exact cursor-gap rejection, and recheck the epoch/nonregression before
+    /// existence even at cursor zero, preserve exact cursor-gap rejection, and recheck nonregression before
     /// publishing. Manifest bytes here are declarations, not payload-presence evidence.
     let readDiagnosticContent (services: IServiceProvider) (repositoryId: RepositoryId) (token: CancellationToken) =
         task {
@@ -466,35 +512,59 @@ module LibraryQueries =
                         })
                     token
 
-            return total, count, control.Epoch, control.CommittedCursor, started
+            return total, count, control.CommittedCursor, started
         }
 
-    /// Establishes query-client visibility of the last committed item before baseline enumeration.
-    let waitForItemCursor (services: IServiceProvider) (repositoryId: RepositoryId) itemId expectedCursor cancellationToken =
+    /// The waits between checks for a committed item's visibility, about 6.75 seconds in all. A replica that hasn't caught
+    /// up only matters after the actor moves to a new silo, and replication finishes long before that move does.
+    let VisibilityRetryDelays =
+        [| 250; 500; 750; 1000; 1500; 2000 |]
+        |> Array.map (fun milliseconds -> TimeSpan.FromMilliseconds(float milliseconds))
+
+    /// Runs check until it reports true, waiting each delay in turn between attempts. Returns false when the check after
+    /// the last delay still reports false.
+    let internal retryUntil (delays: TimeSpan array) (wait: TimeSpan -> Task) (check: unit -> Task<bool>) =
+        task {
+            let! first = check ()
+            let mutable succeeded = first
+            let mutable index = 0
+
+            while not succeeded && index < delays.Length do
+                do! wait delays[index]
+                index <- index + 1
+                let! next = check ()
+                succeeded <- next
+
+            return succeeded
+        }
+
+    /// Establishes query-client visibility of the last committed item before a query that must cover every committed item.
+    let waitForItemCursor (services: IServiceProvider) (repositoryId: RepositoryId) itemId expectedCursor (cancellationToken: CancellationToken) =
         task {
             let container =
                 (database services)
                     .GetContainer LibraryRecords.CurrentContainerName
 
             let options = QueryRequestOptions(PartitionKey = Nullable(partition repositoryId "item"), MaxItemCount = Nullable 1)
-            let mutable visible = false
-            let mutable attempts = 0
 
-            while not visible && attempts < 8 do
-                attempts <- attempts + 1
+            let check () =
+                task {
+                    let query =
+                        QueryDefinition(
+                            "SELECT TOP 1 VALUE c.State.LastCursor FROM c WHERE c.PartitionKey = @repository AND c.PartitionKey2 = 'item' AND c.State.Item.ItemId = @itemId"
+                        )
+                            .WithParameter("@repository", repositoryId.ToString("D"))
+                            .WithParameter("@itemId", itemId)
 
-                let query =
-                    QueryDefinition(
-                        "SELECT TOP 1 VALUE c.State.LastCursor FROM c WHERE c.PartitionKey = @repository AND c.PartitionKey2 = 'item' AND c.State.Item.ItemId = @itemId"
-                    )
-                        .WithParameter("@repository", repositoryId.ToString("D"))
-                        .WithParameter("@itemId", itemId)
+                    use iterator = container.GetItemQueryIterator<int64>(query, requestOptions = options)
+                    let! cursor = firstResult iterator cancellationToken
 
-                use iterator = container.GetItemQueryIterator<int64>(query, requestOptions = options)
+                    return
+                        cursor
+                        |> Option.exists (fun value -> value >= expectedCursor)
+                }
 
-                if iterator.HasMoreResults then
-                    let! page = iterator.ReadNextAsync(cancellationToken)
-                    visible <- page.Resource |> Seq.exists ((=) expectedCursor)
+            let! visible = retryUntil VisibilityRetryDelays (fun delay -> Task.Delay(delay, cancellationToken)) check
 
             if not visible then
                 invalidOp $"The current Library partition did not expose committed cursor {expectedCursor}."

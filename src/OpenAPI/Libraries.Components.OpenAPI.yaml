@@ -24,16 +24,11 @@
       minLength: 1
       maxLength: 2048
       description: Opaque repository cursor. Clients must not parse or compare its contents.
-    LibraryCursorEpoch:
-      type: string
-      format: uuid
-      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-      description: Repository feed generation identity in hyphenated GUID D format. Compare equality only; no ordering or timestamp meaning.
     LibraryPageToken:
       type: string
       minLength: 1
       maxLength: 2048
-      description: Opaque token for continuing one immutable page sequence.
+      description: Opaque token for continuing one immutable bootstrap page sequence.
     LibraryItemKind:
       type: string
       enum: [file, directory]
@@ -42,10 +37,10 @@
       enum: [createFile, createDirectory, updateContent, rename, move, delete]
     LibraryOutcomeKind:
       type: string
-      enum: [accepted, unchanged, rejected, conflictCopy, stalePolicy, rebaselineRequired, localIncomplete]
+      enum: [accepted, rejected, conflictCopy, stalePolicy]
     LibraryRejectionReason:
       type: string
-      enum: [namespaceChanged, contentChanged, slotOccupied, itemMissing, itemTombstoned, directoryNotEmpty, kindMismatch, preparedContentExpired, operationIdentityMismatch]
+      enum: [namespaceChanged, contentChanged, slotOccupied, itemMissing, itemTombstoned, directoryNotEmpty, kindMismatch, preparedContentExpired, operationIdentityMismatch, pathTooLong]
     LibraryCatalogRejectionReason:
       type: string
       enum: [slotOccupied, outgoingSystemNotEmpty, libraryOverlap, libraryLimitExceeded, unsupportedPath]
@@ -195,14 +190,6 @@
             - $ref: '#/LibraryConflictProvenanceDto'
           nullable: true
       required: [OperationId, ChangeKind, AcceptedAt, AcceptedBy, LibraryCatalogVersion, Item, Conflict]
-    LibraryRebaselineDto:
-      type: object
-      properties:
-        Reason: { type: string }
-        CurrentEpoch: { $ref: '#/LibraryCursorEpoch' }
-        ServiceFloorCursor: { $ref: '#/LibraryCursor' }
-        RecommendedBootstrap: { type: boolean }
-      required: [Reason, CurrentEpoch, ServiceFloorCursor, RecommendedBootstrap]
     LibraryOperationReceiptDto:
       type: object
       properties:
@@ -220,11 +207,7 @@
           allOf:
             - $ref: '#/LibraryCatalogDto'
           nullable: true
-        Rebaseline:
-          allOf:
-            - $ref: '#/LibraryRebaselineDto'
-          nullable: true
-      required: [OperationId, RequestHash, Outcome, Change, ReasonCode, CurrentLibraryCatalog, Rebaseline]
+      required: [OperationId, RequestHash, Outcome, Change, ReasonCode, CurrentLibraryCatalog]
     LibraryCatalogChangeResultDto:
       type: object
       properties:
@@ -241,7 +224,6 @@
       properties:
         BootstrapId: { $ref: '#/LibraryBootstrapId' }
         BoundaryCursor: { $ref: '#/LibraryCursor' }
-        CursorEpoch: { $ref: '#/LibraryCursorEpoch' }
         LibraryCatalog: { $ref: '#/LibraryCatalogDto' }
         Items:
           type: array
@@ -250,26 +232,17 @@
           allOf:
             - $ref: '#/LibraryPageToken'
           nullable: true
-      required: [BootstrapId, BoundaryCursor, CursorEpoch, LibraryCatalog, Items, NextPageToken]
+      required: [BootstrapId, BoundaryCursor, LibraryCatalog, Items, NextPageToken]
     LibraryChangePageDto:
       type: object
+      description: Accepted changes after the request's cursor, in journal order. Request the next page with LastCursor.
       properties:
-        Outcome: { $ref: '#/LibraryOutcomeKind' }
-        CursorEpoch: { $ref: '#/LibraryCursorEpoch' }
         Changes:
           type: array
           items: { $ref: '#/LibraryChangeDto' }
         LastCursor: { $ref: '#/LibraryCursor' }
         HasMore: { type: boolean }
-        NextPageToken:
-          allOf:
-            - $ref: '#/LibraryPageToken'
-          nullable: true
-        Rebaseline:
-          allOf:
-            - $ref: '#/LibraryRebaselineDto'
-          nullable: true
-      required: [Outcome, CursorEpoch, Changes, LastCursor, HasMore, NextPageToken, Rebaseline]
+      required: [Changes, LastCursor, HasMore]
     LibraryContentPreparationDto:
       type: object
       properties:
@@ -299,27 +272,15 @@
         State: { type: string }
         RepositoryId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId' }
         LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
-        IsCaughtUp: { type: boolean }
-        RebaselineRequired: { type: boolean }
-        IsBlocked: { type: boolean }
         PendingOperationCount:
           type: integer
           format: int32
-          minimum: 0
-        OldestPendingAgeMilliseconds:
-          type: integer
-          format: int64
-          minimum: 0
-          nullable: true
-        ProjectionLagCount:
-          type: integer
-          format: int64
           minimum: 0
         LastCompletedAt:
           allOf:
             - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
           nullable: true
-      required: [State, RepositoryId, LibraryCatalogVersion, IsCaughtUp, RebaselineRequired, IsBlocked, PendingOperationCount, OldestPendingAgeMilliseconds, ProjectionLagCount, LastCompletedAt]
+      required: [State, RepositoryId, LibraryCatalogVersion, PendingOperationCount, LastCompletedAt]
     LibraryContentAvailable:
       type: object
       description: Content-free best-effort wake. Authorized clients pull durable changes after receipt.
@@ -328,12 +289,11 @@
           type: string
           const: LibraryContentAvailable.v1
         RepositoryId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId' }
-        CursorEpoch: { $ref: '#/LibraryCursorEpoch' }
         AvailableAfterCursor: { $ref: '#/LibraryCursor' }
         LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
         OccurredAt: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
         CorrelationId: { $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId' }
-      required: [EventName, RepositoryId, CursorEpoch, AvailableAfterCursor, LibraryCatalogVersion, OccurredAt, CorrelationId]
+      required: [EventName, RepositoryId, AvailableAfterCursor, LibraryCatalogVersion, OccurredAt, CorrelationId]
 
     LibraryParameters:
       description: Repository locator shared by every remote library request.
@@ -393,16 +353,12 @@
         - type: object
           properties:
             AfterCursor: { $ref: '#/LibraryCursor' }
-            PageToken:
-              allOf:
-                - $ref: '#/LibraryPageToken'
-              nullable: true
             PageSize:
               type: integer
               format: int32
               minimum: 1
               maximum: 2000
-          required: [AfterCursor, PageToken, PageSize]
+          required: [AfterCursor, PageSize]
     SubmitLibraryChangeParameters:
       allOf:
         - $ref: '#/LibraryParameters'
@@ -440,13 +396,6 @@
               format: uuid
               nullable: true
           required: [OperationId, LibraryCatalogVersion, ChangeKind, ItemKind]
-    GetLibraryOperationParameters:
-      allOf:
-        - $ref: '#/LibraryParameters'
-        - type: object
-          properties:
-            OperationId: { $ref: '#/LibraryOperationId' }
-          required: [OperationId]
     PrepareLibraryContentParameters:
       allOf:
         - $ref: '#/LibraryParameters'
@@ -469,13 +418,6 @@
             ContentVersionId: { $ref: '#/LibraryContentVersionId' }
             ContentRevision: { $ref: '#/LibraryCursor' }
           required: [ItemId, ContentVersionId, ContentRevision]
-    GetLibraryItemParameters:
-      allOf:
-        - $ref: '#/LibraryParameters'
-        - type: object
-          properties:
-            ItemId: { $ref: '#/LibraryItemId' }
-          required: [ItemId]
     GetLibraryNamespaceSlotParameters:
       allOf:
         - $ref: '#/LibraryParameters'
@@ -530,12 +472,6 @@
         - type: object
           properties:
             ReturnValue: { $ref: '#/LibraryContentReadDto' }
-    LibraryItemReturnValue:
-      allOf:
-        - $ref: '#/LibraryReturnValueBase'
-        - type: object
-          properties:
-            ReturnValue: { $ref: '#/LibraryItemDto' }
     LibraryNamespaceSlotReturnValue:
       allOf:
         - $ref: '#/LibraryReturnValueBase'
@@ -574,7 +510,7 @@
         application/json:
           schema: { $ref: '#/LibraryBootstrapPageReturnValue' }
     LibraryChangePageResponse:
-      description: Ordered accepted changes or a rebaseline instruction.
+      description: Accepted changes after the request's cursor, in journal order.
       content:
         application/json:
           schema: { $ref: '#/LibraryChangePageReturnValue' }
@@ -593,11 +529,6 @@
       content:
         application/json:
           schema: { $ref: '#/LibraryContentReadReturnValue' }
-    LibraryItemResponse:
-      description: Current Library item state.
-      content:
-        application/json:
-          schema: { $ref: '#/LibraryItemReturnValue' }
     LibraryNamespaceSlotResponse:
       description: Current occupied or remembered-vacant namespace slot.
       content:

@@ -78,6 +78,11 @@ module AspireTestHost =
     let private azuriteResourceName = "azurite"
     let private redisResourceName = "redis"
     let private descriptionClearPreAppendTestGatePortEnvironmentVariable = "GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"
+
+    /// The one repository whose Library wakes the hosted server makes fail, so a test can prove a broker failure never
+    /// fails a change. Every other repository's wakes are sent normally.
+    let libraryWakeFaultRepositoryId = Guid.Parse("5b1f0c3e-6a52-4d7e-9a0f-1c2b3d4e5f60")
+
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedDescriptionClearPreAppendTestGate: (int * TcpListener) option = None
@@ -1241,6 +1246,7 @@ module AspireTestHost =
                 .CreateResourceBuilder(graceServerResource)
                 .WithEnvironment("GRACE_TESTING", "1")
                 .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
+                .WithEnvironment(Grace.Actors.LibraryWake.FaultRepositoryIdVariable, libraryWakeFaultRepositoryId.ToString("D"))
             |> ignore
 
             let! app = builder.BuildAsync()

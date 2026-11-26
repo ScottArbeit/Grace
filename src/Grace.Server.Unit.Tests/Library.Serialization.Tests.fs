@@ -10,7 +10,6 @@ open NUnit.Framework
 open Orleans.Serialization
 open Orleans.Serialization.NodaTime
 open System
-open System.Collections.Generic
 
 /// Verifies the populated Library RPC graph through the serializer registration used by Grace.Server.
 [<Parallelizable(ParallelScope.All)>]
@@ -21,64 +20,8 @@ type LibrarySerializationTests() =
         let serializer = serviceProvider.GetRequiredService<Serializer<'T>>()
         serializer.Deserialize(serializer.SerializeToArray(value))
 
-    /// Exercises each required epoch-bearing DTO through production JSON, including null and missing fields that F# otherwise defaults.
-    let assertEpochJson (epochField: string) (value: 'T) =
-        let json = Utilities.serialize value
-        Assert.That<'T>(Utilities.deserialize<'T> json, Is.EqualTo(box value))
-        let insensitiveOptions = System.Text.Json.JsonSerializerOptions(Constants.JsonSerializerOptions)
-        insensitiveOptions.PropertyNameCaseInsensitive <- true
-        let differentlyCased = json.Replace($"\"{epochField}\"", $"\"{epochField.ToLowerInvariant()}\"")
-        Assert.That<'T>(System.Text.Json.JsonSerializer.Deserialize<'T>(differentlyCased, insensitiveOptions), Is.EqualTo(box value))
-
-        let firstNull =
-            $"{{\"{epochField.ToLowerInvariant()}\":null,"
-            + json.Substring(1)
-
-        Assert.That<'T>(System.Text.Json.JsonSerializer.Deserialize<'T>(firstNull, insensitiveOptions), Is.EqualTo(box value))
-
-        let lastNull =
-            json.Substring(0, json.LastIndexOf('}'))
-            + $",\"{epochField.ToLowerInvariant()}\":null}}"
-
-        Assert.Throws<System.Text.Json.JsonException>(
-            Action (fun () ->
-                System.Text.Json.JsonSerializer.Deserialize<'T>(lastNull, insensitiveOptions)
-                |> ignore)
-        )
-        |> ignore
-
-        for invalid in
-            [
-                "null"
-                "17"
-                "{}"
-                "\"invalid\""
-                "\"28aa5fe8224248fea02ac5a34a72d937\""
-                "\"{28aa5fe8-2242-48fe-a02a-c5a34a72d937}\""
-                "\" 28aa5fe8-2242-48fe-a02a-c5a34a72d937 \""
-                "missing"
-            ] do
-            let altered =
-                System
-                    .Text
-                    .Json
-                    .Nodes
-                    .JsonNode
-                    .Parse(json)
-                    .AsObject()
-
-            if invalid = "missing" then
-                altered.Remove(epochField) |> ignore
-            else
-                altered[epochField] <- System.Text.Json.Nodes.JsonNode.Parse(invalid)
-
-            Assert.Throws<System.Text.Json.JsonException>(
-                Action (fun () ->
-                    Utilities.deserialize<'T> (altered.ToJsonString())
-                    |> ignore),
-                $"{typeof<'T>.Name}: {invalid}"
-            )
-            |> ignore
+    /// Round-trips one public Library wire DTO through the production Grace JSON options.
+    let assertJsonRoundTrip (value: 'T) = Assert.That<'T>(Utilities.deserialize<'T> (Utilities.serialize value), Is.EqualTo(box value))
 
     /// Verifies material values across the complete final Library actor request and response graph.
     [<Test>]
@@ -182,15 +125,6 @@ type LibrarySerializationTests() =
                 Change = Some change
                 ReasonCode = None
                 CurrentLibraryCatalog = None
-                Rebaseline = None
-            }
-
-        let rebaseline =
-            {
-                Reason = "cursorExpired"
-                CurrentEpoch = LibraryCursorEpoch.parse "a1ee241b-ac92-44b4-adf7-f7b59be55177"
-                ServiceFloorCursor = "cursor-9"
-                RecommendedBootstrap = true
             }
 
         let catalog =
@@ -205,11 +139,10 @@ type LibrarySerializationTests() =
 
         let rejectedReceipt =
             { receipt with
-                Outcome = OutcomeKind.RebaselineRequired
+                Outcome = OutcomeKind.Rejected
                 Change = None
                 ReasonCode = Some RejectionReason.NamespaceChanged
                 CurrentLibraryCatalog = Some catalog
-                Rebaseline = Some rebaseline
             }
 
         let preparation =
@@ -229,25 +162,12 @@ type LibrarySerializationTests() =
             {
                 BootstrapId = Guid.Parse("3021c4f0-ecaa-4a04-b131-10719a40ec0c")
                 BoundaryCursor = "cursor-17"
-                CursorEpoch = LibraryCursorEpoch.parse "28aa5fe8-2242-48fe-a02a-c5a34a72d937"
                 LibraryCatalog = catalog
                 Items = [| item |]
                 NextPageToken = Some "bootstrap-page-2"
             }
 
-        let changePage =
-            {
-                Outcome = OutcomeKind.Accepted
-                CursorEpoch = bootstrap.CursorEpoch
-                Changes = [| change |]
-                LastCursor = item.LastChangeCursor
-                HasMore = true
-                NextPageToken = Some "change-page-2"
-                Rebaseline = None
-            }
-
-        let rebaselinePage =
-            { changePage with Outcome = OutcomeKind.RebaselineRequired; Changes = [||]; HasMore = false; NextPageToken = None; Rebaseline = Some rebaseline }
+        let changePage = { Changes = [| change |]; LastCursor = item.LastChangeCursor; HasMore = true }
 
         let namespacePrecondition = { ItemId = itemId; ExpectedNamespaceVersion = namespaceVersion }
 
@@ -291,15 +211,10 @@ type LibrarySerializationTests() =
 
         let status =
             {
-                State = "blocked"
+                State = "repairing"
                 RepositoryId = repositoryId
                 LibraryCatalogVersion = catalogVersion
-                IsCaughtUp = false
-                RebaselineRequired = true
-                IsBlocked = true
-                PendingOperationCount = 2
-                OldestPendingAgeMilliseconds = Some 12345L
-                ProjectionLagCount = 4L
+                PendingOperationCount = 1
                 LastCompletedAt = Some timestamp
             }
 
@@ -322,11 +237,6 @@ type LibrarySerializationTests() =
                 CorrelationId = "correlation-serializer"
                 Change = conflictChange
                 PriorNamespace = item.Namespace
-                PriorContentVersionId = Some priorContentVersionId
-                ConsumedNamespaceVersion = Some namespaceVersion
-                ConsumedContentVersionId = Some priorContentVersionId
-                ConsumedContentRevision = Some "cursor-11"
-                ConsumedSlotVersion = Some slotVersion
                 AddedItemRecord = true
                 AddedSlotRecord = true
             }
@@ -335,18 +245,14 @@ type LibrarySerializationTests() =
             {
                 SchemaVersion = 2
                 Catalog = catalog
-                Epoch = Guid.Parse("785fd37c-a0ff-411a-a450-944ace5cc983")
                 CommittedCursor = 17L
-                ReplayFloor = 3L
                 Pending = Some(LibraryPendingDecision.ItemChange acceptedRecord)
                 ItemRecordCount = 7
                 SlotRecordCount = 8
-                HistoryThrough = 16L
-                NotifyThrough = 15L
             }
 
-        let currentItem = { SchemaVersion = 2; Item = tombstonedItem; LastCursor = 23L; HistoryTailSegment = Some "history-item-tail" }
-        let currentSlot = { SchemaVersion = 2; Slot = slot; LastCursor = 17L; HistoryTailSegment = Some "history-slot-tail" }
+        let currentItem = { SchemaVersion = 2; Item = tombstonedItem; LastCursor = 23L }
+        let currentSlot = { SchemaVersion = 2; Slot = slot; LastCursor = 17L }
 
         let durableReceipts =
             [|
@@ -365,19 +271,11 @@ type LibrarySerializationTests() =
                 }
             |]
 
-        let historySegment = { SchemaVersion = 2; PreviousSegment = Some "history-previous"; Cursors = [| 11L; 17L; 23L |] }
         let baselineShard = { SchemaVersion = 2; Items = [| item; tombstonedItem |] }
         let shardReference = { Ordinal = 4; Blake3Hash = String.replicate 64 "d"; ItemCount = 2 }
 
         let baselineManifest =
-            {
-                SchemaVersion = 2
-                Epoch = control.Epoch
-                BoundaryCursor = control.CommittedCursor
-                Catalog = catalog
-                CreatedAt = timestamp
-                Shards = [| shardReference |]
-            }
+            { SchemaVersion = 2; BoundaryCursor = control.CommittedCursor; Catalog = catalog; CreatedAt = timestamp; Shards = [| shardReference |] }
 
         let manifest =
             FileManifest.Create(
@@ -393,48 +291,11 @@ type LibrarySerializationTests() =
 
         let contentLocation = { SchemaVersion = 2; Content = content; AuthorizedScope = preparation.AuthorizedScope; Manifest = manifest }
 
-        let contentAvailable =
-            LibraryContentAvailable.Create(
-                repositoryId,
-                LibraryCursorEpoch.parse "28aa5fe8-2242-48fe-a02a-c5a34a72d937",
-                item.LastChangeCursor,
-                catalogVersion,
-                timestamp,
-                "correlation-serializer"
-            )
+        let contentAvailable = LibraryContentAvailable.Create(repositoryId, item.LastChangeCursor, catalogVersion, timestamp, "correlation-serializer")
 
-        let properties = Dictionary<string, string>()
-        properties["eventName"] <- contentAvailable.EventName
-        properties["repositoryId"] <- repositoryId.ToString("D")
-
-        let failedEnvelope =
-            {
-                TopicName = "grace-events"
-                MessageId = $"LibraryContentAvailable/{repositoryId:D}/00000000000000017"
-                Body = [| 1uy; 2uy; 3uy; 4uy |]
-                ContentType = "application/json"
-                Subject = contentAvailable.EventName
-                CorrelationId = contentAvailable.CorrelationId
-                ApplicationProperties = properties
-            }
-
-        assertEpochJson "CursorEpoch" bootstrap
-        assertEpochJson "CursorEpoch" changePage
-        assertEpochJson "CurrentEpoch" rebaseline
-        assertEpochJson "CursorEpoch" contentAvailable
-
-        let invalidNestedEpoch = System.Text.Json.Nodes.JsonNode.Parse(Utilities.serialize rebaselinePage)
-        invalidNestedEpoch["Rebaseline"]["CurrentEpoch"] <- null
-
-        Assert.Throws<System.Text.Json.JsonException>(
-            Action (fun () ->
-                Utilities.deserialize<LibraryChangePageDto> (invalidNestedEpoch.ToJsonString())
-                |> ignore)
-        )
-        |> ignore
-
-        let unchangedNullPolicy = { rebaseline with Reason = null }
-        Assert.That(Utilities.deserialize<LibraryRebaselineDto> (Utilities.serialize unchangedNullPolicy), Is.EqualTo(unchangedNullPolicy))
+        assertJsonRoundTrip bootstrap
+        assertJsonRoundTrip changePage
+        assertJsonRoundTrip contentAvailable
 
         Assert.Multiple(
             Action (fun () ->
@@ -445,7 +306,6 @@ type LibrarySerializationTests() =
                 Assert.That(roundTrip serviceProvider rejectedReceipt, Is.EqualTo(rejectedReceipt))
                 Assert.That(roundTrip serviceProvider bootstrap, Is.EqualTo(bootstrap))
                 Assert.That(roundTrip serviceProvider changePage, Is.EqualTo(changePage))
-                Assert.That(roundTrip serviceProvider rebaselinePage, Is.EqualTo(rebaselinePage))
                 Assert.That(roundTrip serviceProvider catalogResult, Is.EqualTo(catalogResult))
                 Assert.That(roundTrip serviceProvider status, Is.EqualTo(status))
                 Assert.That(roundTrip serviceProvider namespacePrecondition, Is.EqualTo(namespacePrecondition))
@@ -458,20 +318,8 @@ type LibrarySerializationTests() =
                 Assert.That(roundTrip serviceProvider currentItem, Is.EqualTo(currentItem))
                 Assert.That(roundTrip serviceProvider currentSlot, Is.EqualTo(currentSlot))
                 Assert.That(roundTrip serviceProvider durableReceipts, Is.EqualTo(box durableReceipts))
-                Assert.That(roundTrip serviceProvider historySegment, Is.EqualTo(historySegment))
                 Assert.That(roundTrip serviceProvider baselineShard, Is.EqualTo(baselineShard))
                 Assert.That(roundTrip serviceProvider baselineManifest, Is.EqualTo(baselineManifest))
                 Assert.That(roundTrip serviceProvider contentLocation, Is.EqualTo(contentLocation))
-                Assert.That(roundTrip serviceProvider contentAvailable, Is.EqualTo(contentAvailable))
-
-                let actualEnvelope = roundTrip serviceProvider failedEnvelope
-                Assert.That(actualEnvelope.TopicName, Is.EqualTo(failedEnvelope.TopicName))
-                Assert.That(actualEnvelope.MessageId, Is.EqualTo(failedEnvelope.MessageId))
-                Assert.That(actualEnvelope.Body, Is.EqualTo(box failedEnvelope.Body))
-                Assert.That(actualEnvelope.ContentType, Is.EqualTo(failedEnvelope.ContentType))
-                Assert.That(actualEnvelope.Subject, Is.EqualTo(failedEnvelope.Subject))
-                Assert.That(actualEnvelope.CorrelationId, Is.EqualTo(failedEnvelope.CorrelationId))
-                Assert.That(actualEnvelope.ApplicationProperties, Has.Count.EqualTo(2))
-                Assert.That(actualEnvelope.ApplicationProperties["eventName"], Is.EqualTo(contentAvailable.EventName))
-                Assert.That(actualEnvelope.ApplicationProperties["repositoryId"], Is.EqualTo(repositoryId.ToString("D"))))
+                Assert.That(roundTrip serviceProvider contentAvailable, Is.EqualTo(contentAvailable)))
         )

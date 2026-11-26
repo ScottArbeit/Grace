@@ -8,7 +8,7 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
-/// Defines the six purpose-specific Orleans Cosmos providers used by remote Libraries.
+/// Defines the five purpose-specific Orleans Cosmos providers used by remote Libraries.
 module LibraryPersistence =
 
     [<Literal>]
@@ -24,9 +24,6 @@ module LibraryPersistence =
     let ReceiptsStorageName = Grace.Actors.LibraryRecords.ReceiptsStorageName
 
     [<Literal>]
-    let HistoryStorageName = Grace.Actors.LibraryRecords.HistoryStorageName
-
-    [<Literal>]
     let BaselinesStorageName = Grace.Actors.LibraryRecords.BaselinesStorageName
 
     [<Literal>]
@@ -40,9 +37,6 @@ module LibraryPersistence =
 
     [<Literal>]
     let ReceiptsContainerName = Grace.Actors.LibraryRecords.ReceiptsContainerName
-
-    [<Literal>]
-    let HistoryContainerName = Grace.Actors.LibraryRecords.HistoryContainerName
 
     [<Literal>]
     let BaselinesContainerName = Grace.Actors.LibraryRecords.BaselinesContainerName

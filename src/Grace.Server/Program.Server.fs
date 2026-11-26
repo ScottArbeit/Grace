@@ -309,7 +309,6 @@ module Program =
                 registerLibraryDocumentProvider siloBuilder LibraryPersistence.ChangesStorageName 2
                 registerLibraryDocumentProvider siloBuilder LibraryPersistence.CurrentStorageName 2
                 registerLibraryDocumentProvider siloBuilder LibraryPersistence.ReceiptsStorageName 3
-                registerLibraryDocumentProvider siloBuilder LibraryPersistence.HistoryStorageName 3
                 registerLibraryDocumentProvider siloBuilder LibraryPersistence.BaselinesStorageName 3
 
                 siloBuilder
@@ -427,10 +426,6 @@ module Program =
                     .AddCosmosGrainStorage(
                         LibraryPersistence.ReceiptsStorageName,
                         fun options -> configureCosmosGrainStorage LibraryPersistence.ReceiptsContainerName 3 options
-                    )
-                    .AddCosmosGrainStorage(
-                        LibraryPersistence.HistoryStorageName,
-                        fun options -> configureCosmosGrainStorage LibraryPersistence.HistoryContainerName 3 options
                     )
                     .AddCosmosGrainStorage(
                         LibraryPersistence.BaselinesStorageName,

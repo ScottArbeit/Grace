@@ -29,7 +29,6 @@ public partial class Program
             ["grace-library-changes"] = ["/PartitionKey", "/PartitionKey2"],
             ["grace-library-current"] = ["/PartitionKey", "/PartitionKey2"],
             ["grace-library-receipts"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"],
-            ["grace-library-history"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"],
             ["grace-library-baselines"] = ["/PartitionKey", "/PartitionKey2", "/PartitionKey3"]
         };
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
