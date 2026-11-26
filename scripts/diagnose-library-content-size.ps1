@@ -3,7 +3,7 @@
 .SYNOPSIS
 Reads and saves committed Library content declarations for one explicit repository scope.
 .DESCRIPTION
-Requires GRACE_SERVER_URI and a SystemAdmin GRACE_TOKEN. The epoch and committed cursor select
+Requires GRACE_SERVER_URI and a SystemAdmin GRACE_TOKEN. The committed cursor selects
 permanent accepted history; the enumeration timestamps are a read window, not a usage interval.
 This quantity excludes pending declarations and does not establish payload presence or repository totals.
 The complete successful JSON is validated and saved without changing integer or timestamp precision.
@@ -36,10 +36,6 @@ function Test-LibraryContentSizeResponse {
             if ([guid]::Parse($returnedScope.GetProperty($name).GetString()) -ne [guid]::Parse($Scope[$name])) {
                 throw 'The diagnostic scope does not match the requested repository.'
             }
-        }
-        $epoch = [guid]::Empty
-        if (-not [guid]::TryParse($value.GetProperty('Epoch').GetString(), [ref] $epoch) -or $epoch -eq [guid]::Empty) {
-            throw 'The diagnostic requires a non-empty Library epoch.'
         }
         foreach ($name in @('DeclaredLogicalBytes', 'DistinctManifestCount', 'CommittedCursor')) {
             $quantity = 0L

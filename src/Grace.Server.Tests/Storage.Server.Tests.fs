@@ -36,7 +36,7 @@ open System.Text.Json
 open System.Net.Http.Headers
 
 /// Reads persisted actor snapshots needed by the Library restart scenario.
-module private LibraryActorSnapshots =
+module internal LibraryActorSnapshots =
     /// Builds the exact one-, two-, or three-level provider partition key stored with a Library document.
     let private partitionKey (document: Dictionary<string, JsonElement>) =
         let builder = PartitionKeyBuilder()

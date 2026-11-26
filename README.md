@@ -63,7 +63,7 @@ Grace is written primarily in **F#**, and uses:
 
 ## Development process
 
-System administrators can inspect [committed Library content declarations](docs/Operations.md#committed-library-content-declarations) with `scripts/diagnose-library-content-size.ps1`. The result includes historical accepted content and its selected epoch/cursor; it does not establish complete repository storage or charges.
+System administrators can inspect [committed Library content declarations](docs/Operations.md#committed-library-content-declarations) with `scripts/diagnose-library-content-size.ps1`. The result includes historical accepted content and its selected committed cursor; it does not establish complete repository storage or charges.
 
 Grace work, by people and agents alike, follows one lightweight flow:
 

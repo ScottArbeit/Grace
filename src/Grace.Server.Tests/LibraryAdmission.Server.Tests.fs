@@ -201,6 +201,55 @@ module LibraryAdmissionHttpTests =
             Assert.That(conflict.ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong), "conflict copy")
         }
 
+    /// A conflict copy follows the same capacity rule as a create: at the slot limit, a copy that needs a new slot record
+    /// is refused. The test sets the stored slot count to the limit rather than creating 100,000 records.
+    [<Test>]
+    let ``a conflict copy at slot capacity is refused`` () =
+        task {
+            let repository = Guid.NewGuid().ToString("D")
+            let repositoryId = Guid.Parse repository
+            let! catalog = libraryRepository repository "Shared"
+            let! original = createFile repository catalog (rootParent "Shared") "edited.txt" "base"
+            let original = acceptedItem original
+            let! edited = updateContent repository catalog original original "first edit"
+            acceptedItem edited |> ignore
+
+            let! _ =
+                LibraryActorSnapshots.rewriteFrom<LibraryControlDocument>
+                    HostState.Value
+                    "grace-library-control"
+                    "Grace.Library.Control.v2"
+                    (fun control -> control.Catalog.RepositoryId = repositoryId)
+                    (fun control -> { control with SlotRecordCount = Grace.Actors.LibraryDecision.MaximumRecordCount })
+                    "Library control at slot capacity"
+
+            let operation = Guid.NewGuid()
+            let! prepared = prepare repository operation (Encoding.UTF8.GetBytes "stale edit")
+
+            let stale =
+                Parameters.Library.SubmitLibraryChangeParameters(
+                    OperationId = operation,
+                    LibraryCatalogVersion = catalog.Version,
+                    ChangeKind = ChangeKind.UpdateContent,
+                    ItemKind = ItemKind.File,
+                    ItemId = Nullable original.ItemId,
+                    UploadSessionId = Nullable prepared.UploadSessionId,
+                    ContentPrecondition =
+                        Some
+                            {
+                                ItemId = original.ItemId
+                                ExpectedContentVersionId = original.Content.Value.ContentVersionId
+                                ExpectedContentRevision = original.ContentRevision.Value
+                            }
+                )
+
+            scope repository stale
+            use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent stale)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.Not.EqualTo HttpStatusCode.OK, body)
+            Assert.That(body, Does.Contain("capacity"))
+        }
+
     /// Removing a Library is refused while any live item is under its root, and allowed once only tombstones remain.
     [<Test>]
     let ``removing a Library needs every item under it deleted`` () =
@@ -238,16 +287,32 @@ module LibraryAdmissionHttpTests =
             Assert.That(removed.LibraryCatalog.Libraries, Is.Empty)
         }
 
-    /// A wake the broker refuses never fails the change: Submit is accepted, the change commits, and the next change
-    /// is accepted too. The hosted server makes every wake for this one repository fail.
+    /// Waits for a change at most 30 seconds, so a change that waited on its wake fails the test instead of hanging it.
+    let private withinThirtySeconds (change: Threading.Tasks.Task<LibraryOperationReceiptDto>) =
+        task {
+            let! finished = Threading.Tasks.Task.WhenAny(change, Threading.Tasks.Task.Delay(TimeSpan.FromSeconds 30.0))
+            Assert.That(Object.ReferenceEquals(finished, change), Is.True, "The change waited for its wake.")
+            return! change
+        }
+
+    /// A change never waits for its wake: the hosted server makes every wake for this one repository never finish, and
+    /// each Submit still returns, accepted and committed, and the next change is accepted too.
     [<Test>]
-    let ``a failed wake never fails the change`` () =
+    let ``a change never waits for its wake`` () =
         task {
             let repository = AspireTestHost.libraryWakeFaultRepositoryId.ToString("D")
             let! catalog = libraryRepository repository "Shared"
-            let! first = createDirectory repository catalog (rootParent "Shared") "first"
+
+            let! first =
+                createDirectory repository catalog (rootParent "Shared") "first"
+                |> withinThirtySeconds
+
             acceptedItem first |> ignore
-            let! second = createDirectory repository catalog (rootParent "Shared") "second"
+
+            let! second =
+                createDirectory repository catalog (rootParent "Shared") "second"
+                |> withinThirtySeconds
+
             acceptedItem second |> ignore
 
             let status = Parameters.Library.GetLibraryStatusParameters()

@@ -45,6 +45,7 @@ module LibrarySynchronizationWindowsServerTests =
         let mutable beforeNextChangesGet: (unit -> unit) option = None
         let mutable beforeNextSubmit: (unit -> Task) option = None
         let mutable singleItemBootstrapPages = false
+        let mutable singleChangePages = false
         let mutable injectGap = 0
         let mutable replacementCursor: string option = None
         let mutable lastChangesStatus = 0
@@ -145,6 +146,10 @@ module LibrarySynchronizationWindowsServerTests =
                     let request = deserialize<Parameters.Library.GetLibraryChangesParameters> requestJson
                     requestedCursor <- request.AfterCursor
                     requestedCursors.Enqueue request.AfterCursor
+
+                    if singleChangePages then
+                        request.PageSize <- 1
+                        forward.Content <- createJsonContent request
 
                     let replacement =
                         lock manifestCallbackLock (fun () ->
@@ -257,6 +262,9 @@ module LibrarySynchronizationWindowsServerTests =
         member _.BeforeNextSubmit(action) = lock manifestCallbackLock (fun () -> beforeNextSubmit <- Some action)
         /// Exercises the actual server's immutable continuation route with one item per page.
         member _.UseSingleItemBootstrapPages() = singleItemBootstrapPages <- true
+
+        /// Makes every change page hold one change, so a pull of several changes spans several pages.
+        member _.UseSingleChangePages() = singleChangePages <- true
         /// Simulates one empty visibility page in place of the real response; the real changes stay on the server.
         member _.InjectEmptyVisibilityPage() = Interlocked.Exchange(&injectGap, 1) |> ignore
         /// Sends the next change request with this cursor instead of the copy's own, so the real server judges it.
@@ -2226,6 +2234,7 @@ module LibrarySynchronizationWindowsServerTests =
                 (Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId)
                     .Value
 
+            proxy.UseSingleChangePages()
             proxy.InjectEmptyVisibilityPage()
             let! emptyOutput = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
             use emptyStatus = System.Text.Json.JsonDocument.Parse(emptyOutput)
@@ -2267,12 +2276,23 @@ module LibrarySynchronizationWindowsServerTests =
             let completed = Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
             Assert.That(completed.Length, Is.EqualTo(1))
             Assert.That(partial.AppliedCursor, Is.EqualTo(completed[0].LastChangeCursor))
-            Assert.That(proxy.RequestedCursors |> Array.last, Is.EqualTo(original.AppliedCursor))
+            // The interrupted run asked for its second page from the cursor of the change it had just applied.
+            Assert.That(proxy.RequestedCursors |> Array.last, Is.EqualTo(partial.AppliedCursor))
 
             localSql copyB "DROP TRIGGER fail_second_library_completion;"
             |> ignore
 
+            let requestsBeforeResume = proxy.RequestedCursors.Length
             let! output = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let resumed =
+                proxy.RequestedCursors
+                |> Array.skip requestsBeforeResume
+
+            // The resumed run starts at the partial cursor and moves forward one page at a time, never asking for a page twice.
+            Assert.That(resumed |> Array.head, Is.EqualTo(partial.AppliedCursor))
+            Assert.That(resumed |> Array.distinct, Is.EqualTo(resumed))
+            Assert.That(resumed.Length, Is.EqualTo(2), "One request for each of the two remaining one-change pages.")
             use status = System.Text.Json.JsonDocument.Parse(output)
 
             Assert.That(

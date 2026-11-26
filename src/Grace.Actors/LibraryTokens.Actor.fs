@@ -34,7 +34,7 @@ module LibraryTokens =
 
     /// Returns a signed payload only when syntax, signature, and purpose all match.
     let tryVerify (key: byte array) purpose (token: string) =
-        match token.Split('.', StringSplitOptions.None) with
+        match (if isNull token then Array.empty else token.Split('.', StringSplitOptions.None)) with
         | [| encodedBody; encodedSignature |] ->
             match tryDecode encodedBody, tryDecode encodedSignature with
             | Some body, Some signature ->

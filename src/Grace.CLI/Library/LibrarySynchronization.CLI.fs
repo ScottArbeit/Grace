@@ -1296,14 +1296,22 @@ module internal LibrarySynchronization =
     let internal applyChangeWith afterPublication configuration correlationId expected change =
         applyChangeWithCancellation afterPublication CancellationToken.None configuration correlationId expected change
 
+    /// The most change pages one run pulls. Each page asks the server for changes up to its latest commit, so on a busy
+    /// repository a run could otherwise keep pulling, and keep holding the working-directory lease, indefinitely.
+    [<Literal>]
+    let internal MaximumPagesPerRun = 20
+
     /// Pulls contiguous changes, always from the applied cursor, so an interrupted or long-paused pull resumes exactly
-    /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run.
+    /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run, and so
+    /// does a pull that reaches MaximumPagesPerRun; the run then reports catchingUp.
     let private pull configuration correlationId (cancellationToken: CancellationToken) =
         task {
             let mutable continuePages = true
             let mutable caughtUp = false
+            let mutable pages = 0
 
-            while continuePages do
+            while continuePages && pages < MaximumPagesPerRun do
+                pages <- pages + 1
                 cancellationToken.ThrowIfCancellationRequested()
                 let before = state configuration
                 do! checkCatalog configuration correlationId before

@@ -63,6 +63,21 @@ module LibraryRecords =
 
         String.Join('|', components)
 
+    /// The grain type and key of one repository's control record.
+    let controlType = "Grace.Library.Control.v2"
+
+    /// The grain type of accepted journal records.
+    let changeType = "Grace.Library.Change.v2"
+
+    /// The key of the control record for one repository.
+    let controlKey (repositoryId: Guid) = key [ repositoryId.ToString("D") ]
+
+    /// The key of one accepted journal record: its cursor, in a partition of 200 consecutive cursors.
+    let changeKey (repositoryId: Guid) (cursor: int64) =
+        key [ repositoryId.ToString("D")
+              ((cursor - 1L) / 200L).ToString("D20")
+              cursor.ToString("D20") ]
+
     /// Reads one record into a fresh Orleans state wrapper so retries cannot reuse a stale ETag.
     let read<'T> (services: IServiceProvider) storageName grainType recordKey =
         task {

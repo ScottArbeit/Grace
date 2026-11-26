@@ -156,6 +156,64 @@ module LibraryQueries =
             return values.ToArray()
         }
 
+    /// Reads one repository's stored Library status straight from storage, without activating its actor. Activation
+    /// repairs a saved decision, so reading status this way is the only way it never repairs anything.
+    let readStatus (services: IServiceProvider) (repositoryId: RepositoryId) =
+        task {
+            match! LibraryRecords.read<LibraryControlDocument>
+                       services
+                       LibraryRecords.ControlStorageName
+                       LibraryRecords.controlType
+                       (LibraryRecords.controlKey repositoryId)
+                with
+            | None ->
+                return
+                    {
+                        State = "notInitialized"
+                        RepositoryId = repositoryId
+                        LibraryCatalogVersion = Guid.Empty
+                        PendingOperationCount = 0
+                        LastCompletedAt = None
+                    }
+            | Some (control, _) ->
+                let! lastCompleted =
+                    task {
+                        if control.CommittedCursor = 0L then
+                            return None
+                        else
+                            match! LibraryRecords.read<LibraryAcceptedChangeRecord>
+                                       services
+                                       LibraryRecords.ChangesStorageName
+                                       LibraryRecords.changeType
+                                       (LibraryRecords.changeKey repositoryId control.CommittedCursor)
+                                with
+                            | Some (record, _) -> return Some record.Change.AcceptedAt
+                            | None -> return None
+                    }
+
+                return
+                    {
+                        State = if control.Pending.IsSome then "repairing" else "ready"
+                        RepositoryId = repositoryId
+                        LibraryCatalogVersion = control.Catalog.Version
+                        PendingOperationCount = if control.Pending.IsSome then 1 else 0
+                        LastCompletedAt = lastCompleted
+                    }
+        }
+
+    /// Returns a query's first result, reading as many pages as it takes. Cosmos can return an empty page that still has
+    /// a continuation, so one empty page doesn't mean there are no results.
+    let private firstResult<'T> (iterator: FeedIterator<'T>) (cancellationToken: CancellationToken) =
+        task {
+            let mutable found = None
+
+            while found.IsNone && iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync(cancellationToken)
+                found <- page.Resource |> Seq.tryHead
+
+            return found
+        }
+
     /// Reports whether a live item directly occupies one parent identity.
     let hasLiveChildren (services: IServiceProvider) (repositoryId: RepositoryId) (parent: LibraryParentDto) cancellationToken =
         task {
@@ -186,12 +244,8 @@ module LibraryQueries =
                 | _ -> invalidArg (nameof parent) "A Library parent must identify one root or directory item."
 
             use iterator = container.GetItemQueryIterator<bool>(query, requestOptions = options)
-
-            if iterator.HasMoreResults then
-                let! page = iterator.ReadNextAsync(cancellationToken)
-                return page.Resource |> Seq.isEmpty |> not
-            else
-                return false
+            let! found = firstResult iterator cancellationToken
+            return found.IsSome
         }
 
     /// Appends only the visible contiguous journal prefix and reports the first missing cursor.
@@ -483,10 +537,11 @@ module LibraryQueries =
                         .WithParameter("@itemId", itemId)
 
                 use iterator = container.GetItemQueryIterator<int64>(query, requestOptions = options)
+                let! cursor = firstResult iterator cancellationToken
 
-                if iterator.HasMoreResults then
-                    let! page = iterator.ReadNextAsync(cancellationToken)
-                    visible <- page.Resource |> Seq.exists ((=) expectedCursor)
+                visible <-
+                    cursor
+                    |> Option.exists (fun value -> value >= expectedCursor)
 
             if not visible then
                 invalidOp $"The current Library partition did not expose committed cursor {expectedCursor}."

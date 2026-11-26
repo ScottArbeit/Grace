@@ -441,16 +441,13 @@ module Library =
                 | _ -> return! error StatusCodes.Status400BadRequest context "A parent and portable name are required."
             }
 
-    /// Returns the stored, content-free repository Library status without repairing anything.
+    /// Returns the stored, content-free repository Library status. It reads storage directly instead of calling the
+    /// actor, because activating the actor would repair a saved decision.
     let GetStatus: HttpHandler =
         fun _ context ->
             task {
                 let ids = Services.getGraceIds context
-
-                let! status =
-                    (libraryActor ids.RepositoryId)
-                        .GetStatus(Services.getCorrelationId context)
-
+                let! status = Grace.Actors.LibraryQueries.readStatus context.RequestServices ids.RepositoryId
                 return! ok context status
             }
 

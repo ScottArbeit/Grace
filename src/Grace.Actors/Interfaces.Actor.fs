@@ -809,8 +809,6 @@ module Interfaces =
         /// Repairs any pending accepted operation without admitting another command.
         abstract member Repair: correlationId: CorrelationId -> Task
 
-        /// Returns the stored, content-free Library repository status without repairing anything.
-        abstract member GetStatus: correlationId: CorrelationId -> Task<LibraryRepositoryStatusDto>
 
     /// Defines the operations for the AccessControl actor.
     [<Interface>]

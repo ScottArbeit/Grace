@@ -613,11 +613,15 @@ type LibraryActorTests() =
     /// A wake that throws, even before its first await, goes to the failure handler and never to the caller.
     [<Test>]
     member _.WakeFailureIsReportedAndNeverThrown() =
-        let failures = ResizeArray<exn>()
+        let failures = Collections.Concurrent.ConcurrentQueue<exn>()
 
-        LibraryWake.start (fun () -> Task.FromException(InvalidOperationException "broker down")) failures.Add
-        LibraryWake.start (fun () -> raise (InvalidOperationException "thrown before await")) failures.Add
+        LibraryWake.start (fun () -> Task.FromException(InvalidOperationException "broker down")) failures.Enqueue
+        LibraryWake.start (fun () -> raise (InvalidOperationException "thrown before await")) failures.Enqueue
         LibraryWake.start (fun () -> raise (InvalidOperationException "and the logger fails too")) (fun _ -> failwith "logger down")
+
+        // Failures are reported from the thread pool, after start has already returned.
+        SpinWait.SpinUntil((fun () -> failures.Count >= 2), TimeSpan.FromSeconds 10.0)
+        |> ignore
 
         Assert.That(failures |> Seq.map (fun ex -> ex.Message), Is.EquivalentTo([ "broker down"; "thrown before await" ]))
 
@@ -627,17 +631,25 @@ type LibraryActorTests() =
         let never = TaskCompletionSource()
         let started = Diagnostics.Stopwatch.StartNew()
         LibraryWake.start (fun () -> never.Task) (fun _ -> Assert.Fail("A pending wake isn't a failure."))
+
+        // A send that blocks before it even returns a task, like a slow client start, still can't hold up the caller.
+        LibraryWake.start
+            (fun () ->
+                Thread.Sleep(TimeSpan.FromSeconds 5.0)
+                Task.CompletedTask)
+            ignore
+
         Assert.That(started.Elapsed, Is.LessThan(TimeSpan.FromSeconds 1.0))
 
-    /// Status reports a saved decision as it is stored and never repairs it.
+    /// Status is read from storage without activating the actor, because activation repairs a saved decision. It reports the decision as stored.
     [<Test>]
     member _.StatusReadsSavedDecisionWithoutRepairingIt() =
         task {
             let control = { controlWith longRootCatalog 0L 0 0 with Pending = Some(LibraryPendingDecision.ItemChange(acceptedRecord 1L)) }
-            let actor, storage, provider = memoryActor control ignore
+            let _, storage, provider = memoryActor control ignore
             use _provider = provider
 
-            let! status = actor.GetStatus "corr-status"
+            let! status = LibraryQueries.readStatus provider repositoryId
 
             Assert.Multiple(
                 Action (fun () ->
@@ -657,12 +669,14 @@ type LibraryActorTests() =
             let! ahead = actor.GetChanges (LibraryTokens.cursor tokenKey repositoryId 5L) 100 "corr-ahead"
             let! foreign = actor.GetChanges (LibraryTokens.cursor tokenKey (Guid.NewGuid()) 1L) 100 "corr-foreign"
             let! unreadable = actor.GetChanges "not-a-cursor" 100 "corr-unreadable"
+            let! missing = actor.GetChanges null 100 "corr-null"
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(ahead, Is.EqualTo(Error LibraryCursorError.AheadOfServer: Result<LibraryChangePageDto, string>))
                     Assert.That(foreign, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>))
-                    Assert.That(unreadable, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>)))
+                    Assert.That(unreadable, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>))
+                    Assert.That(missing, Is.EqualTo(Error LibraryCursorError.NotIssuedHere: Result<LibraryChangePageDto, string>)))
             )
         }
 
@@ -705,6 +719,65 @@ type LibraryActorTests() =
                 Action (fun () ->
                     Assert.That((receiptOf tooLong).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
                     Assert.That((receiptOf fits).Outcome, Is.EqualTo(OutcomeKind.Accepted)))
+            )
+        }
+
+    /// Paths are measured and stored with the catalog's spelling of a root, even when the caller's spelling matches it
+    /// case-insensitively but is shorter in UTF-8. Here the catalog root uses "ⱥ" (3 bytes) and the caller sends "Ⱥ"
+    /// (2 bytes), so a 70-byte name fits under the caller's spelling but not under the catalog's.
+    [<Test>]
+    member _.RootSpellingFromCatalogDecidesPathLimitAndStoredParent() =
+        task {
+            let segment letter = String.replicate 80 letter
+
+            let catalogRoot =
+                [
+                    segment "ⱥ"
+                    segment "ⱥ"
+                    segment "ⱥ"
+                    segment "ⱥ"
+                ]
+                |> String.concat "/"
+
+            let callerRoot =
+                [
+                    segment "Ⱥ"
+                    segment "Ⱥ"
+                    segment "Ⱥ"
+                    segment "Ⱥ"
+                ]
+                |> String.concat "/"
+
+            Assume.That(String.Equals(catalogRoot, callerRoot, StringComparison.OrdinalIgnoreCase), Is.True)
+
+            let catalog = { longRootCatalog with Libraries = [| catalogRoot |] }
+            let actor, _, provider = memoryActor (controlWith catalog 0L 0 0) ignore
+            use _provider = provider
+            let callerParent = { Kind = "root"; LibraryPath = Some callerRoot; ItemId = None }
+            let storedParent = { Kind = "root"; LibraryPath = Some catalogRoot; ItemId = None }
+
+            let create (name: string) =
+                LibraryChangeCommand.CreateDirectory(
+                    Guid.NewGuid(),
+                    $"create-{name}",
+                    catalogVersion,
+                    {
+                        Parent = callerParent
+                        Name = name
+                        ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId storedParent name
+                        ExpectedState = "vacant"
+                    }
+                )
+
+            let! tooLong = actor.Submit (create (String.replicate 70 "n")) "user:test" authorization "corr-spelling-long"
+            let! fits = actor.Submit (create "short") "user:test" authorization "corr-spelling-fits"
+            let accepted = receiptOf fits
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((receiptOf tooLong).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
+                    Assert.That(accepted.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(accepted.Change.Value.Item.Namespace.Value.Parent, Is.EqualTo(storedParent)))
             )
         }
 

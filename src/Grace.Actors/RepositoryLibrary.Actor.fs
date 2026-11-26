@@ -31,8 +31,8 @@ type RepositoryLibraryActor
     ) =
     inherit Grain()
 
-    let controlType = "Grace.Library.Control.v2"
-    let changeType = "Grace.Library.Change.v2"
+    let controlType = LibraryRecords.controlType
+    let changeType = LibraryRecords.changeType
     let itemType = "Grace.Library.Item.v2"
     let slotType = "Grace.Library.Slot.v2"
     let receiptType = "Grace.Library.Receipt.v2"
@@ -43,41 +43,21 @@ type RepositoryLibraryActor
     /// Builds a repository-scoped provider key.
     let key (repositoryId: RepositoryId) tail = LibraryRecords.key (repositoryId.ToString("D") :: tail)
 
-    /// Returns the cursor-segment identity used by the permanent journal.
-    let changeSegment cursor = ((cursor - 1L) / 200L).ToString("D20")
-
     /// Reads the control record and current provider ETag.
-    let readControl repositoryId = LibraryRecords.read<LibraryControlDocument> services LibraryRecords.ControlStorageName controlType (key repositoryId [])
+    let readControl repositoryId =
+        LibraryRecords.read<LibraryControlDocument> services LibraryRecords.ControlStorageName controlType (LibraryRecords.controlKey repositoryId)
 
     /// Writes the control record through optimistic concurrency.
-    let writeControl repositoryId etag value = LibraryRecords.write services LibraryRecords.ControlStorageName controlType (key repositoryId []) etag value
+    let writeControl repositoryId etag value =
+        LibraryRecords.write services LibraryRecords.ControlStorageName controlType (LibraryRecords.controlKey repositoryId) etag value
 
     /// Reads one accepted journal record by repository cursor.
     let readChange repositoryId cursor =
-        LibraryRecords.read<LibraryAcceptedChangeRecord>
-            services
-            LibraryRecords.ChangesStorageName
-            changeType
-            (key
-                repositoryId
-                [
-                    changeSegment cursor
-                    cursor.ToString("D20")
-                ])
+        LibraryRecords.read<LibraryAcceptedChangeRecord> services LibraryRecords.ChangesStorageName changeType (LibraryRecords.changeKey repositoryId cursor)
 
     /// Writes one immutable accepted journal record.
     let createChange repositoryId (record: LibraryAcceptedChangeRecord) =
-        LibraryRecords.createExact
-            services
-            LibraryRecords.ChangesStorageName
-            changeType
-            (key
-                repositoryId
-                [
-                    changeSegment record.Cursor
-                    record.Cursor.ToString("D20")
-                ])
-            record
+        LibraryRecords.createExact services LibraryRecords.ChangesStorageName changeType (LibraryRecords.changeKey repositoryId record.Cursor) record
 
     /// Reads one permanent operation receipt.
     let readReceipt repositoryId (operationId: LibraryOperationId) =
@@ -206,6 +186,19 @@ type RepositoryLibraryActor
             | LibraryOperationOutcome.CatalogResult _ -> return invalidOp "A catalog operation cannot be returned as an item-change receipt."
         }
 
+    /// Rewrites a root parent to the catalog's stored spelling of that root, so items and slots placed under a root
+    /// always record the same spelling whatever case a caller used. Item parents are returned unchanged.
+    let canonicalParent (catalog: LibraryCatalogDto) (parent: LibraryParentDto) =
+        match parent.Kind, parent.LibraryPath with
+        | "root", Some path ->
+            match
+                catalog.Libraries
+                |> Array.tryFind (LibraryValidation.pathsEqual path)
+                with
+            | Some stored -> { parent with LibraryPath = Some stored }
+            | None -> parent
+        | _ -> parent
+
     /// Resolves a parent to its current complete repository-relative path while rejecting broken or cyclic graphs.
     let resolveParentPath repositoryId (catalog: LibraryCatalogDto) parent =
         let rec loop visited current =
@@ -215,7 +208,11 @@ type RepositoryLibraryActor
                     catalog.Libraries
                     |> Array.exists (LibraryValidation.pathsEqual root)
                     ->
-                    return root
+                    // Paths use the catalog's own spelling of the root, which can differ from the caller's in case and
+                    // therefore in UTF-8 length.
+                    return
+                        catalog.Libraries
+                        |> Array.find (LibraryValidation.pathsEqual root)
                 | "item", None, Some itemId when Set.contains itemId visited -> return invalidOp "The Library parent graph contains a cycle."
                 | "item", None, Some itemId ->
                     match! readItem repositoryId itemId with
@@ -457,14 +454,14 @@ type RepositoryLibraryActor
 
         LibraryWake.start
             (fun () ->
-                if LibraryWake.shouldFail repositoryId then
-                    invalidOp "A hosted test asked this repository's Library wakes to fail."
-
-                sendLibraryWake
-                    (stableMessageId repositoryId record.Cursor)
-                    (GraceEvent.LibraryContentAvailableEvent payload)
-                    (EventMetadata.New record.CorrelationId "RepositoryLibraryActor")
-                    CancellationToken.None)
+                if LibraryWake.shouldStall repositoryId then
+                    LibraryWake.stalled ()
+                else
+                    sendLibraryWake
+                        (stableMessageId repositoryId record.Cursor)
+                        (GraceEvent.LibraryContentAvailableEvent payload)
+                        (EventMetadata.New record.CorrelationId "RepositoryLibraryActor")
+                        CancellationToken.None)
             (fun ex ->
                 // Created only on failure, so building the actor never needs a configured host.
                 loggerFactory
@@ -613,6 +610,18 @@ type RepositoryLibraryActor
 
             let! _ = createReceipt repositoryId receipt
             return publicResult
+        }
+
+    /// Waits until this silo's Cosmos queries can see the last committed change, so a query's answer covers every
+    /// committed item. After a restart, a fresh client can otherwise miss a recent item under session consistency.
+    /// Seeing the newest item in the partition means the earlier ones are visible too.
+    let ensureCommittedVisible repositoryId (control: LibraryControlDocument) =
+        task {
+            if control.CommittedCursor > 0L then
+                match! readChange repositoryId control.CommittedCursor with
+                | Some (record, _) ->
+                    do! LibraryQueries.waitForItemCursor services repositoryId record.Change.Item.ItemId control.CommittedCursor CancellationToken.None
+                | None -> invalidOp "The committed Library boundary has no journal record."
         }
 
     /// Returns the current control state after synchronous repair.
@@ -990,11 +999,16 @@ type RepositoryLibraryActor
                                         if add then
                                             Task.FromResult false
                                         else
-                                            LibraryQueries.hasLiveChildren
-                                                services
-                                                repositoryId
-                                                { Kind = "root"; LibraryPath = Some normalized; ItemId = None }
-                                                CancellationToken.None
+                                            task {
+                                                do! ensureCommittedVisible repositoryId control
+
+                                                return!
+                                                    LibraryQueries.hasLiveChildren
+                                                        services
+                                                        repositoryId
+                                                        (canonicalParent control.Catalog { Kind = "root"; LibraryPath = Some normalized; ItemId = None })
+                                                        CancellationToken.None
+                                            }
 
                                     if occupied then
                                         return! rejectCatalog CatalogRejectionReason.SlotOccupied
@@ -1077,7 +1091,8 @@ type RepositoryLibraryActor
                                     }
 
                                 match command with
-                                | LibraryChangeCommand.CreateFile (_, _, _, expectation, uploadSessionId) ->
+                                | LibraryChangeCommand.CreateFile (_, _, _, submitted, uploadSessionId) ->
+                                    let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
                                     let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
 
                                     let destinationPath =
@@ -1129,7 +1144,8 @@ type RepositoryLibraryActor
                                                 acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
                                                 |> submit
 
-                                | LibraryChangeCommand.CreateDirectory (_, _, _, expectation) ->
+                                | LibraryChangeCommand.CreateDirectory (_, _, _, submitted) ->
+                                    let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
                                     let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
 
                                     let destinationPath =
@@ -1293,6 +1309,7 @@ type RepositoryLibraryActor
                                         let! placement =
                                             task {
                                                 if current.Item.ItemKind = ItemKind.Directory then
+                                                    do! ensureCommittedVisible repositoryId control
                                                     let! items = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
 
                                                     return LibraryDecision.subtreeRejection control.Catalog parentPath itemId normalizedName items
@@ -1324,7 +1341,9 @@ type RepositoryLibraryActor
                                                 acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
                                                 |> submit
 
-                                | LibraryChangeCommand.Move (_, _, _, itemId, namespacePrecondition, destinationParent) ->
+                                | LibraryChangeCommand.Move (_, _, _, itemId, namespacePrecondition, submittedParent) ->
+                                    let destinationParent = canonicalParent control.Catalog submittedParent
+
                                     match! readItem repositoryId itemId with
                                     | None ->
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.ItemMissing control.Catalog
@@ -1352,6 +1371,7 @@ type RepositoryLibraryActor
                                         let! placement =
                                             task {
                                                 if current.Item.ItemKind = ItemKind.Directory then
+                                                    do! ensureCommittedVisible repositoryId control
                                                     let! items = LibraryQueries.readCurrentItems services repositoryId CancellationToken.None
 
                                                     return LibraryDecision.subtreeRejection control.Catalog parentPath itemId prior.Name items
@@ -1405,6 +1425,7 @@ type RepositoryLibraryActor
                                         return Ok receipt
                                     | Some (current, _) when current.Item.ItemKind = ItemKind.Directory ->
                                         let parent = { Kind = "item"; LibraryPath = None; ItemId = Some itemId }
+                                        do! ensureCommittedVisible repositoryId control
                                         let! hasChildren = LibraryQueries.hasLiveChildren services repositoryId parent CancellationToken.None
 
                                         if hasChildren then
@@ -1471,8 +1492,8 @@ type RepositoryLibraryActor
         member this.GetSlot parent name _ =
             task {
                 let repositoryId = this.GetPrimaryKey()
-                do! repairPending repositoryId
-                return! getSlot repositoryId parent name
+                let! control, _ = currentControl repositoryId
+                return! getSlot repositoryId (canonicalParent control.Catalog parent) name
             }
 
         member this.GetAcceptedChange contentRevision _ =
@@ -1493,11 +1514,7 @@ type RepositoryLibraryActor
                 let repositoryId = this.GetPrimaryKey()
                 let! control, _ = currentControl repositoryId
 
-                if control.CommittedCursor > 0L then
-                    match! readChange repositoryId control.CommittedCursor with
-                    | Some (record, _) ->
-                        do! LibraryQueries.waitForItemCursor services repositoryId record.Change.Item.ItemId control.CommittedCursor CancellationToken.None
-                    | None -> invalidOp "The committed Library boundary has no journal record."
+                do! ensureCommittedVisible repositoryId control
 
                 let! bootstrapId, manifest = buildBaseline repositoryId control
                 let size = boundedPageSize pageSize
@@ -1617,39 +1634,3 @@ type RepositoryLibraryActor
                 do! repairPending repositoryId
             }
             :> Task
-
-        member this.GetStatus _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-
-                // A plain read: it reports a saved decision that is waiting for repair instead of repairing it.
-                match! readControl repositoryId with
-                | None ->
-                    return
-                        {
-                            State = "notInitialized"
-                            RepositoryId = repositoryId
-                            LibraryCatalogVersion = Guid.Empty
-                            PendingOperationCount = 0
-                            LastCompletedAt = None
-                        }
-                | Some (control, _) ->
-                    let! lastCompleted =
-                        task {
-                            if control.CommittedCursor = 0L then
-                                return None
-                            else
-                                match! readChange repositoryId control.CommittedCursor with
-                                | Some (record, _) -> return Some record.Change.AcceptedAt
-                                | None -> return None
-                        }
-
-                    return
-                        {
-                            State = if control.Pending.IsSome then "repairing" else "ready"
-                            RepositoryId = repositoryId
-                            LibraryCatalogVersion = control.Catalog.Version
-                            PendingOperationCount = if control.Pending.IsSome then 1 else 0
-                            LastCompletedAt = lastCompleted
-                        }
-            }

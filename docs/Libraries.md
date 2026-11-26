@@ -144,13 +144,20 @@ Library application shares root exclusion with Branch, Connect, and Watch while 
 
 ## HTTP, SDK, and generated clients
 
-The remote contract has 15 HTTP operations under `/libraries`:
+The remote contract has 13 HTTP operations under `/libraries`:
 
 - Catalog: get, list, add, and remove.
 - Bootstrap: start and continue.
-- Ordered state: get changes, operation receipts, current items, namespace slots, and status.
+- Ordered state: get changes, namespace slots, and status.
 - Changes: prepare content and submit a change.
 - Immutable reads: prepare a signed read URL and download its accepted content until expiry.
+
+There's no separate route for an operation's receipt or an item's current state. To recover a receipt after a lost
+response, resubmit the identical request with the same operation ID; the server returns the original result. An
+item's current state comes from bootstrap and the change feed.
+
+A sync run pulls at most 20 pages of changes. On a busy repository it reports `catchingUp` and the next run continues
+from the applied cursor, so one run never holds the working directory indefinitely.
 
 `Grace.SDK.Libraries` is the handwritten .NET facade. The static OpenAPI sources are `src/OpenAPI/Libraries.Components.OpenAPI.yaml` and `src/OpenAPI/Libraries.Paths.OpenAPI.yaml`. The standard generator produces TypeScript, Python, and Rust raw clients behind their existing facade boundary.
 
