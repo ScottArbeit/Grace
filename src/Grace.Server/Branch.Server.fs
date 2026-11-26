@@ -1101,21 +1101,6 @@ module Branch =
     let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
         task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
-    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
-    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
-        task {
-            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
-            let mutable ownedPath = None
-
-            for relativePath in relativePaths do
-                if ownedPath.IsNone then
-                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
-
-                    if isInLibrary then ownedPath <- Some relativePath
-
-            return ownedPath
-        }
-
     /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
@@ -1154,7 +1139,7 @@ module Branch =
                                 })
                     }
 
-                let! libraryPath = tryFindLibraryPath repositoryId correlationId candidatePaths
+                let! libraryPath = Services.tryFindLibraryPath repositoryId correlationId candidatePaths
 
                 libraryPath
                 |> Option.iter (fun path -> setLibraryPolicyError context path correlationId)

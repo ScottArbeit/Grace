@@ -70,11 +70,18 @@ type LibraryMemoryTestStorage() =
     let records = Dictionary<string, obj * string>(StringComparer.Ordinal)
     let mutable writeCount = 0
     let mutable nextETag = 0
+    let readCounts = Dictionary<string, int>(StringComparer.Ordinal)
 
     let storageKey (grainType: string) (grainId: GrainId) = $"{grainType}|{grainId}"
 
     /// Counts every write and clear the actor made.
     member _.WriteCount = writeCount
+
+    /// Counts the actor's reads of one record type.
+    member _.ReadCount(grainType: string) =
+        match readCounts.TryGetValue grainType with
+        | true, count -> count
+        | _ -> 0
 
     /// Seeds one record as if an earlier turn had written it.
     member _.Store<'T>(grainType, recordKey, value: 'T) =
@@ -89,6 +96,13 @@ type LibraryMemoryTestStorage() =
 
     interface IGrainStorage with
         member _.ReadStateAsync<'T>(grainType, grainId, state: IGrainState<'T>) =
+            let count =
+                match readCounts.TryGetValue grainType with
+                | true, count -> count
+                | _ -> 0
+
+            readCounts[grainType] <- count + 1
+
             match records.TryGetValue(storageKey grainType grainId) with
             | true, (value, etag) ->
                 state.State <- unbox<'T> value
@@ -656,6 +670,53 @@ type LibraryActorTests() =
                     Assert.That(status.State, Is.EqualTo("repairing"))
                     Assert.That(status.PendingOperationCount, Is.EqualTo(1))
                     Assert.That(storage.WriteCount, Is.Zero, "Reading status must not write anything."))
+            )
+        }
+
+    /// Every save and reference request reads the catalog, so with no saved decision the read costs one control read.
+    [<Test>]
+    member _.CatalogReadWithNoSavedDecisionReadsControlOnce() =
+        task {
+            let actor, storage, provider = memoryActor (controlWith longRootCatalog 0L 0 0) ignore
+            use _provider = provider
+
+            let! catalog = actor.GetCatalog "catalog-read"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(catalog, Is.EqualTo(longRootCatalog))
+                    Assert.That(storage.ReadCount "Grace.Library.Control.v2", Is.EqualTo(1)))
+            )
+        }
+
+    /// Reading the catalog finishes a saved catalog decision first, so the caller never sees the catalog from before it.
+    [<Test>]
+    member _.CatalogReadFinishesSavedCatalogDecisionFirst() =
+        task {
+            let initial = LibraryCatalogDto.CreateInitial(repositoryId, timestamp, "user:test")
+            let chosenVersion = Guid.Parse("5b0f3c43-7f3c-4f39-9d1e-0d7f7d1b7d2a")
+
+            let pending =
+                LibraryPendingDecision.CatalogChange(operationId, "request-add", initial.Version, chosenVersion, true, "Shared", timestamp, "user:test")
+
+            let actor, storage, provider = memoryActor { controlWith initial 0L 0 0 with Pending = Some pending } ignore
+            use _provider = provider
+
+            let! catalog = actor.GetCatalog "catalog-read"
+
+            let stored = storage.TryGet<LibraryControlDocument>("Grace.Library.Control.v2", repositoryId.ToString("D"))
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(catalog.Libraries, Is.EqualTo([| "Shared" |]))
+                    Assert.That(catalog.Version, Is.EqualTo(chosenVersion))
+
+                    Assert.That(
+                        stored
+                        |> Option.exists (fun control -> control.Pending.IsNone),
+                        Is.True,
+                        "The saved decision is finished."
+                    ))
             )
         }
 

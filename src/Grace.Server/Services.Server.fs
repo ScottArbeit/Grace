@@ -156,3 +156,12 @@ module Services =
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
     let result500ServerError<'T> = returnResult<'T> StatusCodes.Status500InternalServerError
+
+    /// Returns the first of the paths that the repository's current Library catalog owns. A save or reference checks
+    /// every path it holds, so this reads the catalog once and judges the paths in memory.
+    let tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
+        task {
+            let actor = grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
+            let! catalog = actor.GetCatalog correlationId
+            return Grace.Shared.Validation.Library.tryFindOwnedPath catalog relativePaths
+        }

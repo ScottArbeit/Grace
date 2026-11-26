@@ -122,6 +122,15 @@ module Library =
             pathsEqual normalizedPath root
             || normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
 
+    /// Returns the first of the paths that the catalog owns, so one catalog read judges a whole save or reference
+    /// against a single catalog version.
+    let tryFindOwnedPath (configuration: LibraryCatalogDto) (paths: string seq) =
+        if Array.isEmpty configuration.Libraries then
+            None
+        else
+            paths
+            |> Seq.tryFind (configurationOwnsPath configuration)
+
     /// Normalizes and sorts one complete root set while enforcing uniqueness, overlap, and count bounds.
     let normalizeLibraries (libraries: string array) =
         if isNull libraries then

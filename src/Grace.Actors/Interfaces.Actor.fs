@@ -770,9 +770,6 @@ module Interfaces =
             correlationId: CorrelationId ->
                 Task<Result<LibraryCatalogChangeResultDto, string>>
 
-        /// Classifies one normalized repository-relative path against the catalog state observed for this actor call.
-        abstract member IsInLibrary: relativePath: string -> correlationId: CorrelationId -> Task<bool>
-
         /// Repairs prior accepted work, then submits one deterministic command against the actor-owned catalog policy.
         abstract member Submit:
             command: LibraryChangeCommand ->

@@ -20,9 +20,9 @@ Every repository is created with a persisted empty `LibraryCatalogDto`. Catalog 
 
 A Library is one normalized repository-relative path. Libraries must be unique and non-overlapping. Adding a Library succeeds only when that path is empty in the outgoing version-control namespace. Removing a Library succeeds only when its Library namespace is empty.
 
-Once configured, a Library and its descendants belong to Libraries rather than the version-control namespace. Save, Reference, Branch, and Working Directory Update planning query `RepositoryLibraryActor.IsInLibrary` using exact path-segment matching. For example, Library `shared` owns `shared` and `shared/design.md`, but not `shared-old`.
+Once configured, a Library and its descendants belong to Libraries rather than the version-control namespace. Saving directory versions and creating a reference (save, checkpoint, commit, promote, tag, and external) refuse any path a Library owns, using exact path-segment matching. For example, Library `shared` owns `shared` and `shared/design.md`, but not `shared-old`.
 
-The actor classifies each path against its current catalog when it processes the call. A returned Boolean can become stale after return. Version-control gestures remain in their existing domains, do not route through or hold `RepositoryLibraryActor`, and must retain their existing stale-authority checks.
+Each request reads the current catalog from `RepositoryLibraryActor.GetCatalog` once and checks all of its paths against that one catalog version, so a 10,000-file root costs one catalog read, not one per path. The catalog can change after the read. Version-control gestures remain in their existing domains, do not route through or hold `RepositoryLibraryActor`, and must retain their existing stale-authority checks.
 
 Configuring a Library does not copy, delete, migrate, import, or publish files. It changes repository ownership and path classification only.
 

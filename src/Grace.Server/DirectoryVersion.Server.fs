@@ -56,21 +56,6 @@ module DirectoryVersion =
                 )
                 .Length
 
-    /// Returns the first path owned by the Library catalog snapshot observed for each actor read.
-    let private tryFindLibraryPath (repositoryId: RepositoryId) correlationId (relativePaths: string seq) =
-        task {
-            let actor = ApplicationContext.grainFactory.GetGrain<IRepositoryLibraryActor>(repositoryId)
-            let mutable ownedPath = None
-
-            for relativePath in relativePaths do
-                if ownedPath.IsNone then
-                    let! isInLibrary = actor.IsInLibrary relativePath correlationId
-
-                    if isInLibrary then ownedPath <- Some relativePath
-
-            return ownedPath
-        }
-
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> DirectoryVersionParameters>
         (context: HttpContext)
@@ -544,7 +529,7 @@ module DirectoryVersion =
                                         |> Seq.map (fun file -> string file.RelativePath)
                                 })
 
-                        let! libraryPath = tryFindLibraryPath graceIds.RepositoryId correlationId candidatePaths
+                        let! libraryPath = Services.tryFindLibraryPath graceIds.RepositoryId correlationId candidatePaths
 
                         match libraryPath with
                         | Some path ->

@@ -625,13 +625,18 @@ type RepositoryLibraryActor
                 | None -> invalidOp "The committed Library boundary has no journal record."
         }
 
-    /// Returns the current control state after synchronous repair.
+    /// Returns the current control state after synchronous repair. Control with no saved decision is already current,
+    /// so the common case reads it once; only a saved decision is repaired and read again.
     let currentControl repositoryId : Task<LibraryControlDocument * string> =
         task {
-            do! repairPending repositoryId
-
             match! readControl repositoryId with
-            | Some value -> return value
+            | Some (control, etag) when control.Pending.IsNone -> return control, etag
+            | Some _ ->
+                do! repairPending repositoryId
+
+                match! readControl repositoryId with
+                | Some value -> return value
+                | None -> return invalidOp "Library catalog is not initialized."
             | None -> return invalidOp "Library catalog is not initialized."
         }
 
@@ -1044,13 +1049,6 @@ type RepositoryLibraryActor
                                                 principalId
 
                                         return Ok result
-            }
-
-        member this.IsInLibrary path _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-                let! control, _ = currentControl repositoryId
-                return LibraryDecision.isInLibrary control.Catalog path
             }
 
         member this.Submit command principalId authorization correlationId =
