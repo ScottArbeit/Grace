@@ -443,17 +443,18 @@ type RepositoryLibraryActor
     /// Starts one advisory wake for a committed change and returns without waiting for it. A wake that fails or never
     /// finishes is logged and never reaches the caller, because clients poll anyway.
     let sendWake repositoryId (record: LibraryAcceptedChangeRecord) =
-        let payload =
-            LibraryContentAvailable.Create(
-                repositoryId,
-                LibraryTokens.cursor libraryTokenKey repositoryId record.Cursor,
-                record.Change.LibraryCatalogVersion,
-                record.Change.AcceptedAt,
-                record.CorrelationId
-            )
-
         LibraryWake.start
             (fun () ->
+                // Built here, on the thread pool, so even signing the cursor stays out of the grain's turn.
+                let payload =
+                    LibraryContentAvailable.Create(
+                        repositoryId,
+                        LibraryTokens.cursor libraryTokenKey repositoryId record.Cursor,
+                        record.Change.LibraryCatalogVersion,
+                        record.Change.AcceptedAt,
+                        record.CorrelationId
+                    )
+
                 if LibraryWake.shouldStall repositoryId then
                     LibraryWake.stalled ()
                 else

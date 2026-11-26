@@ -68,6 +68,10 @@ module internal LibrarySynchronization =
     let internal cursorMismatchNextStep =
         "This copy's Library state doesn't match the server, and Grace can't reset a copy yet, so Library sync is stopped here. Your saved work is kept. Version-control work isn't affected."
 
+    /// Explains an accepted rename that one run didn't finish applying because earlier changes were still arriving.
+    let internal renameCatchingUpDiagnostic =
+        "Library sync is still applying earlier changes and stopped at its per-run page limit. Nothing is obstructed; rerun the same command to finish applying this rename."
+
     /// Next step while this copy can't adopt a changed Library catalog.
     let internal catalogChangedNextStep =
         "The repository's Library catalog changed, and this copy can't adopt catalog changes yet, so Library sync is stopped here. Version-control work isn't affected."
@@ -1296,21 +1300,23 @@ module internal LibrarySynchronization =
     let internal applyChangeWith afterPublication configuration correlationId expected change =
         applyChangeWithCancellation afterPublication CancellationToken.None configuration correlationId expected change
 
-    /// The most change pages one run pulls. Each page asks the server for changes up to its latest commit, so on a busy
-    /// repository a run could otherwise keep pulling, and keep holding the working-directory lease, indefinitely.
+    /// The most change pages one run pulls, across all its pulls. Each page asks the server for changes up to its latest
+    /// commit, so on a busy repository a run could otherwise keep pulling, and keep holding the working-directory lease,
+    /// indefinitely.
     [<Literal>]
     let internal MaximumPagesPerRun = 20
 
     /// Pulls contiguous changes, always from the applied cursor, so an interrupted or long-paused pull resumes exactly
     /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run, and so
-    /// does a pull that reaches MaximumPagesPerRun; the run then reports catchingUp.
-    let private pull configuration correlationId (cancellationToken: CancellationToken) =
+    /// does a pull that uses up the run's remaining page budget; the run then reports catchingUp. Returns whether the pull
+    /// caught up and how many pages it used.
+    let private pull configuration correlationId (pageBudget: int) (cancellationToken: CancellationToken) =
         task {
             let mutable continuePages = true
             let mutable caughtUp = false
             let mutable pages = 0
 
-            while continuePages && pages < MaximumPagesPerRun do
+            while continuePages && pages < pageBudget do
                 pages <- pages + 1
                 cancellationToken.ThrowIfCancellationRequested()
                 let before = state configuration
@@ -1342,7 +1348,7 @@ module internal LibrarySynchronization =
                 continuePages <- page.HasMore && page.Changes.Length > 0
                 do! checkCatalog configuration correlationId (state configuration)
 
-            return caughtUp
+            return caughtUp, pages
         }
 
     /// Records why a run stopped. A requested stop isn't a failure: it records nothing and leaves the state as it was.
@@ -1372,8 +1378,9 @@ module internal LibrarySynchronization =
 
             setState configuration.GraceStatusFile (state configuration) "blocked"
 
-    /// Runs finite pending submissions and ordered pulls under the existing shared root lease.
-    let run (configuration: GraceConfiguration) correlationId cancellationToken =
+    /// Runs finite pending submissions and ordered pulls under the existing shared root lease. Returns the status and
+    /// whether the run stopped because it used up its page budget.
+    let private runCounted (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then
                 invalidOp "Library synchronization requires Windows 11."
@@ -1399,6 +1406,7 @@ module internal LibrarySynchronization =
 
                 let mutable again = true
                 let mutable caughtUp = false
+                let mutable pagesLeft = MaximumPagesPerRun
 
                 while again do
                     cancellationToken.ThrowIfCancellationRequested()
@@ -1430,7 +1438,8 @@ module internal LibrarySynchronization =
                         index <- index + 1
 
                     cancellationToken.ThrowIfCancellationRequested()
-                    let! completePull = pull configuration correlationId cancellationToken
+                    let! completePull, pagesUsed = pull configuration correlationId pagesLeft cancellationToken
+                    pagesLeft <- pagesLeft - pagesUsed
                     caughtUp <- completePull
 
                     if completePull
@@ -1445,6 +1454,7 @@ module internal LibrarySynchronization =
 
                     again <-
                         completePull
+                        && pagesLeft > 0
                         && remaining.Length > 0
                         && (submitted
                             || captured
@@ -1461,11 +1471,19 @@ module internal LibrarySynchronization =
                 setState configuration.GraceStatusFile current (if caughtUp && pendingCount = 0 then "current" else "catchingUp")
                 pruneClassified configuration.GraceStatusFile configuration.RepositoryId 128
                 recordSyncSuccess configuration.GraceStatusFile configuration.RepositoryId (getCurrentInstant().ToUnixTimeTicks())
-                return! status configuration
+                let! current = status configuration
+                return current, pagesLeft = 0 && not caughtUp
             with
             | ex ->
                 finishFailedRun configuration submitting cancellationToken ex
                 return raise ex
+        }
+
+    /// Runs finite pending submissions and ordered pulls under the existing shared root lease.
+    let run configuration correlationId cancellationToken =
+        task {
+            let! current, _ = runCounted configuration correlationId cancellationToken
+            return current
         }
 
     /// Lets a racing pause skip a Watch tick without terminating Watch or hiding unrelated synchronization failures.
@@ -1547,18 +1565,30 @@ module internal LibrarySynchronization =
             if selected.Terminal then
                 return renameResult selected None
             else
-                let! reason =
+                let! reason, outOfPages =
                     task {
                         try
-                            let! _ = run configuration correlationId cancellationToken
-                            return None
+                            let! _, outOfPages = runCounted configuration correlationId cancellationToken
+                            return None, outOfPages
                         with
-                        | ex -> return Some ex.Message
+                        | ex -> return Some ex.Message, false
                     }
 
                 let persisted =
                     readOperations configuration.GraceStatusFile configuration.RepositoryId
                     |> Array.find (fun operation -> operation.OperationId = selected.OperationId)
+
+                // A run that used up its page budget while earlier changes were still arriving stopped before it reached
+                // the rename. Nothing is obstructed; another run continues.
+                let reason =
+                    match reason with
+                    | None when
+                        outOfPages
+                        && persisted.Accepted.IsSome
+                        && not persisted.Terminal
+                        ->
+                        Some renameCatchingUpDiagnostic
+                    | _ -> reason
 
                 return renameResult persisted reason
         }

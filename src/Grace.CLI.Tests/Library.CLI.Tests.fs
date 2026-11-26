@@ -50,6 +50,25 @@ module LibraryCommandTests =
         if outcome <> "completed" then
             Assert.That(message, Does.Not.Contain("completed:"))
 
+    /// A rename that one run didn't finish because sync reached its page limit isn't described as obstructed.
+    [<Test>]
+    let ``rename stopped by the page limit doesn't ask the user to resolve an obstruction`` () =
+        let result: LibrarySynchronization.RenameResult =
+            {
+                OperationId = Guid.NewGuid()
+                SourcePath = "Library/a.txt"
+                TargetPath = "Library/b.txt"
+                Outcome = LibrarySynchronization.RenameOutcome.AcceptedButObstructed(Some LibrarySynchronization.renameCatchingUpDiagnostic)
+            }
+
+        let message = LibraryCommand.renameMessage result
+
+        Assert.That((LibraryCommand.renameOutput result).Outcome, Is.EqualTo("acceptedButObstructed"))
+
+        Assert.That(message, Does.Contain("local application is incomplete"))
+        Assert.That(message, Does.Not.Contain("Resolve the obstruction"))
+        Assert.That(message, Does.Contain("rerun the same command"))
+
     /// Supplies fixed repository scope independent of the current working copy.
     let private ownerId = Guid.Parse "a866eac9-c4aa-496b-aef7-851cc9dbe059"
     let private organizationId = Guid.Parse "d9be512f-c4a0-48d7-ae24-9e383dfeab1f"

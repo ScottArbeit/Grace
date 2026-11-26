@@ -209,7 +209,7 @@ Human output and `cli-json-v1` data distinguish four outcomes. JSON exposes `Ope
 | `completed` | The accepted rename and local completion committed. The item keeps its identity at the new name. Exit code is zero. |
 | `rejected` | The server definitively rejected the request. The command retained its receipt/reason and changed no local filename, item or applied cursor. Later `grace library sync run` can apply unrelated or competing accepted changes. |
 | `ambiguous` | Acceptance is unresolved, including cancellation or a lost response. Rerun the same command to resume the retained operation. |
-| `acceptedButObstructed` | The server accepted, but local application is incomplete. Preserve and resolve the reported obstruction, then rerun the same command. |
+| `acceptedButObstructed` | The server accepted, but local application is incomplete. `Diagnostic` says why: a reported obstruction to preserve and resolve, or sync reaching its 20-page limit while earlier changes were still arriving, which needs nothing resolved. Either way, rerun the same command. |
 
 All incomplete or rejected outcomes return a nonzero exit code. A destination created before rename preparation remains an obstruction; Grace does not capture it as a new file or interpret it as an edit to the renamed item. Preserve those bytes outside the destination, then retry the same command. Saved edits at either path during prepared application retain their existing materialized content revision. Empty files and obstructions remain protected. Rejected saved-content operations retain their bytes and pending request; only a definitively rejected unprepared rename retires without an application effect.
 
