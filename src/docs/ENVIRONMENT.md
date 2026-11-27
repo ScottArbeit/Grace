@@ -267,8 +267,8 @@ counter/workflow snapshots remain responsible for correctness.
 
 ### Orleans
 
-- `orleans_cluster_id`: Orleans cluster ID.
-- `orleans_service_id`: Orleans service ID.
+- `grace__orleans__clusterid`: Orleans cluster ID.
+- `grace__orleans__serviceid`: Orleans service ID.
 
 ### Pub/Sub Routing
 
