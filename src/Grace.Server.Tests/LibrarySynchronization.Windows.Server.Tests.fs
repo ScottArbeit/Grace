@@ -2817,55 +2817,214 @@ module LibrarySynchronizationWindowsServerTests =
         let path = Path.Combine(copy, relative.Replace('/', Path.DirectorySeparatorChar))
         if File.Exists(path) then Some(File.ReadAllText(path)) else None
 
-    /// #1081: an administrator adds a Library while Watch runs on another copy. That copy creates the empty folder
-    /// within seconds without a restart or a command, and a file saved in the new Library then arrives there.
+    /// Connects another working copy to the same main-branch save as a copy from connectWatchedCopyAsync, with the same
+    /// token, so a second Watch can run against the same repository.
+    let private connectAnotherWatchedCopyAsync (repositoryId: Guid) (branch: Grace.Types.Branch.BranchDto) token (copy: string) =
+        task {
+            Directory.CreateDirectory(copy) |> ignore
+            let! current = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
+
+            let! connected =
+                runGraceWithTokenAsync
+                    (Some token)
+                    copy
+                    graceServerBaseAddress
+                    [|
+                        "connect"
+                        "--owner-id"
+                        ownerId
+                        "--organization-id"
+                        organizationId
+                        "--repository-id"
+                        string repositoryId
+                        "--server-address"
+                        graceServerBaseAddress
+                        "--reference-id"
+                        string current.LatestSave.ReferenceId
+                    |]
+
+            Assert.That(connected.ExitCode, Is.Zero, connected.StandardOutput + connected.StandardError)
+
+            Directory.CreateDirectory(Path.Combine(copy, "Library"))
+            |> ignore
+        }
+
+    /// #1081: copies A and B both run Watch. An administrator runs `grace library add`. Both copies create the empty
+    /// folder within seconds, with no restart and no extra command, and a file A then saves in the new Library reaches B.
     [<Test>]
-    let ``a Library added while Watch runs appears on that copy and receives files`` () =
+    let ``a Library added while Watch runs on two copies appears on both and carries files`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
 
-            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "added-watch"
-            use proxy = createdProxy
-            let watched = Path.Combine(Path.GetDirectoryName(copyB), "Watched")
-            let! branch, initialRoot, token = connectWatchedCopyAsync repositoryId watched
-            let! enabled = runGraceWithTokenAsync (Some token) watched graceServerBaseAddress (syncCommand "enable")
-            Assert.That(enabled.ExitCode, Is.Zero, enabled.StandardOutput + enabled.StandardError)
-            let watch, output = startWatch watched token
-            use _watchProcess = watch
+            let! repositoryId = createRepositoryAsync ()
+            do! addLibraryAsync repositoryId
+            let root = Path.Combine(Path.GetTempPath(), $"grace-library-added-watch-{Guid.NewGuid():N}")
+            Console.WriteLine($"Library working copies: {root}")
+            let copyA, copyB = Path.Combine(root, "A"), Path.Combine(root, "B")
+            let! branch, initialRoot, token = connectWatchedCopyAsync repositoryId copyA
+            do! connectAnotherWatchedCopyAsync repositoryId branch token copyB
+
+            /// Runs one CLI command in a copy with the credentials Watch uses.
+            let runIn copy arguments =
+                task {
+                    let! result = runGraceWithTokenAsync (Some token) copy graceServerBaseAddress arguments
+                    Assert.That(result.ExitCode, Is.Zero, result.StandardOutput + result.StandardError)
+                    return result.StandardOutput
+                }
+
+            let! _ = runIn copyA (syncCommand "enable")
+            let! _ = runIn copyB (syncCommand "enable")
+            let watchA, outputA = startWatch copyA token
+            use _watchA = watchA
+            let watchB, outputB = startWatch copyB token
+            use _watchB = watchB
+
+            /// Describes both Watch processes for a failure message.
+            let diagnostics () =
+                String.Join(Environment.NewLine, Seq.append (Seq.map (fun line -> "A: " + line) outputA) (Seq.map (fun line -> "B: " + line) outputB))
+
+            /// Waits for a condition while both Watch processes keep running, and returns how long it took.
+            let within (limit: TimeSpan) condition =
+                task {
+                    let timer = Stopwatch.StartNew()
+
+                    while not (condition ())
+                          && not watchA.HasExited
+                          && not watchB.HasExited
+                          && timer.Elapsed < limit do
+                        do! Task.Delay(100)
+
+                    Assert.That(watchA.HasExited || watchB.HasExited, Is.False, diagnostics ())
+                    Assert.That(condition (), Is.True, $"Not met within {limit.TotalSeconds} s.{Environment.NewLine}{diagnostics ()}")
+                    return timer.Elapsed
+                }
 
             try
-                do!
-                    waitWhileWatchRuns watch output (fun () ->
-                        output
-                        |> Seq.exists (fun line -> line.Contains("Starting timer.")))
+                let! _ =
+                    within (TimeSpan.FromSeconds 45.0) (fun () ->
+                        [ outputA; outputB ]
+                        |> List.forall (Seq.exists (fun line -> line.Contains("Starting timer."))))
 
-                let! _ = changeLibraryAsync repositoryId true "Second"
-                do! waitWhileWatchRuns watch output (fun () -> Directory.Exists(Path.Combine(watched, "Second")))
+                let! _ =
+                    runIn
+                        copyA
+                        [|
+                            "library"
+                            "add"
+                            "Second"
+                            "--output"
+                            "Json"
+                        |]
 
-                let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+                // Watch starts a sync run at least every 5 seconds; allow three intervals.
+                let! folders =
+                    within (TimeSpan.FromSeconds 15.0) (fun () ->
+                        Directory.Exists(Path.Combine(copyA, "Second"))
+                        && Directory.Exists(Path.Combine(copyB, "Second")))
+
                 File.WriteAllText(Path.Combine(copyA, "Second", "hello.txt"), "saved in the added Library")
-                let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
 
-                do! waitWhileWatchRuns watch output (fun () -> libraryFile watched "Second/hello.txt" = Some "saved in the added Library")
+                // A's Watch captures and submits it, and B's Watch pulls it.
+                let! arrived = within (TimeSpan.FromSeconds 20.0) (fun () -> libraryFile copyB "Second/hello.txt" = Some "saved in the added Library")
+
+                TestContext.Progress.WriteLine(
+                    $"Both folders appeared after {folders.TotalSeconds:n1} s; the file reached B after {arrived.TotalSeconds:n1} s."
+                )
 
                 let! afterBranch = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
 
-                Assert.Multiple(
-                    Action (fun () ->
-                        Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
-                        Assert.That(Directory.Exists(Path.Combine(copyB, "Second")), Is.False, "Copy B hasn't run since the addition.")
-
-                        Assert.That(
-                            afterBranch.LatestSave.DirectoryId,
-                            Is.EqualTo(initialRoot.DirectoryVersionId),
-                            "Library content entered version-control Save history."
-                        ))
+                Assert.That(
+                    afterBranch.LatestSave.DirectoryId,
+                    Is.EqualTo(initialRoot.DirectoryVersionId),
+                    "Library content entered version-control Save history."
                 )
             finally
-                if not watch.HasExited then watch.Kill(true)
-                watch.WaitForExit()
-                output |> Seq.iter TestContext.Progress.WriteLine
+                for watch in [ watchA; watchB ] do
+                    if not watch.HasExited then watch.Kill(true)
+                    watch.WaitForExit()
+
+                TestContext.Progress.WriteLine(diagnostics ())
+        }
+
+    /// Submits one Library change as an administrator would and returns its accepted change.
+    let private submitAcceptedAsync (repositoryId: Guid) (request: Parameters.Library.SubmitLibraryChangeParameters) =
+        task {
+            request.OwnerId <- ownerId
+            request.OrganizationId <- organizationId
+            request.RepositoryId <- repositoryId.ToString("D")
+            request.OperationId <- Guid.NewGuid()
+            request.CorrelationId <- generateCorrelationId ()
+            use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent request)
+            let! receipt = requireReturnValueAsync<LibraryOperationReceiptDto> response
+            Assert.That(receipt.Change.IsSome, Is.True, serialize receipt)
+            return receipt.Change.Value
+        }
+
+    /// #1081 review: while a copy is away, a Library is added, a directory is created and deleted in it, and the Library
+    /// is removed again. The copy's catalog only gained a version, but the journal still holds that create. The copy stops
+    /// with the removal next step before writing anything, even where an ordinary folder of that name exists.
+    [<Test>]
+    let ``a change in a Library removed while a copy was away stops without writing outside the Libraries`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! _, copyB, repositoryId, createdProxy = enableCopiesAsync "removed-away"
+            use proxy = createdProxy
+
+            let ordinary =
+                Directory
+                    .CreateDirectory(
+                        Path.Combine(copyB, "Gone")
+                    )
+                    .FullName
+
+            let! _ = changeLibraryAsync repositoryId true "Gone"
+            let parent = { Kind = "root"; LibraryPath = Some "Gone"; ItemId = None }
+
+            let slotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
+            slotRequest.OwnerId <- ownerId
+            slotRequest.OrganizationId <- organizationId
+            slotRequest.RepositoryId <- repositoryId.ToString("D")
+            slotRequest.Parent <- Some parent
+            slotRequest.Name <- "temporary"
+            slotRequest.CorrelationId <- generateCorrelationId ()
+            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent slotRequest)
+            let! slot = requireReturnValueAsync<LibraryNamespaceSlotDto> slotResponse
+
+            let create = Parameters.Library.SubmitLibraryChangeParameters()
+            create.ChangeKind <- ChangeKind.CreateDirectory
+            create.ItemKind <- ItemKind.Directory
+            create.CreationSlotExpectation <- Some { Parent = parent; Name = "temporary"; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+            let! created = submitAcceptedAsync repositoryId create
+
+            let delete = Parameters.Library.SubmitLibraryChangeParameters()
+            delete.ChangeKind <- ChangeKind.Delete
+            delete.ItemKind <- ItemKind.Directory
+            delete.ItemId <- Nullable created.Item.ItemId
+            delete.NamespacePrecondition <- Some { ItemId = created.Item.ItemId; ExpectedNamespaceVersion = created.Item.Namespace.Value.NamespaceVersion }
+            let! _ = submitAcceptedAsync repositoryId delete
+            let! _ = changeLibraryAsync repositoryId false "Gone"
+
+            let before =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
+                |> Option.get
+
+            let! stopped = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! status = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "status")
+
+            let after =
+                Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
+                |> Option.get
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(stopped.ExitCode, Is.Not.Zero, stopped.StandardOutput)
+                    Assert.That(status, Does.Contain("A Library was removed from this repository or moved"))
+                    Assert.That(Directory.Exists(Path.Combine(ordinary, "temporary")), Is.False, "Sync wrote outside every Library.")
+                    Assert.That(after.AppliedCursor, Is.EqualTo(before.AppliedCursor)))
+            )
         }
 
     /// #1081: a copy that wasn't running while two Libraries were added and filled creates both folders and downloads

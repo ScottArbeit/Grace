@@ -543,7 +543,6 @@ module internal LibrarySynchronization =
                         added
                         |> Array.iter (requireAddableRoot configuration)
 
-                    requireAddable ()
                     selectCatalogWith requireAddable configuration.GraceStatusFile current latest
                     afterSwitch ()
 
@@ -1122,6 +1121,23 @@ module internal LibrarySynchronization =
                 |> Option.defaultValue targetRelative
 
             let priorTarget = fullPath configuration priorPath
+
+            // Changes are pulled only after the copy has switched to the server's catalog, so a change whose path isn't in
+            // a selected Library belongs to one that was removed since. Stop before anything durable or on disk changes:
+            // applying it would write outside every Library.
+            if
+                not (configurationOwnsPath expected.Catalog targetRelative)
+                || not (configurationOwnsPath expected.Catalog priorPath)
+            then
+                raise (
+                    LibrarySyncFailureException(
+                        "An incoming Library change is in a Library that was removed from this repository; synchronization has stopped before local effects.",
+                        Some targetRelative,
+                        Some change.OperationId,
+                        catalogChangedNextStep
+                    )
+                )
+
             let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
 
             let existing =
@@ -1448,16 +1464,16 @@ module internal LibrarySynchronization =
 
     /// Pulls contiguous changes, always from the applied cursor, so an interrupted or long-paused pull resumes exactly
     /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run, and so
-    /// does a pull that uses up the run's remaining page budget; the run then reports catchingUp. Returns whether the pull
-    /// caught up and how many pages it used.
-    let private pull configuration correlationId (pageBudget: int) (cancellationToken: CancellationToken) =
+    /// does a pull that uses up the run's remaining page budget; the run then reports catchingUp. Each page is charged
+    /// to pagesLeft before it's requested, so a pull interrupted by an added Library still spends what it used. Returns
+    /// whether the pull caught up.
+    let private pull configuration correlationId (pagesLeft: int ref) (cancellationToken: CancellationToken) =
         task {
             let mutable continuePages = true
             let mutable caughtUp = false
-            let mutable pages = 0
 
-            while continuePages && pages < pageBudget do
-                pages <- pages + 1
+            while continuePages && pagesLeft.Value > 0 do
+                pagesLeft.Value <- pagesLeft.Value - 1
                 cancellationToken.ThrowIfCancellationRequested()
                 let before = state configuration
                 do! checkCatalog configuration correlationId before
@@ -1488,7 +1504,7 @@ module internal LibrarySynchronization =
                 continuePages <- page.HasMore && page.Changes.Length > 0
                 do! checkCatalog configuration correlationId (state configuration)
 
-            return caughtUp, pages
+            return caughtUp
         }
 
     /// Records why a run stopped. A requested stop isn't a failure: it records nothing and leaves the state as it was.
@@ -1548,7 +1564,7 @@ module internal LibrarySynchronization =
 
                 let mutable again = true
                 let mutable caughtUp = false
-                let mutable pagesLeft = MaximumPagesPerRun
+                let pagesLeft = ref MaximumPagesPerRun
                 let mutable catalogSwitches = 0
 
                 while again do
@@ -1584,8 +1600,7 @@ module internal LibrarySynchronization =
                             index <- index + 1
 
                         cancellationToken.ThrowIfCancellationRequested()
-                        let! completePull, pagesUsed = pull configuration correlationId pagesLeft cancellationToken
-                        pagesLeft <- pagesLeft - pagesUsed
+                        let! completePull = pull configuration correlationId pagesLeft cancellationToken
                         caughtUp <- completePull
 
                         if completePull
@@ -1600,7 +1615,7 @@ module internal LibrarySynchronization =
 
                         again <-
                             completePull
-                            && pagesLeft > 0
+                            && pagesLeft.Value > 0
                             && remaining.Length > 0
                             && (submitted
                                 || captured
@@ -1627,7 +1642,7 @@ module internal LibrarySynchronization =
                 pruneClassified configuration.GraceStatusFile configuration.RepositoryId 128
                 recordSyncSuccess configuration.GraceStatusFile configuration.RepositoryId (getCurrentInstant().ToUnixTimeTicks())
                 let! current = status configuration
-                return current, pagesLeft = 0 && not caughtUp
+                return current, pagesLeft.Value = 0 && not caughtUp
             with
             | ex ->
                 finishFailedRun configuration submitting cancellationToken ex
