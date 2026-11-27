@@ -366,7 +366,7 @@ module LibraryAdmissionHttpTests =
             let repository = Guid.NewGuid().ToString("D")
             let! branchId = administeredRepository repository
 
-            let directory path children = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repository (RelativePath path) children
+            let directory (path: RelativePath) children = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repository path children
 
             // Adding a Library checks only references, so a root saved first can hold paths the Library then owns.
             let docs = directory "Shared/docs" []
@@ -377,17 +377,18 @@ module LibraryAdmissionHttpTests =
 
             let! savedStatus, savedBody = trySaveDirectoryVersions repository [ directory "Shared/notes" [] ]
             Assert.That(savedStatus, Is.EqualTo HttpStatusCode.BadRequest, savedBody)
-            Assert.That(savedBody, Does.Contain "Path 'Shared/notes' belongs to the current Library policy and cannot be saved")
+            Assert.That((deserialize<GraceError> savedBody).Error, Does.Contain "Path 'Shared/notes' belongs to the current Library policy and cannot be saved")
 
             let old = directory "Shared-old" []
             let siblingRoot = directory Constants.RootDirectoryPath [ old ]
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repository [ old; siblingRoot ]
 
-            let! branch = BranchServerTestHelpers.getBranchAsync repository branchId
+            let! defaultBranch = BranchServerTestHelpers.getBranchAsync repository branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repository defaultBranch $"Library{Guid.NewGuid():N}"
             use! owned = BranchServerTestHelpers.saveReferenceResponseAsync repository branch ownedRoot.DirectoryVersionId ownedRoot.Sha256Hash
             let! ownedBody = owned.Content.ReadAsStringAsync()
             Assert.That(owned.StatusCode, Is.EqualTo HttpStatusCode.BadRequest, ownedBody)
-            Assert.That(ownedBody, Does.Contain "belongs to the current Library policy and cannot be referenced")
+            Assert.That((deserialize<GraceError> ownedBody).Error, Does.Contain "belongs to the current Library policy and cannot be referenced")
 
             use! sibling = BranchServerTestHelpers.saveReferenceResponseAsync repository branch siblingRoot.DirectoryVersionId siblingRoot.Sha256Hash
             let! siblingBody = sibling.Content.ReadAsStringAsync()
