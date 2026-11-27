@@ -1674,6 +1674,17 @@ module LibraryLocalStateTests =
         Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.False)
         Assert.That(namesIn deep, Is.Empty)
 
+    /// #1123 review: the extended-length form of each Windows path form sync can meet.
+    [<TestCase(@"C:\repo\Library\plan.txt", @"\\?\C:\repo\Library\plan.txt")>]
+    [<TestCase(@"C:\repo\Library\..\Library\plan.txt", @"\\?\C:\repo\Library\plan.txt")>]
+    [<TestCase(@"\\server\share\Library\plan.txt", @"\\?\UNC\server\share\Library\plan.txt")>]
+    [<TestCase(@"\\.\C:\repo\Library\plan.txt", @"\\?\C:\repo\Library\plan.txt")>]
+    [<TestCase(@"\\?\C:\repo\Library\plan.txt", @"\\?\C:\repo\Library\plan.txt")>]
+    let ``a displaced file is opened by the extended-length form of its path`` (path: string) (expected: string) =
+        if not (OperatingSystem.IsWindows()) then Assert.Ignore("Windows path forms.")
+
+        Assert.That(LibraryWin32.extendedPath path, Is.EqualTo(expected))
+
     /// Returns a catalog that adds the named Libraries to the one this copy selected.
     let private adding (current: RepositoryState) (libraries: string array) =
         { current.Catalog with

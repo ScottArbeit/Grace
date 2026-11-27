@@ -46,7 +46,10 @@ module internal LibraryWin32 =
         else
             let full = Path.GetFullPath path
 
-            if full.StartsWith(@"\\", StringComparison.Ordinal) then
+            if full.StartsWith(@"\\.\", StringComparison.Ordinal) then
+                // A device path (\\.\C:\...) is already absolute; only its prefix changes.
+                @"\\?\" + full.Substring(4)
+            elif full.StartsWith(@"\\", StringComparison.Ordinal) then
                 @"\\?\UNC\" + full.Substring(2)
             else
                 @"\\?\" + full
