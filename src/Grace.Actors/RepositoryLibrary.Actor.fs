@@ -1076,8 +1076,7 @@ type RepositoryLibraryActor
                         match! readControl repositoryId with
                         | None -> return Error "Library catalog is not initialized."
                         | Some (control, etag) ->
-                            if LibraryDecision.catalogVersion command
-                               <> control.Catalog.Version then
+                            if LibraryDecision.namesRootOutside control.Catalog command then
                                 let! receipt = reject repositoryId operationId requestHash OutcomeKind.StalePolicy control.Catalog
                                 return Ok receipt
                             else
