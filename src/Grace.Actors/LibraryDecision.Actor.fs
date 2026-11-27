@@ -121,51 +121,6 @@ module LibraryDecision =
     /// Reports whether a normalized path belongs to a configured Library root.
     let isInLibrary catalog path = Library.configurationOwnsPath catalog path
 
-    /// Retains the longest whole-rune prefix that fits one UTF-8 byte budget.
-    let private utf8Prefix maximumBytes (value: string) =
-        let builder = StringBuilder()
-        let mutable bytes = 0
-        let mutable keepGoing = true
-        use mutable enumerator = value.EnumerateRunes().GetEnumerator()
-
-        while keepGoing && enumerator.MoveNext() do
-            let text = enumerator.Current.ToString()
-            let count = Encoding.UTF8.GetByteCount text
-
-            if bytes + count <= maximumBytes then
-                builder.Append text |> ignore
-                bytes <- bytes + count
-            else
-                keepGoing <- false
-
-        builder.ToString()
-
-    /// Allocates one deterministic bounded sibling candidate for a stale-content conflict copy.
-    let conflictName (name: string) operationId attempt =
-        let baseSuffix = ($".conflict-{operationId:N}")[0..18]
-        let suffix = if attempt = 0 then baseSuffix else $"{baseSuffix}.{attempt}"
-        let originalExtension = IO.Path.GetExtension name
-
-        let extension =
-            if Encoding.UTF8.GetByteCount(suffix + originalExtension) < Library.MaximumSegmentBytes then
-                originalExtension
-            else
-                String.Empty
-
-        let stem =
-            if String.IsNullOrEmpty extension then
-                name
-            else
-                IO.Path.GetFileNameWithoutExtension name
-
-        let maximumStemBytes =
-            Library.MaximumSegmentBytes
-            - Encoding.UTF8.GetByteCount(suffix + extension)
-
-        utf8Prefix maximumStemBytes stem
-        + suffix
-        + extension
-
     /// The most item records, and separately the most slot records, one repository keeps. Tombstones and vacated slots
     /// count, because their records remain.
     [<Literal>]

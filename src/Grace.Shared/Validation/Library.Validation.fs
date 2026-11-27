@@ -131,6 +131,57 @@ module Library =
             paths
             |> Seq.tryFind (configurationOwnsPath configuration)
 
+    /// Retains the longest whole-rune prefix that fits one UTF-8 byte budget.
+    let private utf8Prefix maximumBytes (value: string) =
+        let builder = Grace.Shared.Utilities.stringBuilderPool.Get()
+
+        try
+            let mutable bytes = 0
+            let mutable keepGoing = true
+            use mutable enumerator = value.EnumerateRunes().GetEnumerator()
+
+            while keepGoing && enumerator.MoveNext() do
+                let text = enumerator.Current.ToString()
+                let count = Encoding.UTF8.GetByteCount text
+
+                if bytes + count <= maximumBytes then
+                    builder.Append text |> ignore
+                    bytes <- bytes + count
+                else
+                    keepGoing <- false
+
+            builder.ToString()
+        finally
+            Grace.Shared.Utilities.stringBuilderPool.Return(builder)
+
+    /// Names the sibling where Grace keeps a second version of a Library file: the server's conflict copy of a stale
+    /// save, and the client's copy of a save it found where an incoming change was going. One rule, so people see one
+    /// name for "Grace kept both". Attempt 0 is the first choice; later attempts add a number when that name is taken.
+    let conflictName (name: string) (operationId: Guid) attempt =
+        let baseSuffix = ($".conflict-{operationId:N}")[0..18]
+        let suffix = if attempt = 0 then baseSuffix else $"{baseSuffix}.{attempt}"
+        let originalExtension = Path.GetExtension name
+
+        let extension =
+            if Encoding.UTF8.GetByteCount(suffix + originalExtension) < MaximumSegmentBytes then
+                originalExtension
+            else
+                String.Empty
+
+        let stem =
+            if String.IsNullOrEmpty extension then
+                name
+            else
+                Path.GetFileNameWithoutExtension name
+
+        let maximumStemBytes =
+            MaximumSegmentBytes
+            - Encoding.UTF8.GetByteCount(suffix + extension)
+
+        utf8Prefix maximumStemBytes stem
+        + suffix
+        + extension
+
     /// Normalizes and sorts one complete root set while enforcing uniqueness, overlap, and count bounds.
     let normalizeLibraries (libraries: string array) =
         if isNull libraries then

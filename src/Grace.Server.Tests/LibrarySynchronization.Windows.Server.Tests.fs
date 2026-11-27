@@ -2752,7 +2752,7 @@ module LibrarySynchronizationWindowsServerTests =
                         operation.Direction = "local"
                         && not operation.Terminal)
 
-                occupiedName <- Grace.Actors.LibraryDecision.conflictName "saved.txt" saved.OperationId 0
+                occupiedName <- Grace.Shared.Validation.Library.conflictName "saved.txt" saved.OperationId 0
 
                 occupyDirectoryAsync repositoryId saved.Placement.Parent occupiedName
                 |> fun work -> work.GetAwaiter().GetResult())
