@@ -1483,12 +1483,15 @@ module LibraryLocalStateTests =
         let expected = LibraryFilesystem.fingerprint target
 
         throws<InvalidOperationException> (fun () ->
-            LibraryFilesystem.publishAtomic (fun () -> File.WriteAllBytes(target, [| 3uy |])) staged target expected [| 4uy |])
+            LibraryFilesystem.publishAtomic (fun () -> File.WriteAllBytes(target, [| 3uy |])) (Guid.NewGuid()) staged target expected [| 4uy |]
+            |> ignore)
         |> ignore
 
         Assert.That(File.ReadAllBytes(target)[0], Is.EqualTo(3uy))
         Assert.That(File.Exists(staged), Is.False)
-        LibraryFilesystem.publishAtomic ignore staged target (LibraryFilesystem.fingerprint target) [| 0uy; 255uy |]
+
+        LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) [| 0uy; 255uy |]
+        |> ignore
 
         Assert.That(
             File
@@ -1497,6 +1500,134 @@ module LibraryLocalStateTests =
                 .SequenceEqual([| 0uy; 255uy |]),
             Is.True
         )
+
+    /// Runs an action with an editor's save landing just after sync's last check of a path and just before sync displaces
+    /// it, the window #1122 closes, then restores the seam.
+    let private withSaveBeforeDisplace (text: string) action =
+        let previous = LibraryFilesystem.beforeDisplace
+        LibraryFilesystem.beforeDisplace <- fun path -> File.WriteAllText(path, text)
+
+        try
+            action ()
+        finally
+            LibraryFilesystem.beforeDisplace <- previous
+
+    /// Allocates an empty Library folder and the staging path sync publishes from.
+    let private libraryFolder () =
+        let root, _ = location ()
+        let folder = Path.Combine(root, "Library")
+        Directory.CreateDirectory(folder) |> ignore
+        folder, Path.Combine(root, "staged.tmp")
+
+    /// Lists the file names in a folder, sorted, so a test can say exactly what's left in it.
+    let private namesIn folder =
+        Directory.GetFiles(folder)
+        |> Array.map Path.GetFileName
+        |> Array.sort
+
+    /// #1122: a file that appears where an incoming create expected nothing, after sync's last check, stops the
+    /// publication and keeps the file.
+    [<Test>]
+    let ``an incoming create doesn't overwrite a file that appeared after the last check`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, staged = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+
+        withSaveBeforeDisplace "saved by an editor" (fun () ->
+            throws<InvalidOperationException> (fun () ->
+                LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target None "incoming"B
+                |> ignore))
+
+        Assert.That(File.ReadAllText(target), Is.EqualTo("saved by an editor"))
+        Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
+        Assert.That(File.Exists(staged), Is.False)
+
+    /// #1122: when an editor saves a file just after sync's last check and before sync replaces it, the incoming bytes
+    /// take the path and the save is kept next to it under the conflict-copy name.
+    [<Test>]
+    let ``an incoming replace keeps a save that landed after the last check as a conflict copy`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, staged = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+        let operationId = Guid.NewGuid()
+        let copy = Grace.Shared.Validation.Library.conflictName "plan.txt" operationId 0
+
+        let kept =
+            withSaveBeforeDisplace "saved by an editor" (fun () ->
+                LibraryFilesystem.publishAtomic ignore operationId staged target (LibraryFilesystem.fingerprint target) "incoming"B)
+
+        Assert.That(File.ReadAllText(target), Is.EqualTo("incoming"))
+        Assert.That(kept, Is.EqualTo(Some(Path.Combine(folder, copy))))
+        Assert.That(File.ReadAllText(Path.Combine(folder, copy)), Is.EqualTo("saved by an editor"))
+        Assert.That(namesIn folder, Is.EquivalentTo([| "plan.txt"; copy |]))
+        Assert.That(File.Exists(staged), Is.False)
+
+    /// #1122: a replace whose displaced file is exactly what sync expected leaves nothing behind, and one whose displaced
+    /// file an editor still has open keeps it, because the editor could still write to it.
+    [<Test>]
+    let ``an incoming replace leaves nothing behind unless an editor still has the old file open`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, staged = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+
+        let clean = LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) "first"B
+
+        Assert.That(clean, Is.EqualTo(None))
+        Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
+
+        let operationId = Guid.NewGuid()
+        let copy = Path.Combine(folder, Grace.Shared.Validation.Library.conflictName "plan.txt" operationId 0)
+        let expected = LibraryFilesystem.fingerprint target
+
+        // The editor opens the file after sync's last check; sync's check itself can't read a file open for writing.
+        let editor = ref None
+        let previous = LibraryFilesystem.beforeDisplace
+
+        LibraryFilesystem.beforeDisplace <-
+            fun path -> editor.Value <- Some(new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite ||| FileShare.Delete))
+
+        let kept =
+            try
+                LibraryFilesystem.publishAtomic ignore operationId staged target expected "second"B
+            finally
+                LibraryFilesystem.beforeDisplace <- previous
+
+                editor.Value
+                |> Option.iter (fun stream -> stream.Dispose())
+
+        Assert.That(File.ReadAllText(target), Is.EqualTo("second"))
+        Assert.That(kept, Is.EqualTo(Some copy))
+        Assert.That(File.ReadAllText(copy), Is.EqualTo("first"))
+
+    /// #1122: when an editor saves a file just after sync's last check and before sync deletes it, for an incoming
+    /// delete or a rename's old path, the save goes back to its path instead of being deleted. Without a save, the file
+    /// is deleted and nothing is left behind.
+    [<Test>]
+    let ``removing a Library file puts back a save that landed after the last check`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, _ = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+        let materialized = LibraryFilesystem.fingerprint target
+
+        let kept = withSaveBeforeDisplace "saved by an editor" (fun () -> LibraryFilesystem.removeFile (Guid.NewGuid()) target materialized)
+
+        Assert.That(kept, Is.EqualTo(Some target))
+        Assert.That(File.ReadAllText(target), Is.EqualTo("saved by an editor"))
+        Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
+
+        Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.EqualTo(None))
+        Assert.That(namesIn folder, Is.Empty)
 
     /// Returns a catalog that adds the named Libraries to the one this copy selected.
     let private adding (current: RepositoryState) (libraries: string array) =

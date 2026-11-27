@@ -197,8 +197,128 @@ module internal LibraryFilesystem =
         else
             None
 
-    /// Flushes verified bytes in the same-volume Grace staging directory and publishes with the File.Move primitive used by WDU.
-    let publishAtomic beforePublish (staged: string) (targetPath: string) expected (bytes: byte array) =
+    /// Names the test-only variable whose text the CLI writes to a Library path just after sync's last check of that path
+    /// and just before it displaces it, once per process, and only while GRACE_TESTING is "1". It lets a hosted test
+    /// put an editor's save in the window that timing can't reach.
+    [<Literal>]
+    let SaveBeforeDisplaceVariable = "GRACE_TEST_LIBRARY_SAVE_BEFORE_DISPLACE"
+
+    /// Writes the configured test save once, when the test variables ask for it.
+    let private saveBeforeDisplaceFromEnvironment =
+        let used = ref false
+
+        fun (path: string) ->
+            if not used.Value
+               && Environment.GetEnvironmentVariable("GRACE_TESTING") = "1" then
+                match Environment.GetEnvironmentVariable(SaveBeforeDisplaceVariable) with
+                | null
+                | "" -> ()
+                | text ->
+                    used.Value <- true
+                    File.WriteAllText(path, text)
+
+    /// Runs just after sync's last content check of a Library path and just before sync replaces, moves aside or
+    /// deletes it. Tests replace it to put an editor's save in that window.
+    let mutable internal beforeDisplace: string -> unit = saveBeforeDisplaceFromEnvironment
+
+    /// The most numbered conflict-copy names sync tries next to one file.
+    [<Literal>]
+    let private MaximumConflictAttempts = 100
+
+    /// Returns the conflict-copy paths next to a Library file, first choice first.
+    let private conflictPaths (path: string) operationId =
+        let folder = Path.GetDirectoryName path
+        let name = Path.GetFileName path
+
+        seq { 0 .. MaximumConflictAttempts - 1 }
+        |> Seq.map (fun attempt -> Path.Combine(folder, Grace.Shared.Validation.Library.conflictName name operationId attempt))
+
+    /// Returns the first conflict-copy path next to a Library file that nothing occupies.
+    let private vacantConflictPath path operationId =
+        conflictPaths path operationId
+        |> Seq.tryFind (fun candidate ->
+            not (
+                File.Exists candidate
+                || Directory.Exists candidate
+            ))
+        |> Option.defaultWith (fun () -> invalidOp $"Every conflict-copy name next to '{path}' is taken.")
+
+    /// Deletes a file sync displaced only when it holds exactly the expected bytes. The file is hashed and deleted
+    /// under one handle that lets nobody else write it, so it can't change in between. Returns false, keeping the file,
+    /// when its bytes differ or another program still has it open.
+    let private discardIfExpected (path: string) expected =
+        let stream =
+            try
+                Some(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Delete, 65536, FileOptions.SequentialScan))
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException -> None
+
+        match stream with
+        | None -> false
+        | Some stream ->
+            use stream = stream
+            let identity = streamIdentity stream
+
+            if Some(Grace.CLI.LibraryOperation.fingerprint identity) = expected then
+                File.Delete path
+                true
+            else
+                false
+
+    /// Renames a Library file to the first free conflict-copy name next to it, without overwriting anything. Returns
+    /// None when the file is already gone.
+    let private moveAside (path: string) operationId =
+        conflictPaths path operationId
+        |> Seq.filter (fun candidate ->
+            not (
+                File.Exists candidate
+                || Directory.Exists candidate
+            ))
+        |> Seq.tryPick (fun candidate ->
+            try
+                File.Move(path, candidate, false)
+                Some(Some candidate)
+            with
+            | :? FileNotFoundException -> Some None
+            | :? IOException when
+                File.Exists candidate
+                || Directory.Exists candidate
+                ->
+                None)
+        |> Option.defaultWith (fun () ->
+            if File.Exists path then
+                invalidOp $"Every conflict-copy name next to '{path}' is taken."
+            else
+                None)
+
+    /// Removes a Library file that sync no longer wants, a delete or a rename's old path, without ever destroying bytes
+    /// it didn't expect. The file is first renamed aside, so a save that lands after the caller's check goes with it,
+    /// and then deleted only if it holds exactly the expected bytes. Otherwise it goes back to its path, or stays under
+    /// the conflict-copy name when its path has been taken again. Returns where a kept file is, or None when the file
+    /// was removed or was already gone.
+    let removeFile operationId (path: string) expected =
+        beforeDisplace path
+
+        match moveAside path operationId with
+        | None -> None
+        | Some aside ->
+            if discardIfExpected aside expected then
+                None
+            else
+                try
+                    File.Move(aside, path, false)
+                    Some path
+                with
+                | :? IOException -> Some aside
+
+    /// Publishes verified bytes from the same-volume Grace staging directory without ever destroying bytes Grace hasn't
+    /// captured. Where nothing is expected, the file moves in without overwriting, so a file that appeared stops the
+    /// publication and is kept. Where a file is expected, File.Replace swaps the new bytes in and keeps the displaced
+    /// file next to it under the conflict-copy name; it's deleted only if it holds exactly the expected bytes. A save
+    /// that landed after the last check therefore survives as a conflict copy, which capture then syncs like any other
+    /// file. Returns where a kept file is, if one was kept.
+    let publishAtomic beforePublish operationId (staged: string) (targetPath: string) expected (bytes: byte array) =
         try
             do
                 use stream = new FileStream(staged, FileMode.Create, FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough)
@@ -213,9 +333,42 @@ module internal LibraryFilesystem =
             if fingerprint targetPath <> expected then
                 invalidOp "Library target changed before atomic publication."
 
-            File.Move(staged, targetPath, true)
+            beforeDisplace targetPath
+
+            let kept =
+                match expected with
+                | None ->
+                    try
+                        File.Move(staged, targetPath, false)
+                    with
+                    | :? IOException when
+                        File.Exists targetPath
+                        || Directory.Exists targetPath
+                        ->
+                        invalidOp "A file appeared at the Library target before publication; it was kept."
+
+                    None
+                | Some _ ->
+                    let aside = vacantConflictPath targetPath operationId
+
+                    try
+                        File.Replace(staged, targetPath, aside, true)
+                    with
+                    | _ ->
+                        // If the swap renamed the old file but couldn't move the new one in, put the old one back.
+                        if not (File.Exists targetPath) && File.Exists aside then
+                            try
+                                File.Move(aside, targetPath, false)
+                            with
+                            | :? IOException -> ()
+
+                        reraise ()
+
+                    if discardIfExpected aside expected then None else Some aside
 
             if (stableRead targetPath).Bytes <> bytes then
                 invalidOp "Library final target verification failed."
+
+            kept
         finally
             if File.Exists(staged) then File.Delete(staged)
