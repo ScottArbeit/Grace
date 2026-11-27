@@ -446,7 +446,8 @@ module internal LibraryBaseline =
                         observe "beforePublish"
                         do! check remote configuration expected
                         let staged = Path.Combine(configuration.GraceDirectory, $"library-baseline-{operation.OperationId:N}.tmp")
-                        LibraryFilesystem.publishAtomic revalidate staged target None bytes
+
+                        LibraryFilesystem.publishAtomic revalidate operation.OperationId staged target None bytes
 
                 observe "publish"
                 verify configuration relative item

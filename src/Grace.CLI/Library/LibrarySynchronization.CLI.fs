@@ -1320,7 +1320,8 @@ module internal LibrarySynchronization =
 
                 /// Allows rename source removal only when changed positive bytes already have an exact accepted saved operation.
                 /// A file rename may remove changed source bytes only against their exact already-accepted pending content;
-                /// an empty source is excluded input and is always preserved.
+                /// an empty source is excluded input and is always preserved. Returns the source content it accepted, which
+                /// is the only content the removal may then delete.
                 let requireMovedSource () =
                     if
                         change.Item.Tombstone.IsNone
@@ -1376,7 +1377,11 @@ module internal LibrarySynchronization =
                                       <> actual then
                                     invalidOp "Accepted Library source changed immediately before rename."
 
-                requireMovedSource ()
+                        actual
+                    else
+                        None
+
+                requireMovedSource () |> ignore
 
                 // A saved target can change after preparation. Preserve it first, then refresh only the
                 // filesystem precondition while retaining the original accepted result and exact edit base.
@@ -1403,7 +1408,9 @@ module internal LibrarySynchronization =
                            <> materialized then
                             invalidOp "Library deletion would remove locally changed bytes."
 
-                        File.Delete(priorTarget)
+                        // A save after that check is put back, not deleted.
+                        if LibraryFilesystem.removeFile operation.OperationId priorTarget materialized then
+                            invalidOp "Library deletion would remove locally changed bytes."
                     elif Directory.Exists(priorTarget) then
                         Directory.Delete(priorTarget, false)
                 elif change.Item.ItemKind = ItemKind.Directory then
@@ -1450,10 +1457,12 @@ module internal LibrarySynchronization =
                         do! checkCatalog configuration correlationId expected
                         let staged = Path.Combine(configuration.GraceDirectory, $"library-publish-{operation.OperationId:N}.tmp")
 
+                        // A save after the last check is kept under the conflict-copy name, and capture syncs it.
                         LibraryFilesystem.publishAtomic
                             (fun () ->
                                 revalidate ()
-                                requireMovedSource ())
+                                requireMovedSource () |> ignore)
+                            operation.OperationId
                             staged
                             target
                             operation.ExpectedTarget
@@ -1463,8 +1472,11 @@ module internal LibrarySynchronization =
                         priorPath <> targetRelative
                         && File.Exists(priorTarget)
                     then
-                        requireMovedSource ()
-                        File.Delete(priorTarget)
+                        let accepted = requireMovedSource ()
+
+                        // A save to the old path after that check is put back, not deleted.
+                        if LibraryFilesystem.removeFile operation.OperationId priorTarget accepted then
+                            invalidOp "Accepted Library source changed immediately before rename."
 
                     if LibraryFilesystem.fingerprint target
                        <> expectedContent then

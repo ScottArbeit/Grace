@@ -674,7 +674,7 @@ type RepositoryLibraryActor
                 if attempt >= 100000 then
                     return invalidOp "No bounded conflict-copy destination was available."
                 else
-                    let candidate = LibraryDecision.conflictName originalName operationId attempt
+                    let candidate = Grace.Shared.Validation.Library.conflictName originalName operationId attempt
                     let! slot = getSlot repositoryId parent candidate
 
                     if slot.OccupantItemId.IsNone then

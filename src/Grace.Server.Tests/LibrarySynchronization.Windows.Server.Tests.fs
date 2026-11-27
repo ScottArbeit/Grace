@@ -444,8 +444,9 @@ module LibrarySynchronizationWindowsServerTests =
         configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
         saveConfigFile (Path.Combine(graceDirectory.FullName, Constants.GraceConfigFileName)) configuration
 
-    /// Runs one real CLI process from the selected working copy and preserves bounded failure output.
-    let private runGraceWithTokenAsync token workingDirectory serverUri arguments =
+    /// Runs one real CLI process from the selected working copy, with extra environment variables, and preserves bounded
+    /// failure output.
+    let private runGraceWithEnvironmentAsync (environment: (string * string) list) token workingDirectory serverUri arguments =
         task {
             let cliAssembly =
                 Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Grace.CLI", "bin", "Release", "net11.0", "grace.dll"))
@@ -465,6 +466,9 @@ module LibrarySynchronizationWindowsServerTests =
             startInfo.Environment[
                 Constants.EnvironmentVariables.GraceServerUri
             ] <- serverUri
+
+            for name, value in environment do
+                startInfo.Environment[ name ] <- value
 
             startInfo.ArgumentList.Add(cliAssembly)
 
@@ -490,6 +494,9 @@ module LibrarySynchronizationWindowsServerTests =
             let! error = standardError
             return { ExitCode = cliProcess.ExitCode; StandardOutput = output; StandardError = error }
         }
+
+    /// Runs one real CLI process from the selected working copy and preserves bounded failure output.
+    let private runGraceWithTokenAsync token workingDirectory serverUri arguments = runGraceWithEnvironmentAsync [] token workingDirectory serverUri arguments
 
     /// Runs the fixture-authenticated CLI without changing the parent test process authentication.
     let private runGraceAsync workingDirectory serverUri arguments = runGraceWithTokenAsync None workingDirectory serverUri arguments
@@ -2752,7 +2759,7 @@ module LibrarySynchronizationWindowsServerTests =
                         operation.Direction = "local"
                         && not operation.Terminal)
 
-                occupiedName <- Grace.Actors.LibraryDecision.conflictName "saved.txt" saved.OperationId 0
+                occupiedName <- Grace.Shared.Validation.Library.conflictName "saved.txt" saved.OperationId 0
 
                 occupyDirectoryAsync repositoryId saved.Placement.Parent occupiedName
                 |> fun work -> work.GetAwaiter().GetResult())
@@ -3217,4 +3224,119 @@ module LibrarySynchronizationWindowsServerTests =
                     Assert.That(Directory.Exists(Path.Combine(copy, "Library")), Is.True)
                     Assert.That(Directory.Exists(Path.Combine(copy, "Second")), Is.True))
             )
+        }
+
+    /// Runs one sync command in a copy with an editor's save landing in a Library file just after sync's last check of
+    /// it and just before sync replaces, moves aside or deletes it (#1122). The name limits the save to that file.
+    let private runWithSaveBeforeDisplaceAsync copy serverUri (text: string) (name: string) =
+        runGraceWithEnvironmentAsync
+            [
+                "GRACE_TESTING", "1"
+                Grace.CLI.Command.LibraryFilesystem.SaveBeforeDisplaceVariable, text
+                Grace.CLI.Command.LibraryFilesystem.SaveBeforeDisplaceNameVariable, name
+            ]
+            None
+            copy
+            serverUri
+            (syncCommand "run")
+
+    /// Lists a copy's Library files other than the named ones.
+    let private otherLibraryFiles copy (names: string list) =
+        Directory.GetFiles(Path.Combine(copy, "Library"))
+        |> Array.filter (fun path -> not (names |> List.contains (Path.GetFileName path)))
+
+    /// #1122: A edits a synced file, and B saves its own version at the instant B's sync run replaces the file with A's,
+    /// after sync's last check. B ends with A's version at the path and its own save next to it under the conflict-copy
+    /// name, and the next runs carry that copy to A.
+    [<Test>]
+    let ``a save that lands as an incoming edit replaces the file is kept as a conflict copy`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, _, createdProxy = enableCopiesAsync "displace-edit"
+            use proxy = createdProxy
+            let pathA, pathB = Path.Combine(copyA, "Library", "plan.txt"), Path.Combine(copyB, "Library", "plan.txt")
+            File.WriteAllText(pathA, "first version")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(pathA, "edited on A")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            let! applied = runWithSaveBeforeDisplaceAsync copyB proxy.BaseAddress "saved on B" "plan.txt"
+            Assert.That(applied.ExitCode, Is.Zero, applied.StandardOutput + applied.StandardError)
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("edited on A"))
+            let kept = otherLibraryFiles copyB [ "plan.txt" ]
+            Assert.That(kept.Length, Is.EqualTo(1), "B's save wasn't kept next to the file.")
+            Assert.That(File.ReadAllText(kept[0]), Is.EqualTo("saved on B"))
+
+            Assert.That(
+                Path.GetFileName(kept[0]),
+                Does
+                    .StartWith("plan.conflict-")
+                    .And.EndWith(".txt")
+            )
+
+            // The kept copy is an ordinary Library file, so it syncs.
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            Assert.That(File.ReadAllText(Path.Combine(copyA, "Library", Path.GetFileName(kept[0]))), Is.EqualTo("saved on B"))
+            Assert.That(File.ReadAllText(pathA), Is.EqualTo("edited on A"))
+        }
+
+    /// #1122: A deletes a synced file, and B saves it at the instant B's sync run deletes it, after sync's last check.
+    /// B's save stays at its path, and sync stops with the existing message instead of deleting it.
+    [<Test>]
+    let ``a save that lands as an incoming delete removes the file is put back`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "displace-delete"
+            use proxy = createdProxy
+            let pathB = Path.Combine(copyB, "Library", "plan.txt")
+            File.WriteAllText(Path.Combine(copyA, "Library", "plan.txt"), "first version")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let! _ = changeNamespaceAsync repositoryId original true
+
+            let! stopped = runWithSaveBeforeDisplaceAsync copyB proxy.BaseAddress "saved on B" "plan.txt"
+            Assert.That(stopped.ExitCode, Is.Not.Zero, stopped.StandardOutput + stopped.StandardError)
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("saved on B"))
+            Assert.That(otherLibraryFiles copyB [ "plan.txt" ], Is.Empty)
+            let! status = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "status")
+            Assert.That(status, Does.Contain("would remove locally changed bytes"))
+        }
+
+    /// #1122: A renames a synced file, and B saves the old path at the instant B's sync run removes it, after sync's last
+    /// check. The renamed file arrives, and B's save stays at the old path.
+    [<Test>]
+    let ``a save to a renamed file's old path that lands as sync removes it is put back`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "displace-rename"
+            use proxy = createdProxy
+            let pathB = Path.Combine(copyB, "Library", "source.txt")
+            File.WriteAllText(Path.Combine(copyA, "Library", "source.txt"), "first version")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let! _ = changeNamespaceAsync repositoryId original false
+
+            let! stopped = runWithSaveBeforeDisplaceAsync copyB proxy.BaseAddress "saved on B" "source.txt"
+            Assert.That(stopped.ExitCode, Is.Not.Zero, stopped.StandardOutput + stopped.StandardError)
+            Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "renamed.txt")), Is.EqualTo("first version"))
+            Assert.That(File.ReadAllText(pathB), Is.EqualTo("saved on B"))
+            Assert.That(otherLibraryFiles copyB [ "source.txt"; "renamed.txt" ], Is.Empty)
         }

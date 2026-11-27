@@ -546,8 +546,8 @@ type LibraryActorTests() =
             + "."
             + String.replicate 300 "x"
 
-        let first = LibraryDecision.conflictName original operationId 0
-        let second = LibraryDecision.conflictName original operationId 12
+        let first = Grace.Shared.Validation.Library.conflictName original operationId 0
+        let second = Grace.Shared.Validation.Library.conflictName original operationId 12
 
         Assert.Multiple(
             Action (fun () ->
