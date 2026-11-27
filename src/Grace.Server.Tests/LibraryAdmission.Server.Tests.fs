@@ -394,3 +394,25 @@ module LibraryAdmissionHttpTests =
             let! siblingBody = sibling.Content.ReadAsStringAsync()
             Assert.That(sibling.StatusCode, Is.EqualTo HttpStatusCode.OK, siblingBody)
         }
+
+    /// A save with no directory versions holds no paths, so it never reads the Library catalog. It succeeds even while
+    /// the repository's Library control record is missing.
+    [<Test>]
+    let ``an empty save doesn't read the Library catalog`` () =
+        task {
+            let repository = Guid.NewGuid().ToString("D")
+            let repositoryId = Guid.Parse repository
+            let! _ = administeredRepository repository
+
+            let! control =
+                LibraryActorSnapshots.takeFrom<LibraryControlDocument>
+                    HostState.Value
+                    "grace-library-control"
+                    "Grace.Library.Control.v2"
+                    (fun control -> control.Catalog.RepositoryId = repositoryId)
+                    "Library control"
+
+            let! status, body = trySaveDirectoryVersions repository []
+            do! LibraryActorSnapshots.restoreTo HostState.Value "grace-library-control" control
+            Assert.That(status, Is.EqualTo HttpStatusCode.OK, body)
+        }
