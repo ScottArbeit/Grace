@@ -203,13 +203,22 @@ module internal LibraryFilesystem =
     [<Literal>]
     let SaveBeforeDisplaceVariable = "GRACE_TEST_LIBRARY_SAVE_BEFORE_DISPLACE"
 
+    /// Names the test-only variable that limits that save to a path with this file name, so a test can aim it at a
+    /// rename's old path rather than the new path sync publishes first.
+    [<Literal>]
+    let SaveBeforeDisplaceNameVariable = "GRACE_TEST_LIBRARY_SAVE_BEFORE_DISPLACE_NAME"
+
     /// Writes the configured test save once, when the test variables ask for it.
     let private saveBeforeDisplaceFromEnvironment =
         let used = ref false
 
         fun (path: string) ->
+            let name = Environment.GetEnvironmentVariable(SaveBeforeDisplaceNameVariable)
+
             if not used.Value
-               && Environment.GetEnvironmentVariable("GRACE_TESTING") = "1" then
+               && Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+               && (String.IsNullOrEmpty name
+                   || String.Equals(Path.GetFileName path, name, StringComparison.OrdinalIgnoreCase)) then
                 match Environment.GetEnvironmentVariable(SaveBeforeDisplaceVariable) with
                 | null
                 | "" -> ()
