@@ -576,21 +576,26 @@ type RepositoryLibraryActor
                 return result
         }
 
+    /// Finishes the saved synchronous decision in control that was just read, if it holds one.
+    let repairLoaded repositoryId (control: LibraryControlDocument) etag =
+        task {
+            match control.Pending with
+            | None -> return ()
+            | Some (LibraryPendingDecision.ItemChange record) ->
+                let! _ = completeItemPending repositoryId etag control record
+                return ()
+            | Some (LibraryPendingDecision.CatalogChange (operationId, requestHash, expectedVersion, chosenVersion, add, path, at, principal)) ->
+                let! _ = completeCatalogPending repositoryId etag control operationId requestHash expectedVersion chosenVersion add path at principal
+
+                return ()
+        }
+
     /// Repairs the one saved synchronous decision before another result can become visible.
     let repairPending repositoryId =
         task {
             match! readControl repositoryId with
             | None -> return ()
-            | Some (control, etag) ->
-                match control.Pending with
-                | None -> return ()
-                | Some (LibraryPendingDecision.ItemChange record) ->
-                    let! _ = completeItemPending repositoryId etag control record
-                    return ()
-                | Some (LibraryPendingDecision.CatalogChange (operationId, requestHash, expectedVersion, chosenVersion, add, path, at, principal)) ->
-                    let! _ = completeCatalogPending repositoryId etag control operationId requestHash expectedVersion chosenVersion add path at principal
-
-                    return ()
+            | Some (control, etag) -> do! repairLoaded repositoryId control etag
         }
 
     /// Persists one deterministic rejection as the permanent operation result.
@@ -626,13 +631,13 @@ type RepositoryLibraryActor
         }
 
     /// Returns the current control state after synchronous repair. Control with no saved decision is already current,
-    /// so the common case reads it once; only a saved decision is repaired and read again.
+    /// so the common case reads it once; a saved decision is finished from that same read, then control is read again.
     let currentControl repositoryId : Task<LibraryControlDocument * string> =
         task {
             match! readControl repositoryId with
             | Some (control, etag) when control.Pending.IsNone -> return control, etag
-            | Some _ ->
-                do! repairPending repositoryId
+            | Some (control, etag) ->
+                do! repairLoaded repositoryId control etag
 
                 match! readControl repositoryId with
                 | Some value -> return value

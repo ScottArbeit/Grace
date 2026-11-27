@@ -710,6 +710,7 @@ type LibraryActorTests() =
                 Action (fun () ->
                     Assert.That(catalog.Libraries, Is.EqualTo([| "Shared" |]))
                     Assert.That(catalog.Version, Is.EqualTo(chosenVersion))
+                    Assert.That(storage.ReadCount "Grace.Library.Control.v2", Is.EqualTo(2), "One read to find the decision, one after finishing it.")
 
                     Assert.That(
                         stored
