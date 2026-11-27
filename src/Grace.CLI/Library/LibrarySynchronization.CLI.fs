@@ -142,6 +142,19 @@ module internal LibrarySynchronization =
 
         result
 
+    /// Returns the Library root a parent edge belongs to, following materialized live directories, or None when the
+    /// chain doesn't reach a root. A path alone can't say this: a removed Library's item can flatten to the path of a
+    /// Library added later.
+    let rec private rootOf (items: LibraryItemDto array) (parent: LibraryParentDto) =
+        match parent.Kind, parent.LibraryPath, parent.ItemId with
+        | "root", Some root, None -> Some root
+        | "item", None, Some id ->
+            items
+            |> Array.tryFind (fun item -> item.ItemId = id && item.Tombstone.IsNone)
+            |> Option.bind (fun item -> item.Namespace)
+            |> Option.bind (fun ns -> rootOf items ns.Parent)
+        | _ -> None
+
     /// Resolves current item paths through materialized parent/name identity rather than duplicated descendant paths.
     let rec private parentPath (items: LibraryItemDto array) (parent: LibraryParentDto) =
         match parent.Kind, parent.LibraryPath, parent.ItemId with
@@ -1122,11 +1135,32 @@ module internal LibrarySynchronization =
 
             let priorTarget = fullPath configuration priorPath
 
-            // Changes are pulled only after the copy has switched to the server's catalog, so a change whose path isn't in
-            // a selected Library belongs to one that was removed since. Stop before anything durable or on disk changes:
-            // applying it would write outside every Library.
+            // Changes are pulled only after the copy has switched to the server's catalog, so a change whose Library root
+            // isn't selected belongs to a Library removed since. Stop before anything durable or on disk changes: applying
+            // it would write outside every Library, or into a Library added later at the same path.
+            let changeRoot =
+                change.Item.Namespace
+                |> Option.orElse (
+                    change.Item.Tombstone
+                    |> Option.map (fun tombstone -> tombstone.LastNamespace)
+                )
+                |> Option.bind (fun ns -> rootOf items ns.Parent)
+
+            let selectedRoot root =
+                expected.Catalog.Libraries
+                |> Array.exists (pathsEqual root)
+
+            let priorRoot =
+                previous
+                |> Option.filter (fun item -> item.Tombstone.IsNone)
+                |> Option.bind (fun item -> item.Namespace)
+                |> Option.map (fun ns -> rootOf items ns.Parent)
+
             if
-                not (configurationOwnsPath expected.Catalog targetRelative)
+                not (changeRoot |> Option.exists selectedRoot)
+                || (priorRoot
+                    |> Option.exists (fun root -> not (root |> Option.exists selectedRoot)))
+                || not (configurationOwnsPath expected.Catalog targetRelative)
                 || not (configurationOwnsPath expected.Catalog priorPath)
             then
                 raise (
@@ -1465,7 +1499,7 @@ module internal LibrarySynchronization =
     /// Pulls contiguous changes, always from the applied cursor, so an interrupted or long-paused pull resumes exactly
     /// where local application stopped. An empty HasMore page remains incomplete and is retried by a later run, and so
     /// does a pull that uses up the run's remaining page budget; the run then reports catchingUp. Each page is charged
-    /// to pagesLeft before it's requested, so a pull interrupted by an added Library still spends what it used. Returns
+    /// to pagesLeft when it's requested, so a pull interrupted by an added Library still spends what it used. Returns
     /// whether the pull caught up.
     let private pull configuration correlationId (pagesLeft: int ref) (cancellationToken: CancellationToken) =
         task {
@@ -1473,12 +1507,13 @@ module internal LibrarySynchronization =
             let mutable caughtUp = false
 
             while continuePages && pagesLeft.Value > 0 do
-                pagesLeft.Value <- pagesLeft.Value - 1
                 cancellationToken.ThrowIfCancellationRequested()
                 let before = state configuration
                 do! checkCatalog configuration correlationId before
                 let parameters = scoped configuration correlationId (GetLibraryChangesParameters())
                 parameters.AfterCursor <- before.AppliedCursor
+                // Charged as the request goes out, so a catalog switch found just before it doesn't spend a page.
+                pagesLeft.Value <- pagesLeft.Value - 1
                 let! result = Libraries.GetChanges parameters
 
                 let page =

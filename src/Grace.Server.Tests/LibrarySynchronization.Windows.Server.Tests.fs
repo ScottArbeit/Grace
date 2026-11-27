@@ -2932,6 +2932,11 @@ module LibrarySynchronizationWindowsServerTests =
                     $"Both folders appeared after {folders.TotalSeconds:n1} s; the file reached B after {arrived.TotalSeconds:n1} s."
                 )
 
+                // B's file appears during its Library sync, before B's Watch processes version-control changes for that
+                // tick. Let both Watches run several more ticks first. LatestSave only moves forward, so if either one
+                // saved anything since the seed, including Library content, it no longer points at the seed.
+                do! Task.Delay(TimeSpan.FromSeconds 10.0)
+                Assert.That(watchA.HasExited || watchB.HasExited, Is.False, diagnostics ())
                 let! afterBranch = BranchServerTestHelpers.getBranchAsync (string repositoryId) (string branch.BranchId)
 
                 Assert.That(
@@ -2963,9 +2968,11 @@ module LibrarySynchronizationWindowsServerTests =
 
     /// #1081 review: while a copy is away, a Library is added, a directory is created and deleted in it, and the Library
     /// is removed again. The copy's catalog only gained a version, but the journal still holds that create. The copy stops
-    /// with the removal next step before writing anything, even where an ordinary folder of that name exists.
-    [<Test>]
-    let ``a change in a Library removed while a copy was away stops without writing outside the Libraries`` () =
+    /// with the removal next step before writing anything, even where an ordinary folder of that name exists. When a
+    /// Library is then added at the deleted item's own path, the old create and delete flatten to that new Library's
+    /// path; they still belong to the removed root, so replay stops before deleting the new folder.
+    [<TestCase(false); TestCase(true)>]
+    let ``a change in a Library removed while a copy was away stops without writing outside the Libraries`` readded =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
@@ -3007,6 +3014,10 @@ module LibrarySynchronizationWindowsServerTests =
             let! _ = submitAcceptedAsync repositoryId delete
             let! _ = changeLibraryAsync repositoryId false "Gone"
 
+            if readded then
+                let! _ = changeLibraryAsync repositoryId true "Gone/temporary"
+                ()
+
             let before =
                 Grace.CLI.LibraryLocalState.readRepository (localDb copyB) repositoryId
                 |> Option.get
@@ -3022,7 +3033,12 @@ module LibrarySynchronizationWindowsServerTests =
                 Action (fun () ->
                     Assert.That(stopped.ExitCode, Is.Not.Zero, stopped.StandardOutput)
                     Assert.That(status, Does.Contain("A Library was removed from this repository or moved"))
-                    Assert.That(Directory.Exists(Path.Combine(ordinary, "temporary")), Is.False, "Sync wrote outside every Library.")
+
+                    if readded then
+                        Assert.That(Directory.Exists(Path.Combine(ordinary, "temporary")), Is.True, "Replay deleted the Library added later at that path.")
+                    else
+                        Assert.That(Directory.Exists(Path.Combine(ordinary, "temporary")), Is.False, "Sync wrote outside every Library.")
+
                     Assert.That(after.AppliedCursor, Is.EqualTo(before.AppliedCursor)))
             )
         }
