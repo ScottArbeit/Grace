@@ -1,6 +1,6 @@
 # Durable Workflows
 
-Rules for grains, retries, and the workflows whose state must survive restarts. Vocabulary is in `CONTEXT.md`.
+Rules for grains, retries, and the workflows whose state must survive restarts.
 
 ## Identity of a durable decision
 
@@ -23,7 +23,7 @@ not evidence of a durable fact.
 
 ## Webhooks and approvals
 
-The product rules are in `docs/Webhooks and approvals.md`. The ones that shape code:
+A webhook observes committed facts; an approval policy gates a proposed transition; an approval request is the runtime decision Grace generates for one attempt. The rules that shape code:
 
 - Store the delivery payload and webhook rule snapshot before outbound dispatch; editing a rule later never changes an
   already-scheduled delivery. Delivery claims use stable dedupe keys.

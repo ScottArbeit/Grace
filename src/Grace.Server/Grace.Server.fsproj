@@ -193,7 +193,6 @@
 		<InternalsVisibleTo Include="Grace.Server.Unit.Tests" />
 	</ItemGroup>
 	<ItemGroup>
-	  <None Include="instructions.md" />
 	  <None Include=".env" />
 	  <Folder Include="wwwroot\" />
 	  <Folder Include="Properties\PublishProfiles\" />

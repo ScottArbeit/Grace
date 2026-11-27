@@ -1236,7 +1236,7 @@ module Auth =
                 Arity = ArgumentArity.Zero
             )
 
-    let private authDevelopmentGuidance = "During development, TestAuth may be available. See docs/Authentication.md for details."
+    let private authDevelopmentGuidance = "During local development, run 'pwsh ./scripts/dev-local.ps1' to start Grace and create a personal access token for GRACE_TOKEN."
 
     let private authenticationRequiredMessage = $"Authentication required. Run 'grace authenticate login' and try again. {authDevelopmentGuidance}"
 
