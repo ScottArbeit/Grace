@@ -1,6 +1,0 @@
-{
-  // For the /docs directory, disable line length rule. We're writing prose.
-  "MD013": {
-    "enabled": false
-  }
-}

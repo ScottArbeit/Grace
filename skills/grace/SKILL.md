@@ -5,8 +5,8 @@ description: Grace repository reference. Use when working in Grace to find where
 
 # Grace
 
-The root and nearest `AGENTS.md` come first; `CONTEXT.md` holds the vocabulary and `docs/Development process.md`
-covers tracked work. Current source and the live tracker win over anything written here.
+The root and nearest `AGENTS.md` come first; `CONTRIBUTING.md` covers tracked work.
+Current source and the live tracker win over anything written here.
 
 | Task | Reference |
 | --- | --- |

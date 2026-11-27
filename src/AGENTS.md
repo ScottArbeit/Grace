@@ -1,7 +1,7 @@
 # Grace Source Guide
 
 Rules for all code under `src/`. Project folders may add their own `AGENTS.md`. The root `AGENTS.md` and
-`docs/Development process.md` cover workflow.
+`CONTRIBUTING.md` cover workflow.
 
 ## F# conventions
 
@@ -25,11 +25,11 @@ what it touches, or note why a surface is unaffected:
 ```text
 Grace.Types -> Grace.Shared parameters -> Grace.Server (routes, validation, authorization, endpoint manifest)
   -> Grace.Actors -> Grace.SDK -> Grace.CLI (options, help, JSON output) -> static OpenAPI and generated clients
-  -> events, webhooks, SignalR, Watch, search -> tests and docs
+  -> events, webhooks, SignalR, Watch, search -> tests
 ```
 
-If a route accepts a value, the CLI, SDK, OpenAPI, and docs expose it too or leave it out for a stated reason. Every
-accepted input is implemented, rejected with a clear error, or documented as informational; none is silently ignored.
+If a route accepts a value, the CLI, SDK, and OpenAPI expose it too or leave it out for a stated reason. Every accepted
+input is implemented, rejected with a clear error, or marked informational in its help text; none is silently ignored.
 
 ## Runtime, storage, and authorization work
 

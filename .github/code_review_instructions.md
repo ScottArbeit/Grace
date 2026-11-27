@@ -10,7 +10,7 @@ For each "Done when" item, the PR shows a result on the current head. Also check
 
 - each new or changed test was shown red without the change and green with it (red-on-revert);
 - a user-visible CLI, HTTP route, or SDK change includes a demo: the real command and its output;
-- the proof matches the kind of change (the Verification table in `docs/Development process.md`);
+- the proof matches the kind of change (the Verification table in `CONTRIBUTING.md`);
 - Fantomas (F#) and markdownlint (Markdown) ran on touched files, since `Validate` runs neither.
 
 Missing, stale, or unconvincing evidence is the first finding. Spot-check doubtful evidence; you don't need to rerun

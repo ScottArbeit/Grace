@@ -15,7 +15,6 @@
         <OtherFlags>--test:ParallelIlxGen</OtherFlags>
     </PropertyGroup>
     <ItemGroup>
-        <None Include="instructions.md" />
         <Compile Include="Extensions.Shared.fs" />
         <Compile Include="Constants.Shared.fs" />
         <Compile Include="ApiContractVersion.Shared.fs" />
