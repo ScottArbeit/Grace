@@ -16,7 +16,6 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
-        <None Include="instructions.md" />
         <Compile Include="ClientIdentity.SDK.fs" />
         <Compile Include="Auth.SDK.fs" />
         <Compile Include="Common.SDK.fs" />

@@ -35,14 +35,6 @@ It ships with a promotion queue - Grace doesn't do merges, it does promotions - 
 
 ## Technology stack
 
-[Libraries](docs/Libraries.md) share ordinary nonempty files between authorized Windows working copies outside Save and Reference history. A fresh copy can join a populated Library from an empty local root, install selected content and catch up with later changes using `grace library sync enable`.
-
-Use `grace library add <path>` or `grace library remove <path>` to change configured Library roots. The CLI obtains the current catalog version and creates an operation ID unless you supply explicit values for a controlled request or exact retry.
-
-Use `grace library rename <path> <new-name>` to rename one clean synchronized nonempty file within its existing parent. The command retains its generated request across retry and reports local completion only after accepted changes have been applied in order.
-
-Use `grace library sync pause` to stop Library capture and transfer for one onboarded copy while retaining its saved work. `grace library sync resume` continues synchronization; status reports pause separately from participation and progress.
-
 Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
 
 Grace is written primarily in **F#**, and uses:
@@ -63,29 +55,7 @@ Grace is written primarily in **F#**, and uses:
 
 ## Development process
 
-System administrators can inspect [committed Library content declarations](docs/Operations.md#committed-library-content-declarations) with `scripts/diagnose-library-content-size.ps1`. The result includes historical accepted content and its selected committed cursor; it does not establish complete repository storage or charges.
-
-Grace work, by people and agents alike, follows one lightweight flow:
-
-1. Start from a GitHub issue with a goal and "Done when" checks anyone can run
-   (`.github/ISSUE_TEMPLATE/task.md`).
-2. Branch from the latest `origin/main`, one worktree per issue.
-3. Work in vertical slices: a focused failing test, the smallest change that passes it, then a commit.
-4. Prove each slice with focused tests that fail without the change, show a demo for user-visible changes,
-   and run `git diff --check`. GitHub `Validate` runs the full suite on the pull request;
-   `pwsh ./scripts/validate.ps1 -Fast` and `-Full` are there for local diagnosis.
-5. Open a pull request, get one independent review, fix accepted findings in one pass, and merge after approval.
-6. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, or workflow change.
-
-A request to plan work stays a conversation until someone asks for tracked work.
-
-See [`docs/Development process.md`](./docs/Development%20process.md) for epics, validation, review, and cleanup.
-
-See [Grace Operations](./docs/Operations.md) for the usage-measurement design, SystemAdmin diagnostics and durable source-specific observation capture/read. Owner administrators can read a known retained DirectoryVersion observation through HTTP, F# SDK, CLI and the Node facade with exact quantities and timestamps. Each source retains its own declaration meaning and does not contribute to billable minute usage.
-
-Artifact diagnosis uses the configured actor storage provider and runs until exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its save command sets no connection or operation timeout; Ctrl+C cancels the request and preserves prior output.
-
-Observation capture reads until source exhaustion, caller cancellation or failure, without fixed scan or request deadlines. Its operator commands also set no connection or operation timeout. After an uncertain response, retry the same ObservationId to retrieve any committed result.
+Grace work, by people and agents alike, starts from a GitHub issue with a goal and "Done when" checks anyone can run, moves through focused vertical slices on a branch from `origin/main`, and lands through one pull request with an independent review. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup and the full process.
 
 ## Running Grace locally
 
@@ -104,8 +74,6 @@ In normal development and debugging, there are three steps to running Grace.
 ### First time setup
 
 The first-time steps below use **local emulators** and **test authentication** (i.e. the same authentication we use in integration tests), so you don't have to set anything up in the cloud to get started. If all goes well, you should be up and running in under 10 minutes.
-
-> There is a detailed guide to configuring authentication at [`/docs/Authentication.md`](/docs/Authentication.md).
 
 1. **Install prerequisites** for your platform:
    - [.NET SDK 11.0.100](https://dotnet.microsoft.com/en-us/download), selected by `global.json`
@@ -203,9 +171,6 @@ grace doctor --check Server
 grace doctor --check server.healthz.reachable
 ```
 
-See [Grace doctor](./docs/Grace%20doctor.md) for the check catalog, JSON contract, exit-code behavior, redaction notes,
-and repair deferrals.
-
 ### Machine-readable CLI output
 
 Agents, CI jobs, and scripts can request parseable CLI output with `--output Json`. Contracted commands emit exactly
@@ -235,9 +200,6 @@ grace --output Json doctor --select Status
 `--select` is a V1 projection over `ReturnValue` only. Selectors such as `DirectoryCount` or
 `Summary.DirectoryCount` are valid; selectors for envelope metadata, predicates, wildcards, functions, renames,
 computed fields, and streaming output are explicit V2 deferrals.
-
-See [Machine-readable CLI output](./docs/Machine-readable%20CLI%20output.md) for agent recipes, JSON examples, how to
-check a command's JSON support, and V2 boundaries.
 
 ### File an issue if anything seems confusing or rough
 
@@ -282,9 +244,9 @@ A version control system is \<waves hands\> just a series of modifications to fi
 
 Grace relies on cloud object storage systems to provide a safe and infinitely scalable storage layer. Grace currently
 uses Azure Blob Storage, with the intention of adding the ability to run it on AWS S3 and others. Small and regular
-files use the repository-scoped whole-file path. Eligible large files use ADR-0001 manifest-backed content-addressed
-storage: clients split content into ContentBlocks, upload only missing payloads, and finalize a FileManifest that lets
-Grace reconstruct the file without tying content identity to a repository path.
+files use the repository-scoped whole-file path. Eligible large files use manifest-backed content-addressed storage:
+clients split content into ContentBlocks, upload only missing payloads, and finalize a FileManifest that lets Grace
+reconstruct the file without tying content identity to a repository path.
 
 ### 4) `grace watch` for effortless, background update tracking
 
@@ -293,8 +255,6 @@ Grace reconstruct the file without tying content identity to a repository path.
 Grace has other commands that agents are meant to use to capture the complete context of the work being done.
 
 Together, they give us a step-by-step audit trail of everything an agent has done and is doing, and why, that you can watch and review in real-time from your computer.
-
-> If you want a deeper dive on what `grace watch` does and does not do, see: [What `grace watch` does](./docs/What%20grace%20watch%20does.md).
 
 ### 5) “Continuous review” for rapid validation of changes
 
@@ -308,16 +268,11 @@ Key concepts include:
 - **Gates** and **attestations**
 - **Review packets** with easy-to-understand, customizable summaries
 
-For more, see: `docs/Continuous review.md`
-
 Grace now also has webhook and approval primitives for automation around review and promotion workflows:
 
 - `webhook`: a post-event outbound HTTP notification rule for committed facts
 - `approval policy`: pre-transition gate configuration
 - `approval request`: durable runtime decision state generated by Grace
-
-See [`docs/Webhooks and approvals.md`](./docs/Webhooks%20and%20approvals.md) for the command surface, security notes,
-unsafe local-development URL behavior, approval summaries, and current approval notification delivery boundaries.
 
 ![Grace orange mark](./Assets/Orange3.svg)
 
@@ -380,8 +335,7 @@ original idea. You can watch the [NDC Oslo talk on YouTube](https://youtu.be/lW0
 
 If you want to help shape Grace:
 
-- Read `CONTRIBUTING.md`
-- Follow the development process in `docs/Development process.md`
+- Read `CONTRIBUTING.md` for setup and the development process
 - AI submissions are expected and welcomed, and useful AI prompts should be included in the PR description
 - Open issues for rough edges, missing docs, or confusing workflows
 

@@ -5,7 +5,6 @@
     <Platform Name="x86" />
   </Configurations>
   <Folder Name="/Solution items/">
-    <File Path="agents.md" />
     <File Path="Directory.Build.props" />
   </Folder>
   <Project Path="Grace.Actors/Grace.Actors.fsproj" />
