@@ -25,6 +25,10 @@ module internal LibraryWin32 =
     [<Literal>]
     let SequentialScan = 0x08000000u
 
+    /// Opens a symbolic link or other reparse point itself instead of the file it points to.
+    [<Literal>]
+    let OpenReparsePoint = 0x00200000u
+
     /// FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfo.
     [<Literal>]
     let FileDispositionInfo = 4
@@ -305,8 +309,9 @@ module internal LibraryFilesystem =
 
     /// Deletes a file sync displaced only when it holds exactly the expected bytes. One handle, shared with nobody,
     /// both hashes the file and deletes it, so no other program can change, rename or replace it in between, and the
-    /// file deleted is the file hashed. Returns false, keeping the file, when its bytes differ or another program has it
-    /// open.
+    /// file deleted is the file hashed. The handle opens the displaced entry itself, never what a link points to, so a
+    /// file swapped for a link can't lead sync to delete a file outside the Library. Returns false, keeping the file,
+    /// when it isn't an ordinary file, its bytes differ, or another program has it open.
     let private discardIfExpected (path: string) expected =
         let handle =
             LibraryWin32.CreateFileW(
@@ -316,11 +321,18 @@ module internal LibraryFilesystem =
                 0u,
                 0n,
                 LibraryWin32.OpenExisting,
-                LibraryWin32.SequentialScan,
+                LibraryWin32.SequentialScan
+                ||| LibraryWin32.OpenReparsePoint,
                 0n
             )
 
         if handle.IsInvalid then
+            handle.Dispose()
+            false
+        elif File
+                 .GetAttributes(handle)
+                 .HasFlag(FileAttributes.ReparsePoint) then
+            // Like every other Library path, sync doesn't follow or remove a link; it keeps it.
             handle.Dispose()
             false
         else

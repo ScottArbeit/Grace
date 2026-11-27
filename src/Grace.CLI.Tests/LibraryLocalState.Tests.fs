@@ -10,6 +10,53 @@ open Microsoft.Data.Sqlite
 open NUnit.Framework
 open System
 open System.IO
+open System.Runtime.InteropServices
+open Microsoft.Win32.SafeHandles
+
+/// Turns an ordinary file into a reparse point, which Windows lets any user do with a third-party tag. Tests use it
+/// where a symbolic link would need a privilege the test account may not hold.
+module internal ReparseFixture =
+
+    [<DllImport("kernel32.dll", SetLastError = true)>]
+    extern bool private DeviceIoControl(SafeFileHandle device, uint32 controlCode, byte [] input, int inputSize, nativeint output, int outputSize, int& returned, nativeint overlapped)
+
+    /// Adds a third-party reparse tag to an existing file. Its data stream, and so its bytes, stay as they were.
+    let tag (path: string) =
+        let backupSemantics = 0x02000000u
+        let genericWrite = 0x40000000u
+        let setReparsePoint = 0x000900A4u
+        let data = [| 1uy; 2uy; 3uy; 4uy |]
+        let buffer = Array.zeroCreate<byte> (24 + data.Length)
+
+        BitConverter
+            .GetBytes(0x00000123u)
+            .CopyTo(buffer, 0)
+
+        BitConverter
+            .GetBytes(uint16 data.Length)
+            .CopyTo(buffer, 4)
+
+        Guid.NewGuid().ToByteArray().CopyTo(buffer, 8)
+        data.CopyTo(buffer, 24)
+
+        use handle =
+            LibraryWin32.CreateFileW(
+                LibraryWin32.extendedPath path,
+                genericWrite,
+                0u,
+                0n,
+                LibraryWin32.OpenExisting,
+                LibraryWin32.OpenReparsePoint ||| backupSemantics,
+                0n
+            )
+
+        if handle.IsInvalid then
+            raise (ComponentModel.Win32Exception(Marshal.GetLastWin32Error()))
+
+        let mutable returned = 0
+
+        if not (DeviceIoControl(handle, setReparsePoint, buffer, buffer.Length, 0n, 0, &returned, 0n)) then
+            raise (ComponentModel.Win32Exception(Marshal.GetLastWin32Error()))
 
 /// Exercises the real Library SQLite completion boundary and Windows filesystem guards.
 [<NonParallelizable>]
@@ -1673,6 +1720,99 @@ module LibraryLocalStateTests =
         Assert.That(namesIn deep, Is.EqualTo([| "plan.txt" |]))
         Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.False)
         Assert.That(namesIn deep, Is.Empty)
+
+    /// #1123 review: a file swapped for a reparse point just before sync removes it is kept and put back, even when its
+    /// bytes are exactly what sync expected, because sync doesn't follow or remove links anywhere in a Library.
+    [<Test>]
+    let ``removing a Library file keeps it when it became a reparse point after the last check`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, _ = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+        let materialized = LibraryFilesystem.fingerprint target
+        let previous = LibraryFilesystem.beforeDisplace
+        LibraryFilesystem.beforeDisplace <- ReparseFixture.tag
+
+        let kept =
+            try
+                LibraryFilesystem.removeFile (Guid.NewGuid()) target materialized
+            finally
+                LibraryFilesystem.beforeDisplace <- previous
+
+        Assert.That(kept, Is.True)
+        Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
+
+        Assert.That(
+            File
+                .GetAttributes(target)
+                .HasFlag(FileAttributes.ReparsePoint),
+            Is.True
+        )
+
+    /// #1123 review: a Library file swapped for a symbolic link just before sync removes it can't lead sync to delete
+    /// the file the link points to, outside the Library. Creating a file link needs Developer Mode or an elevated
+    /// account, so this test is ignored without one.
+    [<Test>]
+    let ``removing a Library file never deletes the file a link put in its place points to`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, _ = libraryFolder ()
+        let outside = Path.Combine(Path.GetDirectoryName(folder), "outside.txt")
+        File.WriteAllText(outside, "materialized")
+        let probe = Path.Combine(Path.GetDirectoryName(folder), "probe.txt")
+
+        try
+            File.CreateSymbolicLink(probe, outside) |> ignore
+            File.Delete(probe)
+        with
+        | :? IOException
+        | :? UnauthorizedAccessException -> Assert.Ignore("Creating a file symbolic link needs Developer Mode or elevation.")
+
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+        let materialized = LibraryFilesystem.fingerprint target
+        let previous = LibraryFilesystem.beforeDisplace
+
+        // Someone moves the file out of the Library and leaves a link to it, after sync's last check.
+        LibraryFilesystem.beforeDisplace <-
+            fun path ->
+                File.Delete(path)
+                File.CreateSymbolicLink(path, outside) |> ignore
+
+        let kept =
+            try
+                LibraryFilesystem.removeFile (Guid.NewGuid()) target materialized
+            finally
+                LibraryFilesystem.beforeDisplace <- previous
+
+        Assert.That(File.ReadAllText(outside), Is.EqualTo("materialized"), "Sync deleted the file a link pointed to.")
+        Assert.That(kept, Is.True)
+        Assert.That(File.ResolveLinkTarget(target, false), Is.Not.Null)
+
+        // The same swap before an incoming replace: sync may keep the link as a conflict copy or stop, but the file it
+        // points to stays untouched.
+        File.Delete(target)
+        File.WriteAllText(target, "materialized")
+        let staged = Path.Combine(Path.GetDirectoryName(folder), "staged.tmp")
+
+        LibraryFilesystem.beforeDisplace <-
+            fun path ->
+                File.Delete(path)
+                File.CreateSymbolicLink(path, outside) |> ignore
+
+        try
+            try
+                LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target materialized "incoming"B
+            with
+            | :? InvalidOperationException
+            | :? IOException -> ()
+        finally
+            LibraryFilesystem.beforeDisplace <- previous
+
+        Assert.That(File.ReadAllText(outside), Is.EqualTo("materialized"), "Sync changed or deleted the file a link pointed to.")
 
     /// #1123 review: the extended-length form of each Windows path form sync can meet.
     [<TestCase(@"C:\repo\Library\plan.txt", @"\\?\C:\repo\Library\plan.txt")>]
