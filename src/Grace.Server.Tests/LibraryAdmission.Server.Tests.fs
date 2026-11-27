@@ -7,6 +7,7 @@ open Grace.Server.Tests.LibraryHttp
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.Common
 open Grace.Types.Library
 open NUnit.Framework
 
@@ -26,12 +27,14 @@ module LibraryAdmissionHttpTests =
     /// The parent edge for items under a directory item.
     let private itemParent (itemId: Guid) = { Kind = "item"; LibraryPath = None; ItemId = Some itemId }
 
-    /// Creates a repository the test user administers, adds one Library at root, and returns the new catalog.
-    let private libraryRepository (repository: string) (root: string) =
+    /// Creates a repository the test user administers and returns its default branch ID.
+    let private administeredRepository (repository: string) =
         task {
             let create = Parameters.Repository.CreateRepositoryParameters(RepositoryName = "LibraryAdmission" + Guid.NewGuid().ToString("N"))
             scope repository create
-            let! _, _ = post<string> "/repository/create" create
+            let! _, body = post<string> "/repository/create" create
+            let created = deserialize<GraceReturnValue<string>> body
+            let branchId = Common.requireGuidProperty (nameof BranchId) created.Properties[nameof BranchId]
 
             let grant =
                 Parameters.Access.GrantRoleParameters(
@@ -45,6 +48,12 @@ module LibraryAdmissionHttpTests =
             scope repository grant
             use! granted = Client.PostAsync("/authorize/grant-role", createJsonContent grant)
             Assert.That(granted.StatusCode, Is.EqualTo HttpStatusCode.OK)
+            return $"{branchId}"
+        }
+
+    /// Adds one Library at root and returns the new catalog.
+    let private addLibrary (repository: string) (root: string) =
+        task {
             let get = Parameters.Library.GetLibraryCatalogParameters()
             scope repository get
             let! catalog, _ = post<LibraryCatalogDto> "/libraries/catalog/get" get
@@ -53,6 +62,13 @@ module LibraryAdmissionHttpTests =
             let! added, _ = post<LibraryCatalogChangeResultDto> "/libraries/add" add
             Assert.That(added.Outcome, Is.EqualTo OutcomeKind.Accepted)
             return added.LibraryCatalog
+        }
+
+    /// Creates a repository the test user administers, adds one Library at root, and returns the new catalog.
+    let private libraryRepository (repository: string) (root: string) =
+        task {
+            let! _ = administeredRepository repository
+            return! addLibrary repository root
         }
 
     /// Submits one change and returns its receipt.
@@ -325,4 +341,78 @@ module LibraryAdmissionHttpTests =
                     Assert.That(current.PendingOperationCount, Is.Zero)
                     Assert.That(current.LastCompletedAt, Is.EqualTo(Some second.Change.Value.AcceptedAt)))
             )
+        }
+
+    /// Posts directory versions to save and returns the status and body, so a test can read a rejection.
+    let private trySaveDirectoryVersions repository (directoryVersions: Grace.Types.Common.DirectoryVersion list) =
+        task {
+            let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
+            scope repository parameters
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            for directoryVersion in directoryVersions do
+                parameters.DirectoryVersions.Add directoryVersion
+
+            use! response = Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            return response.StatusCode, body
+        }
+
+    /// Version control can't save or reference a path a Library owns, and a sibling whose name only starts with the
+    /// Library's name is still version-controlled. Each request checks all of its paths against one catalog read.
+    [<Test>]
+    let ``version control can't save or reference a Library path`` () =
+        task {
+            let repository = Guid.NewGuid().ToString("D")
+            let! branchId = administeredRepository repository
+
+            let directory (path: RelativePath) children = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repository path children
+
+            // Adding a Library checks only references, so a root saved first can hold paths the Library then owns.
+            let docs = directory "Shared/docs" []
+            let shared = directory "Shared" [ docs ]
+            let ownedRoot = directory Constants.RootDirectoryPath [ shared ]
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repository [ docs; shared; ownedRoot ]
+            let! _ = addLibrary repository "Shared"
+
+            let! savedStatus, savedBody = trySaveDirectoryVersions repository [ directory "Shared/notes" [] ]
+            Assert.That(savedStatus, Is.EqualTo HttpStatusCode.BadRequest, savedBody)
+            Assert.That((deserialize<GraceError> savedBody).Error, Does.Contain "Path 'Shared/notes' belongs to the current Library policy and cannot be saved")
+
+            let old = directory "Shared-old" []
+            let siblingRoot = directory Constants.RootDirectoryPath [ old ]
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repository [ old; siblingRoot ]
+
+            let! defaultBranch = BranchServerTestHelpers.getBranchAsync repository branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repository defaultBranch $"Library{Guid.NewGuid():N}"
+            use! owned = BranchServerTestHelpers.saveReferenceResponseAsync repository branch ownedRoot.DirectoryVersionId ownedRoot.Sha256Hash
+            let! ownedBody = owned.Content.ReadAsStringAsync()
+            Assert.That(owned.StatusCode, Is.EqualTo HttpStatusCode.BadRequest, ownedBody)
+            Assert.That((deserialize<GraceError> ownedBody).Error, Does.Contain "belongs to the current Library policy and cannot be referenced")
+
+            use! sibling = BranchServerTestHelpers.saveReferenceResponseAsync repository branch siblingRoot.DirectoryVersionId siblingRoot.Sha256Hash
+            let! siblingBody = sibling.Content.ReadAsStringAsync()
+            Assert.That(sibling.StatusCode, Is.EqualTo HttpStatusCode.OK, siblingBody)
+        }
+
+    /// A save with no directory versions holds no paths, so it never reads the Library catalog. It succeeds even while
+    /// the repository's Library control record is missing.
+    [<Test>]
+    let ``an empty save doesn't read the Library catalog`` () =
+        task {
+            let repository = Guid.NewGuid().ToString("D")
+            let repositoryId = Guid.Parse repository
+            let! _ = administeredRepository repository
+
+            let! control =
+                LibraryActorSnapshots.takeFrom<LibraryControlDocument>
+                    HostState.Value
+                    "grace-library-control"
+                    "Grace.Library.Control.v2"
+                    (fun control -> control.Catalog.RepositoryId = repositoryId)
+                    "Library control"
+
+            let! status, body = trySaveDirectoryVersions repository []
+            do! LibraryActorSnapshots.restoreTo HostState.Value "grace-library-control" control
+            Assert.That(status, Is.EqualTo HttpStatusCode.OK, body)
         }

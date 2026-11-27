@@ -154,3 +154,38 @@ type LibraryTypesTests() =
                 Assert.That(pageSizeIsValid 2000, Is.True)
                 Assert.That(pageSizeIsValid 2001, Is.False))
         )
+
+    /// Confirms one catalog judges a request's paths in order, by exact segment and without regard to case.
+    [<Test>]
+    member _.``the first path a Library owns is found by exact segment``() =
+        let repositoryId = Guid.Parse("c9a233f1-a9be-4f18-a862-5d5c27accf0d")
+        let empty = LibraryCatalogDto.CreateInitial(repositoryId, Instant.FromUtc(2026, 11, 26, 12, 0), "test-principal")
+        let catalog = { empty with Libraries = [| "Shared" |] }
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    tryFindOwnedPath
+                        catalog
+                        [
+                            "."
+                            "Shared-old/a.txt"
+                            "shared/docs"
+                            "Shared"
+                        ],
+                    Is.EqualTo(Some "shared/docs")
+                )
+
+                Assert.That(
+                    tryFindOwnedPath
+                        catalog
+                        [
+                            "."
+                            "Shared-old"
+                            "Sharedness/a.txt"
+                        ],
+                    Is.EqualTo(None)
+                )
+
+                Assert.That(tryFindOwnedPath empty [ "Shared" ], Is.EqualTo(None)))
+        )

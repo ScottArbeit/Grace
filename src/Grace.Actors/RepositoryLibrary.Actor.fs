@@ -576,21 +576,26 @@ type RepositoryLibraryActor
                 return result
         }
 
+    /// Finishes the saved synchronous decision in control that was just read, if it holds one.
+    let repairLoaded repositoryId (control: LibraryControlDocument) etag =
+        task {
+            match control.Pending with
+            | None -> return ()
+            | Some (LibraryPendingDecision.ItemChange record) ->
+                let! _ = completeItemPending repositoryId etag control record
+                return ()
+            | Some (LibraryPendingDecision.CatalogChange (operationId, requestHash, expectedVersion, chosenVersion, add, path, at, principal)) ->
+                let! _ = completeCatalogPending repositoryId etag control operationId requestHash expectedVersion chosenVersion add path at principal
+
+                return ()
+        }
+
     /// Repairs the one saved synchronous decision before another result can become visible.
     let repairPending repositoryId =
         task {
             match! readControl repositoryId with
             | None -> return ()
-            | Some (control, etag) ->
-                match control.Pending with
-                | None -> return ()
-                | Some (LibraryPendingDecision.ItemChange record) ->
-                    let! _ = completeItemPending repositoryId etag control record
-                    return ()
-                | Some (LibraryPendingDecision.CatalogChange (operationId, requestHash, expectedVersion, chosenVersion, add, path, at, principal)) ->
-                    let! _ = completeCatalogPending repositoryId etag control operationId requestHash expectedVersion chosenVersion add path at principal
-
-                    return ()
+            | Some (control, etag) -> do! repairLoaded repositoryId control etag
         }
 
     /// Persists one deterministic rejection as the permanent operation result.
@@ -625,13 +630,18 @@ type RepositoryLibraryActor
                 | None -> invalidOp "The committed Library boundary has no journal record."
         }
 
-    /// Returns the current control state after synchronous repair.
+    /// Returns the current control state after synchronous repair. Control with no saved decision is already current,
+    /// so the common case reads it once; a saved decision is finished from that same read, then control is read again.
     let currentControl repositoryId : Task<LibraryControlDocument * string> =
         task {
-            do! repairPending repositoryId
-
             match! readControl repositoryId with
-            | Some value -> return value
+            | Some (control, etag) when control.Pending.IsNone -> return control, etag
+            | Some (control, etag) ->
+                do! repairLoaded repositoryId control etag
+
+                match! readControl repositoryId with
+                | Some value -> return value
+                | None -> return invalidOp "Library catalog is not initialized."
             | None -> return invalidOp "Library catalog is not initialized."
         }
 
@@ -1044,13 +1054,6 @@ type RepositoryLibraryActor
                                                 principalId
 
                                         return Ok result
-            }
-
-        member this.IsInLibrary path _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-                let! control, _ = currentControl repositoryId
-                return LibraryDecision.isInLibrary control.Catalog path
             }
 
         member this.Submit command principalId authorization correlationId =
