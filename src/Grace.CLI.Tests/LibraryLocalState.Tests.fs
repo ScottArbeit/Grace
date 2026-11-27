@@ -1653,6 +1653,27 @@ module LibraryLocalStateTests =
         Assert.That(File.Exists(copy) || not (File.Exists(renamed)), Is.True, "Sync deleted a file it never checked.")
         Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
 
+    /// #1123 review: sync checks and deletes a displaced file through Win32 directly, so a path over 260 characters must
+    /// work even when Windows long paths are off. A clean replace and a clean removal leave nothing behind there too.
+    [<Test>]
+    let ``a displaced file deep in a Library is checked and removed like any other`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, staged = libraryFolder ()
+        let deep = Path.Combine(folder, String('d', 120), String('e', 120))
+        Directory.CreateDirectory(deep) |> ignore
+        let target = Path.Combine(deep, "plan.txt")
+        Assert.That(target.Length, Is.GreaterThan(260))
+        File.WriteAllText(target, "materialized")
+
+        LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) "incoming"B
+
+        Assert.That(File.ReadAllText(target), Is.EqualTo("incoming"))
+        Assert.That(namesIn deep, Is.EqualTo([| "plan.txt" |]))
+        Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.False)
+        Assert.That(namesIn deep, Is.Empty)
+
     /// Returns a catalog that adds the named Libraries to the one this copy selected.
     let private adding (current: RepositoryState) (libraries: string array) =
         { current.Catalog with

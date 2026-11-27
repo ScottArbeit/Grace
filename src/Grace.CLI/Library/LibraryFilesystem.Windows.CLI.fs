@@ -38,6 +38,19 @@ module internal LibraryWin32 =
     [<DllImport("kernel32.dll", SetLastError = true)>]
     extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, byte [] information, uint32 size)
 
+    /// Returns the extended-length form of a path, which Win32 file functions need for paths over 260 characters when
+    /// Windows long paths are off. .NET adds it for its own file calls, but a direct Win32 call has to add it itself.
+    let extendedPath (path: string) =
+        if path.StartsWith(@"\\?\", StringComparison.Ordinal) then
+            path
+        else
+            let full = Path.GetFullPath path
+
+            if full.StartsWith(@"\\", StringComparison.Ordinal) then
+                @"\\?\UNC\" + full.Substring(2)
+            else
+                @"\\?\" + full
+
 /// Supplies the existing narrow Windows read and same-volume publication mechanics for Library files.
 module internal LibraryFilesystem =
 
@@ -294,7 +307,7 @@ module internal LibraryFilesystem =
     let private discardIfExpected (path: string) expected =
         let handle =
             LibraryWin32.CreateFileW(
-                path,
+                LibraryWin32.extendedPath path,
                 LibraryWin32.GenericRead
                 ||| LibraryWin32.DeleteAccess,
                 0u,
