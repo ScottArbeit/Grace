@@ -55,7 +55,6 @@ module Library =
     type SubmitLibraryChangeParameters() =
         inherit LibraryParameters()
         member val OperationId = Guid.Empty with get, set
-        member val LibraryCatalogVersion = Guid.Empty with get, set
         member val ChangeKind = String.Empty with get, set
         member val ItemKind = String.Empty with get, set
         member val ItemId: Nullable<Guid> = Nullable() with get, set

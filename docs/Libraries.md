@@ -44,7 +44,6 @@ Authorization is rechecked against the stored repository identity before a read,
 Each change request provides:
 
 - One stable operation ID.
-- The exact current Library catalog version.
 - The change and item kinds.
 - The exact namespace, content, or destination-slot preconditions required by that change kind.
 - An upload session ID when complete bytes are required.
@@ -124,11 +123,13 @@ grace library sync run
 grace library sync status --output Json
 ```
 
-Enable A, create nonempty files and nested directories in its Library, and run synchronization in A. A fresh B can then enable into its empty local Library root. B installs the selected content and catches up with later accepted changes before normal saved-file capture starts. Edit a file in B and run synchronization in B and A. `grace watch` invokes this same finite synchronization path from its existing timer, including interrupted onboarding.
+Enable A, create nonempty files and nested directories in its Library, and run synchronization in A. A fresh B can then enable into empty local folders for every Library in the repository; enable creates any that are missing. B installs the selected content and catches up with later accepted changes before normal saved-file capture starts. Edit a file in B and run synchronization in B and A. `grace watch` invokes this same finite synchronization path from its existing timer, including interrupted onboarding.
 
-`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. A catalog change or a refused cursor stops application and retains saved work.
+`ReturnValue.State` is `disabled`, `acquiringBaseline`, `installingBaseline`, `catchingUp`, `current`, or `blocked`. The applied cursor is absent while the baseline remains incomplete; pending-operation count includes baseline work. `current` means the latest completed pull has no remaining pages or pending local operations. An empty page with `HasMore=true` remains `catchingUp`; another run resumes from the unchanged applied cursor. A removed or moved Library, or a refused cursor, stops application and retains saved work.
 
-Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation or catalog adoption.
+When an administrator adds a Library, every enabled copy picks it up on its next run, which Watch starts within about 5 seconds. The copy switches to the new catalog, creates the empty folder, and downloads the Library's files. Saves already queued for other Libraries still go through, because the server rejects a change only when that change's own Library is gone. If the new Library's folder already has files on a copy, that copy doesn't switch: status names the folder and asks you to move the files out, and nothing in the folder is changed. A Library added while a copy is still downloading its baseline is picked up when the baseline finishes. A Library folder that's missing on a copy is recreated empty, unless it held synced files; then sync stops instead of deleting those files on every copy.
+
+Restart resumes durable baseline work. Already prepared files with exact selected bytes are reused without rewriting. An occupied unprepared target blocks even if its bytes match; a prepared empty directory can resume, but unexpected children block its completion. A changed completed file or parent blocks the baseline boundary. Resolve local obstructions deliberately, then rerun `grace library sync run`; enable also resumes incomplete onboarding. This is not existing-file reconciliation.
 
 Saved content is captured into Grace's existing object directory before its pending operation is recorded. Upload uses that verified snapshot even if the working file changes. A later save stays separate and uses its actual materialized content revision. If the first create is still pending, its successor resolves only from that create's exact accepted, locally completed result. Stale content edits become the server's deterministic ordinary conflict sibling. Missing or corrupt saved objects block synchronization and retain the pending request; Grace does not substitute newer working-file bytes.
 
@@ -263,7 +264,8 @@ Watch reads the Library catalog when it starts and every 5 seconds after that:
   files belong to a Library.
 - If a later read fails, Watch keeps using the last catalog it read and retries.
 - If the catalog changes while Watch runs, Watch keeps both the old and the new Library roots out of version control.
-  Library sync on that copy stops with a "catalog changed" error, because copies can't adopt catalog changes yet.
+  An added Library starts syncing on the next run. A removed or moved Library stops Library sync on that copy with a
+  "catalog changed" error, because copies can't follow removals yet.
 
 Some failures need features that haven't shipped yet, such as keeping both files when two copies create the same
 name. For those, the next step says Library sync on this copy can't continue. Your saved files are kept, and

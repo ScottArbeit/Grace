@@ -3883,7 +3883,6 @@ module LibraryRestartScenarios =
             submit.OrganizationId <- organizationId
             submit.RepositoryId <- repositoryId
             submit.OperationId <- operationId
-            submit.LibraryCatalogVersion <- configuredCatalog.Version
             submit.ChangeKind <- ChangeKind.CreateFile
             submit.ItemKind <- ItemKind.File
             submit.UploadSessionId <- Nullable prepared.UploadSessionId
@@ -4020,7 +4019,6 @@ module LibraryRestartScenarios =
                 expiredSubmit.OrganizationId <- organizationId
                 expiredSubmit.RepositoryId <- repositoryId
                 expiredSubmit.OperationId <- expiredOperationId
-                expiredSubmit.LibraryCatalogVersion <- configuredCatalog.Version
                 expiredSubmit.ChangeKind <- ChangeKind.CreateFile
                 expiredSubmit.ItemKind <- ItemKind.File
                 expiredSubmit.UploadSessionId <- Nullable expiredPreparation.UploadSessionId
@@ -4107,7 +4105,6 @@ module LibraryRestartScenarios =
                 updateY.OrganizationId <- organizationId
                 updateY.RepositoryId <- repositoryId
                 updateY.OperationId <- updateYOperationId
-                updateY.LibraryCatalogVersion <- configuredCatalog.Version
                 updateY.ChangeKind <- ChangeKind.UpdateContent
                 updateY.ItemKind <- ItemKind.File
                 updateY.ItemId <- Nullable firstReceipt.Change.Value.Item.ItemId
@@ -4349,7 +4346,6 @@ module LibraryRestartScenarios =
                     updateX.OrganizationId <- organizationId
                     updateX.RepositoryId <- repositoryId
                     updateX.OperationId <- updateXOperationId
-                    updateX.LibraryCatalogVersion <- configuredCatalog.Version
                     updateX.ChangeKind <- ChangeKind.UpdateContent
                     updateX.ItemKind <- ItemKind.File
                     updateX.ItemId <- Nullable updateYReceipt.Change.Value.Item.ItemId
@@ -4379,7 +4375,6 @@ module LibraryRestartScenarios =
                     rename.OrganizationId <- organizationId
                     rename.RepositoryId <- repositoryId
                     rename.OperationId <- Guid.NewGuid()
-                    rename.LibraryCatalogVersion <- configuredCatalog.Version
                     rename.ChangeKind <- ChangeKind.Rename
                     rename.ItemKind <- ItemKind.File
                     rename.ItemId <- Nullable updateXReceipt.Change.Value.Item.ItemId
@@ -4401,7 +4396,6 @@ module LibraryRestartScenarios =
                     delete.OrganizationId <- organizationId
                     delete.RepositoryId <- repositoryId
                     delete.OperationId <- Guid.NewGuid()
-                    delete.LibraryCatalogVersion <- configuredCatalog.Version
                     delete.ChangeKind <- ChangeKind.Delete
                     delete.ItemKind <- ItemKind.File
                     delete.ItemId <- Nullable renameReceipt.Change.Value.Item.ItemId
@@ -4445,7 +4439,6 @@ module LibraryRestartScenarios =
                     createDirectory.OrganizationId <- organizationId
                     createDirectory.RepositoryId <- repositoryId
                     createDirectory.OperationId <- Guid.NewGuid()
-                    createDirectory.LibraryCatalogVersion <- configuredCatalog.Version
                     createDirectory.ChangeKind <- ChangeKind.CreateDirectory
                     createDirectory.ItemKind <- ItemKind.Directory
 
@@ -4828,7 +4821,6 @@ module LibraryRestartScenarios =
                 createPagedDirectory.OrganizationId <- organizationId
                 createPagedDirectory.RepositoryId <- repositoryId
                 createPagedDirectory.OperationId <- operationId
-                createPagedDirectory.LibraryCatalogVersion <- configuredCatalog.Version
                 createPagedDirectory.ChangeKind <- ChangeKind.CreateDirectory
                 createPagedDirectory.ItemKind <- ItemKind.Directory
 

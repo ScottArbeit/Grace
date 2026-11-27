@@ -129,7 +129,6 @@ module LibrarySizeDiagnosisHttpTests =
             let submit =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = operation,
-                    LibraryCatalogVersion = configured.LibraryCatalog.Version,
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable prepared.UploadSessionId,
@@ -149,7 +148,6 @@ module LibrarySizeDiagnosisHttpTests =
                 let update =
                     Parameters.Library.SubmitLibraryChangeParameters(
                         OperationId = operation,
-                        LibraryCatalogVersion = configured.LibraryCatalog.Version,
                         ChangeKind = ChangeKind.UpdateContent,
                         ItemKind = ItemKind.File,
                         ItemId = Nullable item.ItemId,
@@ -181,7 +179,6 @@ module LibrarySizeDiagnosisHttpTests =
             let duplicate =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = duplicateOperation,
-                    LibraryCatalogVersion = configured.LibraryCatalog.Version,
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable duplicateUpload.UploadSessionId,
@@ -200,7 +197,6 @@ module LibrarySizeDiagnosisHttpTests =
                 let rename =
                     Parameters.Library.SubmitLibraryChangeParameters(
                         OperationId = Guid.NewGuid(),
-                        LibraryCatalogVersion = configured.LibraryCatalog.Version,
                         ChangeKind = ChangeKind.Rename,
                         ItemKind = ItemKind.File,
                         ItemId = Nullable item.ItemId,
@@ -217,7 +213,6 @@ module LibrarySizeDiagnosisHttpTests =
             let delete =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = Guid.NewGuid(),
-                    LibraryCatalogVersion = configured.LibraryCatalog.Version,
                     ChangeKind = ChangeKind.Delete,
                     ItemKind = ItemKind.File,
                     ItemId = Nullable item.ItemId,

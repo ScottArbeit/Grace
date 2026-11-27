@@ -6134,8 +6134,6 @@ components:
           properties:
             OperationId:
               $ref: '#/components/schemas/LibraryOperationId'
-            LibraryCatalogVersion:
-              $ref: '#/components/schemas/LibraryCatalogVersion'
             ChangeKind:
               $ref: '#/components/schemas/LibraryChangeKind'
             ItemKind:
@@ -6169,7 +6167,6 @@ components:
               nullable: true
           required:
             - OperationId
-            - LibraryCatalogVersion
             - ChangeKind
             - ItemKind
     PrepareLibraryContentParameters:

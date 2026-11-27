@@ -23,7 +23,7 @@ module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "12"
+    let SchemaVersion = "13"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]

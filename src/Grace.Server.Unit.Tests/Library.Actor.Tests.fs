@@ -363,7 +363,6 @@ type LibraryActorTests() =
         LibraryChangeCommand.CreateDirectory(
             operation,
             $"create-{name.Length}-{operation:N}",
-            catalogVersion,
             {
                 Parent = longRootParent
                 Name = name
@@ -439,7 +438,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    catalog.Version,
                     {
                         Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
                         Name = "denied"
@@ -520,7 +518,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    catalog.Version,
                     {
                         Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
                         Name = "allowed"
@@ -822,7 +819,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     Guid.NewGuid(),
                     $"create-{name}",
-                    catalogVersion,
                     {
                         Parent = callerParent
                         Name = name
@@ -840,6 +836,39 @@ type LibraryActorTests() =
                     Assert.That((receiptOf tooLong).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
                     Assert.That(accepted.Outcome, Is.EqualTo(OutcomeKind.Accepted))
                     Assert.That(accepted.Change.Value.Item.Namespace.Value.Parent, Is.EqualTo(storedParent)))
+            )
+        }
+
+    /// #1111 decision 1: a catalog change rejects a change only when it affects that change's own root. A save the
+    /// client captured before another Library was added is still accepted; a change outside every current Library isn't.
+    [<Test>]
+    member _.CatalogChangeRejectsOnlyChangesWhoseOwnRootIsGone() =
+        task {
+            let added = { longRootCatalog with Version = Guid.NewGuid(); Libraries = [| longRoot; "Added" |]; PreviousVersion = Some catalogVersion }
+
+            let actor, _, provider = memoryActor (controlWith added 0L 0 0) ignore
+            use _provider = provider
+
+            let create parent (name: string) =
+                LibraryChangeCommand.CreateDirectory(
+                    Guid.NewGuid(),
+                    $"create-{name}",
+                    {
+                        Parent = parent
+                        Name = name
+                        ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId parent name
+                        ExpectedState = "vacant"
+                    }
+                )
+
+            let gone = { Kind = "root"; LibraryPath = Some "Gone"; ItemId = None }
+            let! kept = actor.Submit (create longRootParent "captured-before-addition") "user:test" authorization "corr-kept"
+            let! outside = actor.Submit (create gone "outside") "user:test" authorization "corr-outside"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((receiptOf kept).Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That((receiptOf outside).ReasonCode, Is.EqualTo(Some OutcomeKind.StalePolicy)))
             )
         }
 
@@ -862,7 +891,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.Rename(
                     Guid.NewGuid(),
                     "rename-long",
-                    catalogVersion,
                     fileId,
                     { ItemId = fileId; ExpectedNamespaceVersion = namespaceVersion },
                     String.replicate 150 "r"
@@ -893,7 +921,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.Move(
                     Guid.NewGuid(),
                     "move-long",
-                    catalogVersion,
                     fileId,
                     { ItemId = fileId; ExpectedNamespaceVersion = fileNamespace },
                     { Kind = "item"; LibraryPath = None; ItemId = Some directoryId }
@@ -935,7 +962,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     Guid.NewGuid(),
                     "create-reused",
-                    catalogVersion,
                     { Parent = longRootParent; Name = reusedName; ExpectedSlotVersion = reusedVersion; ExpectedState = "vacant" }
                 )
 

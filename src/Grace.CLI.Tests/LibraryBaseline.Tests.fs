@@ -368,7 +368,7 @@ module LibraryBaselineTests =
                         match obstruction with
                         | "zero" -> File.WriteAllBytes(target fixture, [||])
                         | "ordinary" -> File.WriteAllBytes(target fixture, [| 99uy |])
-                        | _ -> fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid() }
+                        | _ -> fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid(); Libraries = [| "Moved" |] }
                     elif point = "beforeBoundary"
                          && obstruction = "completed" then
                         changed <- true
@@ -448,7 +448,7 @@ module LibraryBaselineTests =
             do! LibraryBaseline.startWith ignore fixture.Remote fixture.Configuration
             let before = state fixture
             fixture.Expired.Value <- true
-            fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid() }
+            fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid(); Libraries = [| "Moved" |] }
             do! fails (resume ignore fixture)
             Assert.That(state fixture, Is.EqualTo(before))
             Assert.That(fixture.Starts.Value, Is.EqualTo(1))
@@ -510,7 +510,7 @@ module LibraryBaselineTests =
                 { fixture.Remote with
                     Continue =
                         fun _ _ ->
-                            fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid() }
+                            fixture.Catalog.Value <- { fixture.Catalog.Value with Version = Guid.NewGuid(); Libraries = [| "Moved" |] }
                             Task.FromResult(Some fixture.Pages[1])
                 }
 
@@ -625,4 +625,93 @@ module LibraryBaselineTests =
             Assert.That(readItems db fixture.Configuration.RepositoryId, Is.EqualTo(box items))
             do! resume ignore fixture
             Assert.That(File.ReadAllBytes(target fixture), Is.EqualTo(box fixture.Bytes))
+        }
+
+    /// A repository with several Libraries can enable sync: initial enable creates an empty folder for each one.
+    [<Test>]
+    let ``initial enable creates an empty folder for every Library in the repository`` () =
+        task {
+            let! fixture = fixture ()
+
+            let catalog = { fixture.Catalog.Value with Version = Guid.NewGuid(); Libraries = [| "Library"; "Second" |] }
+
+            fixture.Catalog.Value <- catalog
+            let page = { fixture.Pages[0] with LibraryCatalog = catalog; Items = [||]; NextPageToken = None }
+            let remote = { fixture.Remote with Start = fun () -> Task.FromResult page }
+            do! LibraryBaseline.startWith ignore remote fixture.Configuration
+            do! LibraryBaseline.resumeWith ignore remote fixture.Configuration CancellationToken.None
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((state fixture).Catalog, Is.EqualTo(catalog))
+                    Assert.That((state fixture).Baseline.Value.Applied, Is.True)
+
+                    for library in catalog.Libraries do
+                        Assert.That(Directory.Exists(Path.Combine(fixture.Configuration.RootDirectory, library)), Is.True, library))
+            )
+        }
+
+    /// A Library added while a baseline downloads doesn't stop it. The baseline finishes under the catalog it selected,
+    /// and the copy switches to the larger catalog afterward.
+    [<Test>]
+    let ``a Library added during the baseline doesn't stop it`` () =
+        task {
+            let! fixture = fixture ()
+            do! LibraryBaseline.startWith ignore fixture.Remote fixture.Configuration
+            let selected = (state fixture).Catalog
+
+            fixture.Catalog.Value <- { selected with Version = Guid.NewGuid(); Libraries = [| "Added"; "Library" |]; PreviousVersion = Some selected.Version }
+
+            do! resume ignore fixture
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((state fixture).Baseline.Value.Applied, Is.True)
+                    Assert.That((state fixture).Catalog, Is.EqualTo(selected))
+                    Assert.That(File.ReadAllBytes(target fixture), Is.EqualTo(box fixture.Bytes)))
+            )
+        }
+
+    /// When the baseline's download window expires after a Library was added, the restart takes the larger catalog and
+    /// creates the new folder. Nothing is installed before a restart, so nothing is lost.
+    [<Test>]
+    let ``an expired baseline restart takes a Library added during acquisition`` () =
+        task {
+            let! fixture = fixture ()
+            do! LibraryBaseline.startWith ignore fixture.Remote fixture.Configuration
+            let selected = (state fixture).Catalog
+
+            let added = { selected with Version = Guid.NewGuid(); Libraries = [| "Added"; "Library" |]; PreviousVersion = Some selected.Version }
+
+            fixture.Catalog.Value <- added
+            fixture.Expired.Value <- true
+
+            /// Serves pages under the server's current catalog, as a restarted bootstrap does.
+            let current (page: LibraryBootstrapPageDto) = { page with LibraryCatalog = fixture.Catalog.Value }
+
+            let remote =
+                { fixture.Remote with
+                    Start =
+                        fun () ->
+                            task {
+                                let! page = fixture.Remote.Start()
+                                return current page
+                            }
+                    Continue =
+                        fun id token ->
+                            task {
+                                let! page = fixture.Remote.Continue id token
+                                return page |> Option.map current
+                            }
+                }
+
+            do! LibraryBaseline.resumeWith ignore remote fixture.Configuration CancellationToken.None
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((state fixture).Catalog, Is.EqualTo(added))
+                    Assert.That((state fixture).Baseline.Value.Applied, Is.True)
+                    Assert.That(Directory.Exists(Path.Combine(fixture.Configuration.RootDirectory, "Added")), Is.True)
+                    Assert.That(File.ReadAllBytes(target fixture), Is.EqualTo(box fixture.Bytes)))
+            )
         }
