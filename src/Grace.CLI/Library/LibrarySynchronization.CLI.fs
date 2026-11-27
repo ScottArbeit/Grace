@@ -1409,8 +1409,7 @@ module internal LibrarySynchronization =
                             invalidOp "Library deletion would remove locally changed bytes."
 
                         // A save after that check is put back, not deleted.
-                        if LibraryFilesystem.removeFile operation.OperationId priorTarget materialized
-                           |> Option.isSome then
+                        if LibraryFilesystem.removeFile operation.OperationId priorTarget materialized then
                             invalidOp "Library deletion would remove locally changed bytes."
                     elif Directory.Exists(priorTarget) then
                         Directory.Delete(priorTarget, false)
@@ -1468,7 +1467,6 @@ module internal LibrarySynchronization =
                             target
                             operation.ExpectedTarget
                             bytes
-                        |> ignore
 
                     if
                         priorPath <> targetRelative
@@ -1477,8 +1475,7 @@ module internal LibrarySynchronization =
                         let accepted = requireMovedSource ()
 
                         // A save to the old path after that check is put back, not deleted.
-                        if LibraryFilesystem.removeFile operation.OperationId priorTarget accepted
-                           |> Option.isSome then
+                        if LibraryFilesystem.removeFile operation.OperationId priorTarget accepted then
                             invalidOp "Accepted Library source changed immediately before rename."
 
                     if LibraryFilesystem.fingerprint target

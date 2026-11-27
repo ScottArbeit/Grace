@@ -1483,15 +1483,13 @@ module LibraryLocalStateTests =
         let expected = LibraryFilesystem.fingerprint target
 
         throws<InvalidOperationException> (fun () ->
-            LibraryFilesystem.publishAtomic (fun () -> File.WriteAllBytes(target, [| 3uy |])) (Guid.NewGuid()) staged target expected [| 4uy |]
-            |> ignore)
+            LibraryFilesystem.publishAtomic (fun () -> File.WriteAllBytes(target, [| 3uy |])) (Guid.NewGuid()) staged target expected [| 4uy |])
         |> ignore
 
         Assert.That(File.ReadAllBytes(target)[0], Is.EqualTo(3uy))
         Assert.That(File.Exists(staged), Is.False)
 
         LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) [| 0uy; 255uy |]
-        |> ignore
 
         Assert.That(
             File
@@ -1536,9 +1534,7 @@ module LibraryLocalStateTests =
         let target = Path.Combine(folder, "plan.txt")
 
         withSaveBeforeDisplace "saved by an editor" (fun () ->
-            throws<InvalidOperationException> (fun () ->
-                LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target None "incoming"B
-                |> ignore))
+            throws<InvalidOperationException> (fun () -> LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target None "incoming"B))
 
         Assert.That(File.ReadAllText(target), Is.EqualTo("saved by an editor"))
         Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
@@ -1557,12 +1553,10 @@ module LibraryLocalStateTests =
         let operationId = Guid.NewGuid()
         let copy = Grace.Shared.Validation.Library.conflictName "plan.txt" operationId 0
 
-        let kept =
-            withSaveBeforeDisplace "saved by an editor" (fun () ->
-                LibraryFilesystem.publishAtomic ignore operationId staged target (LibraryFilesystem.fingerprint target) "incoming"B)
+        withSaveBeforeDisplace "saved by an editor" (fun () ->
+            LibraryFilesystem.publishAtomic ignore operationId staged target (LibraryFilesystem.fingerprint target) "incoming"B)
 
         Assert.That(File.ReadAllText(target), Is.EqualTo("incoming"))
-        Assert.That(kept, Is.EqualTo(Some(Path.Combine(folder, copy))))
         Assert.That(File.ReadAllText(Path.Combine(folder, copy)), Is.EqualTo("saved by an editor"))
         Assert.That(namesIn folder, Is.EquivalentTo([| "plan.txt"; copy |]))
         Assert.That(File.Exists(staged), Is.False)
@@ -1578,9 +1572,7 @@ module LibraryLocalStateTests =
         let target = Path.Combine(folder, "plan.txt")
         File.WriteAllText(target, "materialized")
 
-        let clean = LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) "first"B
-
-        Assert.That(clean, Is.EqualTo(None))
+        LibraryFilesystem.publishAtomic ignore (Guid.NewGuid()) staged target (LibraryFilesystem.fingerprint target) "first"B
         Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
 
         let operationId = Guid.NewGuid()
@@ -1594,17 +1586,15 @@ module LibraryLocalStateTests =
         LibraryFilesystem.beforeDisplace <-
             fun path -> editor.Value <- Some(new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite ||| FileShare.Delete))
 
-        let kept =
-            try
-                LibraryFilesystem.publishAtomic ignore operationId staged target expected "second"B
-            finally
-                LibraryFilesystem.beforeDisplace <- previous
+        try
+            LibraryFilesystem.publishAtomic ignore operationId staged target expected "second"B
+        finally
+            LibraryFilesystem.beforeDisplace <- previous
 
-                editor.Value
-                |> Option.iter (fun stream -> stream.Dispose())
+            editor.Value
+            |> Option.iter (fun stream -> stream.Dispose())
 
         Assert.That(File.ReadAllText(target), Is.EqualTo("second"))
-        Assert.That(kept, Is.EqualTo(Some copy))
         Assert.That(File.ReadAllText(copy), Is.EqualTo("first"))
 
     /// #1122: when an editor saves a file just after sync's last check and before sync deletes it, for an incoming
@@ -1622,12 +1612,46 @@ module LibraryLocalStateTests =
 
         let kept = withSaveBeforeDisplace "saved by an editor" (fun () -> LibraryFilesystem.removeFile (Guid.NewGuid()) target materialized)
 
-        Assert.That(kept, Is.EqualTo(Some target))
+        Assert.That(kept, Is.True)
         Assert.That(File.ReadAllText(target), Is.EqualTo("saved by an editor"))
         Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
 
-        Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.EqualTo(None))
+        Assert.That(LibraryFilesystem.removeFile (Guid.NewGuid()) target (LibraryFilesystem.fingerprint target), Is.False)
         Assert.That(namesIn folder, Is.Empty)
+
+    /// #1122 review: while sync checks a file it displaced, another program can't rename that file and put a different
+    /// one at its name for sync to delete. The file sync deletes is the file it hashed.
+    [<Test>]
+    let ``the file sync deletes after its check is the file it checked`` () =
+        if not (OperatingSystem.IsWindows()) then
+            Assert.Ignore("Windows filesystem contract.")
+
+        let folder, staged = libraryFolder ()
+        let target = Path.Combine(folder, "plan.txt")
+        File.WriteAllText(target, "materialized")
+        let operationId = Guid.NewGuid()
+        let copy = Path.Combine(folder, Grace.Shared.Validation.Library.conflictName "plan.txt" operationId 0)
+        let renamed = Path.Combine(folder, "renamed by another program.txt")
+        let previous = LibraryFilesystem.afterDiscardCheck
+
+        // Another program renames the checked file away and saves a new file under its name.
+        LibraryFilesystem.afterDiscardCheck <-
+            fun path ->
+                try
+                    File.Move(path, renamed, false)
+                    File.WriteAllText(path, "saved by another program")
+                with
+                | :? IOException
+                | :? UnauthorizedAccessException -> ()
+
+        try
+            LibraryFilesystem.publishAtomic ignore operationId staged target (LibraryFilesystem.fingerprint target) "incoming"B
+        finally
+            LibraryFilesystem.afterDiscardCheck <- previous
+
+        Assert.That(File.ReadAllText(target), Is.EqualTo("incoming"))
+        Assert.That(File.Exists(copy) || not (File.Exists(renamed)), Is.True, "Sync deleted a file it never checked.")
+        Assert.That(namesIn folder, Is.EqualTo([| "plan.txt" |]))
 
     /// Returns a catalog that adds the named Libraries to the one this copy selected.
     let private adding (current: RepositoryState) (libraries: string array) =

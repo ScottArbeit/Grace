@@ -448,7 +448,6 @@ module internal LibraryBaseline =
                         let staged = Path.Combine(configuration.GraceDirectory, $"library-baseline-{operation.OperationId:N}.tmp")
 
                         LibraryFilesystem.publishAtomic revalidate operation.OperationId staged target None bytes
-                        |> ignore
 
                 observe "publish"
                 verify configuration relative item

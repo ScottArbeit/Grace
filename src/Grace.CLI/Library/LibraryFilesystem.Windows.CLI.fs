@@ -1,11 +1,42 @@
 namespace Grace.CLI.Command
 
 open Grace.Shared
+open Microsoft.Win32.SafeHandles
 open System
 open System.IO
+open System.Runtime.InteropServices
 open System.Security.Cryptography
 open Grace.Shared.Client.Configuration
 open Grace.CLI.LibraryOperation
+
+/// Calls the two Win32 file functions .NET doesn't expose: opening a file with delete access, and deleting a file
+/// through a handle already open on it.
+module internal LibraryWin32 =
+
+    [<Literal>]
+    let GenericRead = 0x80000000u
+
+    [<Literal>]
+    let DeleteAccess = 0x00010000u
+
+    [<Literal>]
+    let OpenExisting = 3u
+
+    [<Literal>]
+    let SequentialScan = 0x08000000u
+
+    /// FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfo.
+    [<Literal>]
+    let FileDispositionInfo = 4
+
+    /// Opens a file with the given access and sharing.
+    [<DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)>]
+    extern SafeFileHandle CreateFileW(string fileName, uint32 desiredAccess, uint32 shareMode, nativeint securityAttributes, uint32 creationDisposition, uint32 flagsAndAttributes, nativeint templateFile)
+
+    /// Sets file information through an open handle; with FileDispositionInfo it marks the file for deletion when the
+    /// handle closes.
+    [<DllImport("kernel32.dll", SetLastError = true)>]
+    extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, byte [] information, uint32 size)
 
 /// Supplies the existing narrow Windows read and same-volume publication mechanics for Library files.
 module internal LibraryFilesystem =
@@ -252,28 +283,38 @@ module internal LibraryFilesystem =
             ))
         |> Option.defaultWith (fun () -> invalidOp $"Every conflict-copy name next to '{path}' is taken.")
 
-    /// Deletes a file sync displaced only when it holds exactly the expected bytes. The file is hashed and deleted
-    /// under one handle that lets nobody else write it, so it can't change in between. Returns false, keeping the file,
-    /// when its bytes differ or another program still has it open.
+    /// Runs after sync has hashed a displaced file and before it deletes it. Tests replace it to try to swap the file
+    /// out from under that check.
+    let mutable internal afterDiscardCheck: string -> unit = ignore
+
+    /// Deletes a file sync displaced only when it holds exactly the expected bytes. One handle, shared with nobody,
+    /// both hashes the file and deletes it, so no other program can change, rename or replace it in between, and the
+    /// file deleted is the file hashed. Returns false, keeping the file, when its bytes differ or another program has it
+    /// open.
     let private discardIfExpected (path: string) expected =
-        let stream =
-            try
-                Some(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Delete, 65536, FileOptions.SequentialScan))
-            with
-            | :? IOException
-            | :? UnauthorizedAccessException -> None
+        let handle =
+            LibraryWin32.CreateFileW(
+                path,
+                LibraryWin32.GenericRead
+                ||| LibraryWin32.DeleteAccess,
+                0u,
+                0n,
+                LibraryWin32.OpenExisting,
+                LibraryWin32.SequentialScan,
+                0n
+            )
 
-        match stream with
-        | None -> false
-        | Some stream ->
-            use stream = stream
-            let identity = streamIdentity stream
+        if handle.IsInvalid then
+            handle.Dispose()
+            false
+        else
+            use stream = new FileStream(handle, FileAccess.Read, 65536)
+            let matches = Some(Grace.CLI.LibraryOperation.fingerprint (streamIdentity stream)) = expected
+            afterDiscardCheck path
 
-            if Some(Grace.CLI.LibraryOperation.fingerprint identity) = expected then
-                File.Delete path
-                true
-            else
-                false
+            // The file goes away when this handle closes.
+            matches
+            && LibraryWin32.SetFileInformationByHandle(handle, LibraryWin32.FileDispositionInfo, [| 1uy |], 1u)
 
     /// Renames a Library file to the first free conflict-copy name next to it, without overwriting anything. Returns
     /// None when the file is already gone.
@@ -304,29 +345,30 @@ module internal LibraryFilesystem =
     /// Removes a Library file that sync no longer wants, a delete or a rename's old path, without ever destroying bytes
     /// it didn't expect. The file is first renamed aside, so a save that lands after the caller's check goes with it,
     /// and then deleted only if it holds exactly the expected bytes. Otherwise it goes back to its path, or stays under
-    /// the conflict-copy name when its path has been taken again. Returns where a kept file is, or None when the file
+    /// the conflict-copy name when its path has been taken again. Returns true when a file was kept, and false when it
     /// was removed or was already gone.
     let removeFile operationId (path: string) expected =
         beforeDisplace path
 
         match moveAside path operationId with
-        | None -> None
+        | None -> false
         | Some aside ->
             if discardIfExpected aside expected then
-                None
+                false
             else
                 try
                     File.Move(aside, path, false)
-                    Some path
                 with
-                | :? IOException -> Some aside
+                | :? IOException -> ()
+
+                true
 
     /// Publishes verified bytes from the same-volume Grace staging directory without ever destroying bytes Grace hasn't
     /// captured. Where nothing is expected, the file moves in without overwriting, so a file that appeared stops the
     /// publication and is kept. Where a file is expected, File.Replace swaps the new bytes in and keeps the displaced
     /// file next to it under the conflict-copy name; it's deleted only if it holds exactly the expected bytes. A save
     /// that landed after the last check therefore survives as a conflict copy, which capture then syncs like any other
-    /// file. Returns where a kept file is, if one was kept.
+    /// file.
     let publishAtomic beforePublish operationId (staged: string) (targetPath: string) expected (bytes: byte array) =
         try
             do
@@ -344,40 +386,35 @@ module internal LibraryFilesystem =
 
             beforeDisplace targetPath
 
-            let kept =
-                match expected with
-                | None ->
-                    try
-                        File.Move(staged, targetPath, false)
-                    with
-                    | :? IOException when
-                        File.Exists targetPath
-                        || Directory.Exists targetPath
-                        ->
-                        invalidOp "A file appeared at the Library target before publication; it was kept."
+            match expected with
+            | None ->
+                try
+                    File.Move(staged, targetPath, false)
+                with
+                | :? IOException when
+                    File.Exists targetPath
+                    || Directory.Exists targetPath
+                    ->
+                    invalidOp "A file appeared at the Library target before publication; it was kept."
+            | Some _ ->
+                let aside = vacantConflictPath targetPath operationId
 
-                    None
-                | Some _ ->
-                    let aside = vacantConflictPath targetPath operationId
+                try
+                    File.Replace(staged, targetPath, aside, true)
+                with
+                | _ ->
+                    // If the swap renamed the old file but couldn't move the new one in, put the old one back.
+                    if not (File.Exists targetPath) && File.Exists aside then
+                        try
+                            File.Move(aside, targetPath, false)
+                        with
+                        | :? IOException -> ()
 
-                    try
-                        File.Replace(staged, targetPath, aside, true)
-                    with
-                    | _ ->
-                        // If the swap renamed the old file but couldn't move the new one in, put the old one back.
-                        if not (File.Exists targetPath) && File.Exists aside then
-                            try
-                                File.Move(aside, targetPath, false)
-                            with
-                            | :? IOException -> ()
+                    reraise ()
 
-                        reraise ()
-
-                    if discardIfExpected aside expected then None else Some aside
+                discardIfExpected aside expected |> ignore
 
             if (stableRead targetPath).Bytes <> bytes then
                 invalidOp "Library final target verification failed."
-
-            kept
         finally
             if File.Exists(staged) then File.Delete(staged)
