@@ -46,7 +46,6 @@ module LibraryLocalStateTests =
 
         {
             OperationId = change.OperationId
-            CatalogVersion = change.LibraryCatalogVersion
             CreatedAtTicks = 1L
             Work = OperationWork.Incoming(change, source, previous, ApplicationProgress.Prepared checkpoint)
         }
@@ -134,7 +133,6 @@ module LibraryLocalStateTests =
         let pending =
             {
                 OperationId = change.OperationId
-                CatalogVersion = state.Catalog.Version
                 Work =
                     OperationWork.SavedFile(
                         { SourcePath = "Library/item.bin"; Object = objectReference bytes; Base = SavedBase.NewFile { Parent = parent; Name = "item.bin" } },
@@ -1308,7 +1306,6 @@ module LibraryLocalStateTests =
                     Is.EquivalentTo(
                         [|
                             "OperationId"
-                            "CatalogVersion"
                             "CreatedAtTicks"
                             "Work"
                         |]
@@ -1500,3 +1497,175 @@ module LibraryLocalStateTests =
                 .SequenceEqual([| 0uy; 255uy |]),
             Is.True
         )
+
+    /// Returns a catalog that adds the named Libraries to the one this copy selected.
+    let private adding (current: RepositoryState) (libraries: string array) =
+        { current.Catalog with
+            Version = Guid.NewGuid()
+            Libraries =
+                Array.append current.Catalog.Libraries libraries
+                |> Array.sort
+            PreviousVersion = Some current.Catalog.Version
+        }
+
+    /// Runs the catalog switch against a fixed server catalog.
+    let private adopt afterSwitch configuration (latest: LibraryCatalogDto) =
+        LibrarySynchronization.adoptCatalogWith afterSwitch (fun () -> System.Threading.Tasks.Task.FromResult latest) configuration
+
+    /// Requires the switch to stop with a typed failure and returns it.
+    let private stopsWith (operation: System.Threading.Tasks.Task) =
+        task {
+            let mutable failure = None
+
+            try
+                do! operation
+            with
+            | :? LibrarySynchronization.LibrarySyncFailureException as ex -> failure <- Some ex
+
+            Assert.That(failure.IsSome, Is.True, "The catalog switch must stop with a failure that status can show.")
+            return failure.Value
+        }
+
+    /// #1081: a copy switches to a catalog that added a Library, keeps every saved operation, applied cursor and item, and
+    /// creates the new folder. A crash after the switch commits but before the folder exists finishes on the next run.
+    [<Test>]
+    let ``a copy switches to an added Library and creates its folder across a crash`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let db, repository = configuration.GraceStatusFile, configuration.RepositoryId
+            File.WriteAllBytes(Path.Combine(configuration.RootDirectory, "Library", "saved.bin"), [| 7uy; 8uy |])
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+            let operations = readOperations db repository
+            let items = readItems db repository
+            let latest = adding before [| "Added" |]
+            let folder = Path.Combine(configuration.RootDirectory, "Added")
+
+            let! crashed =
+                task {
+                    try
+                        do! adopt (fun () -> raise (OperationCanceledException())) configuration latest
+                        return false
+                    with
+                    | :? OperationCanceledException -> return true
+                }
+
+            Assert.That(crashed, Is.True)
+            Assert.That((readRepository db repository).Value, Is.EqualTo({ before with Catalog = latest }))
+            Assert.That(Directory.Exists(folder), Is.False)
+
+            do! adopt ignore configuration latest
+            do! adopt ignore configuration latest
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That((readRepository db repository).Value, Is.EqualTo({ before with Catalog = latest }))
+                    Assert.That(Directory.Exists(folder), Is.True)
+                    Assert.That(readOperations db repository, Is.EqualTo(box operations))
+                    Assert.That(readItems db repository, Is.EqualTo(box items)))
+            )
+        }
+
+    /// An added Library whose folder already holds the user's own files isn't adopted: status gets a next step that
+    /// names the folder, and the files are never touched or captured. Once the folder is empty, the switch goes ahead.
+    [<Test>]
+    let ``an added Library whose folder already has files waits and keeps them`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let db, repository = configuration.GraceStatusFile, configuration.RepositoryId
+            let folder = Directory.CreateDirectory(Path.Combine(configuration.RootDirectory, "Added"))
+            let mine = Path.Combine(folder.FullName, "mine.txt")
+            File.WriteAllText(mine, "not a Library file")
+            let latest = adding before [| "Added" |]
+
+            let! failure = stopsWith (adopt ignore configuration latest)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failure.Path, Is.EqualTo(Some "Added"))
+                    Assert.That(failure.NextStep, Does.Contain("Move the files out of 'Added'"))
+                    Assert.That((readRepository db repository).Value, Is.EqualTo(before))
+                    Assert.That(File.ReadAllText(mine), Is.EqualTo("not a Library file")))
+            )
+
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.False)
+            File.Delete(mine)
+            do! adopt ignore configuration latest
+            Assert.That((readRepository db repository).Value.Catalog, Is.EqualTo(latest))
+        }
+
+    /// A removed or moved Library is a catalog change a copy can't follow yet: it stops with the existing next step and
+    /// keeps its state.
+    [<Test>]
+    let ``a removed Library stops the switch and keeps state`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+
+            let moved = { before.Catalog with Version = Guid.NewGuid(); Libraries = [| "Elsewhere" |] }
+
+            let! failure = stopsWith (adopt ignore configuration moved)
+            Assert.That(failure.NextStep, Is.EqualTo(LibrarySynchronization.catalogChangedNextStep))
+
+            Assert.That(
+                (readRepository configuration.GraceStatusFile configuration.RepositoryId)
+                    .Value,
+                Is.EqualTo(before)
+            )
+        }
+
+    /// A missing Library folder that still holds synced files isn't recreated empty, because the next pass would then
+    /// delete those files on every copy. A missing folder with nothing synced in it is recreated.
+    [<Test>]
+    let ``a missing Library folder is recreated only when nothing synced was in it`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let latest = adding before [| "Added" |]
+            do! adopt ignore configuration latest
+            let library = Path.Combine(configuration.RootDirectory, "Library")
+            let added = Path.Combine(configuration.RootDirectory, "Added")
+            Directory.Delete(added)
+            do! adopt ignore configuration latest
+            Assert.That(Directory.Exists(added), Is.True)
+
+            Directory.Delete(library, true)
+            let! failure = stopsWith (adopt ignore configuration latest)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failure.Path, Is.EqualTo(Some "Library"))
+                    Assert.That(failure.NextStep, Does.Contain("Restore 'Library'"))
+                    Assert.That(Directory.Exists(library), Is.False))
+            )
+        }
+
+    /// An incoming change prepared before the copy switched catalogs still completes afterward: completion checks that
+    /// the selected catalog owns the target path, not that the catalog version is unchanged.
+    [<Test>]
+    let ``a change prepared before a catalog switch completes after it`` () =
+        task {
+            let _, db = location ()
+            do! initialize db
+            let state, pending = prepared ()
+            enable db state
+            insertOperation db state.RepositoryId pending
+            selectCatalogWith ignore db state (adding state [| "Added" |])
+            let switched = (readRepository db state.RepositoryId).Value
+            complete db switched pending
+
+            Assert.That(
+                readOperations db state.RepositoryId
+                |> Array.forall (fun operation -> operation.Terminal),
+                Is.True
+            )
+        }

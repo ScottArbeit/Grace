@@ -170,8 +170,9 @@ module internal LibraryOperation =
         | BaselineLive of item: LibraryItemDto * installation: BaselineInstallation
         | BaselineTombstone of item: LibraryItemDto * installation: TombstoneInstallation
 
-    /// Owns generated identity, selected catalog and age alongside a single typed stored state.
-    type Operation = { OperationId: Guid; CatalogVersion: Guid; CreatedAtTicks: int64; Work: OperationWork }
+    /// Owns generated identity and age alongside a single typed stored state. An operation isn't tied to a catalog
+    /// version: a catalog change affects it only when its own Library root is gone (#1111 decision 1).
+    type Operation = { OperationId: Guid; CreatedAtTicks: int64; Work: OperationWork }
 
     /// Compares only stored intent, allowing a baseline path to appear when installation is prepared.
     let sameIntent left right =
@@ -368,9 +369,6 @@ module internal LibraryOperation =
                 | OperationWork.ExplicitRename (intent, _) -> intent.TargetPath
                 | _ -> "")
 
-        /// Uses the envelope catalog as the only catalog authority.
-        [<JsonIgnore>]
-        member this.ExpectedCatalogVersion = this.CatalogVersion
 
         /// Exposes the predecessor only after application preparation.
         [<JsonIgnore>]

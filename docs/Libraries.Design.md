@@ -109,5 +109,12 @@ pending and terminal operations, and sync health. It advances its applied cursor
 disk, in the same SQLite transaction as the item and operation rows. Saved content is captured into `.grace/objects`
 before its operation is recorded, and uploads read that frozen copy.
 
+Operations aren't tied to a catalog version. When the server's catalog only added Libraries, a run switches to it in
+one SQLite transaction under the root lease, then creates each missing folder. The switch commits first, so a crash in
+between leaves a selected Library whose folder the next run creates. An added folder that already holds files stops
+the switch and leaves the files alone. A Library removal or move stops sync, because the client can't follow it yet.
+The [algorithm witness](https://github.com/ScottArbeit/Grace/issues/1081#issuecomment-7206352290) checks this order
+against crashes, additions and occupied folders.
+
 `grace watch` runs Library work on its timer. A Library failure is recorded for status and retried on a backoff; it
 never stops version-control work. See [What grace watch does](What%20grace%20watch%20does.md).

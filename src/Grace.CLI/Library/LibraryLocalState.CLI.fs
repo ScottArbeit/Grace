@@ -197,6 +197,43 @@ module internal LibraryLocalState =
 
         transaction.Commit()
 
+    /// Reports whether a newer catalog for the same repository only added Libraries to the one this copy selected. A
+    /// copy follows an addition automatically; a removal or relocation it can't follow yet (#1081).
+    let catalogOnlyAdds (selected: LibraryCatalogDto) (latest: LibraryCatalogDto) =
+        latest.RepositoryId = selected.RepositoryId
+        && selected.Libraries
+           |> Array.forall (fun root ->
+               latest.Libraries
+               |> Array.exists (fun candidate -> String.Equals(candidate, root, StringComparison.OrdinalIgnoreCase)))
+
+    /// Switches the selected catalog to one that only added Libraries. One transaction rechecks the exact repository
+    /// record and reruns the caller's folder check, so a stale read can't switch. Applied cursor, operations, items and
+    /// pause are untouched.
+    let selectCatalogWith (insideTransaction: unit -> unit) dbPath (expected: RepositoryState) (selected: LibraryCatalogDto) =
+        if not (catalogOnlyAdds expected.Catalog selected) then
+            invalidOp "A Library catalog switch can only add Libraries."
+
+        use connection = openConnection dbPath
+        use transaction = connection.BeginTransaction()
+
+        if readRepositoryWith connection (Some transaction) expected.RepositoryId
+           <> Some expected then
+            invalidOp "Library participation changed before the catalog switch."
+
+        insideTransaction ()
+
+        execute
+            connection
+            (Some transaction)
+            "UPDATE library_repository_state SET catalog_json=$catalog WHERE repository_id=$repository;"
+            [
+                "$repository", box (expected.RepositoryId.ToString("D"))
+                "$catalog", box (serialize selected)
+            ]
+        |> ignore
+
+        transaction.Commit()
+
     /// Loads materialized items only; incoming accepted responses do not update this table.
     let readItems dbPath (repositoryId: Guid) =
         use connection = openConnection dbPath
@@ -250,13 +287,15 @@ module internal LibraryLocalState =
         readOperationsWith connection None repositoryId
 
     /// Replaces onboarding progress under a transaction whose caller has checked the exact previous repository record.
+    /// The catalog is written too, because an expired restart may select a catalog that added Libraries.
     let private writeBaselineState connection transaction (state: RepositoryState) =
         execute
             connection
             (Some transaction)
-            "UPDATE library_repository_state SET applied_cursor=$cursor,baseline_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
+            "UPDATE library_repository_state SET catalog_json=$catalog,applied_cursor=$cursor,baseline_page_token=$next,lifecycle_state=$state,baseline_json=$baseline WHERE repository_id=$repository;"
             [
                 "$repository", box (state.RepositoryId.ToString("D"))
+                "$catalog", box (serialize state.Catalog)
                 "$cursor", box state.AppliedCursor
                 "$next",
                 (state.BaselinePageToken
@@ -297,10 +336,14 @@ module internal LibraryLocalState =
                 previous.Baseline
                 |> Option.defaultWith (fun () -> invalidOp "Participating copies cannot acquire another baseline.")
 
-            if prior.MetadataComplete
-               || prior.Applied
-               || previous.AppliedCursor <> ""
-               || previous.Catalog <> selected.Catalog then
+            if
+                prior.MetadataComplete
+                || prior.Applied
+                || previous.AppliedCursor <> ""
+                || (not restart
+                    && previous.Catalog <> selected.Catalog)
+                || not (catalogOnlyAdds previous.Catalog selected.Catalog)
+            then
                 invalidOp "Only an uninstalled incomplete baseline can continue or restart acquisition."
 
             if not restart && (previous <> selected) then
@@ -330,7 +373,6 @@ module internal LibraryLocalState =
             let op =
                 {
                     OperationId = Guid.NewGuid()
-                    CatalogVersion = selected.Catalog.Version
                     Work =
                         if item.Tombstone.IsSome then
                             OperationWork.BaselineTombstone(item, TombstoneInstallation.Selected)
@@ -382,8 +424,6 @@ module internal LibraryLocalState =
            || (not operation.Prepared && item.Tombstone.IsNone)
            || operation.Terminal
            || operation.Accepted.IsSome
-           || operation.ExpectedCatalogVersion
-              <> expected.Catalog.Version
            || operation.ExpectedCursor <> expected.AppliedCursor then
             invalidOp "Baseline item is not prepared for this selection."
 
@@ -528,7 +568,7 @@ module internal LibraryLocalState =
            || not (LibraryOperation.sameIntent expected updated)
            || (expected.Receipt.IsSome
                && expected.Receipt <> updated.Receipt)
-           || expected.CatalogVersion <> updated.CatalogVersion
+
            || expected.CreatedAtTicks <> updated.CreatedAtTicks
            || updated.Terminal
            || (expected.Accepted.IsSome
@@ -635,14 +675,13 @@ module internal LibraryLocalState =
             operation.Accepted
             |> Option.defaultWith (fun () -> invalidOp "Library completion requires an accepted result.")
 
-        if not operation.Prepared
-           || operation.Terminal
-           || change.OperationId <> operation.OperationId
-           || operation.ExpectedCursor <> expected.AppliedCursor
-           || operation.ExpectedCatalogVersion
-              <> expected.Catalog.Version
-           || change.LibraryCatalogVersion
-              <> expected.Catalog.Version then
+        if
+            not operation.Prepared
+            || operation.Terminal
+            || change.OperationId <> operation.OperationId
+            || operation.ExpectedCursor <> expected.AppliedCursor
+            || not (Grace.Shared.Validation.Library.configurationOwnsPath expected.Catalog operation.TargetPath)
+        then
             invalidOp "Library completion catalog or predecessor does not match preparation."
 
         use connection = openConnection dbPath

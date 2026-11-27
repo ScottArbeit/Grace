@@ -72,9 +72,18 @@ module internal LibrarySynchronization =
     let internal renameCatchingUpDiagnostic =
         "Library sync is still applying earlier changes and stopped at its per-run page limit. Nothing is obstructed; rerun the same command to finish applying this rename."
 
-    /// Next step while this copy can't adopt a changed Library catalog.
+    /// Next step when a Library was removed or moved, which a copy can't follow yet. Added Libraries are followed
+    /// automatically.
     let internal catalogChangedNextStep =
-        "The repository's Library catalog changed, and this copy can't adopt catalog changes yet, so Library sync is stopped here. Version-control work isn't affected."
+        "A Library was removed from this repository or moved, and this copy can't follow that yet, so Library sync is stopped here. Your saved work is kept. Version-control work isn't affected."
+
+    /// Next step when an added Library's folder already holds files on this copy.
+    let internal occupiedRootNextStep (root: string) =
+        $"Move the files out of '{root}', or delete the folder. Grace Watch then adds the Library on this copy automatically. Until then Library sync waits, and nothing in that folder is changed. Version-control work isn't affected."
+
+    /// Next step when a Library folder that holds synced files is missing on this copy.
+    let internal missingRootNextStep (root: string) =
+        $"Restore '{root}'. Library sync is stopped here instead of deleting those files on every copy. Your saved work is kept. Version-control work isn't affected."
 
     /// Applies the validated local repository locator to one SDK request.
     let private scoped (configuration: GraceConfiguration) correlationId (parameters: #LibraryParameters) =
@@ -101,6 +110,15 @@ module internal LibrarySynchronization =
     /// Distinguishes an ordinary paused timer tick from synchronization failures that Watch must report.
     type private LibraryPausedException() =
         inherit InvalidOperationException("Library synchronization is paused. Run 'grace library sync resume' to continue.")
+
+    /// Raised when the server's catalog only added Libraries since this copy selected its catalog. The run switches to
+    /// the new catalog and continues; it isn't a failure.
+    type private LibraryCatalogAddedException() =
+        inherit InvalidOperationException("The repository gained a Library; Grace is adding it on this copy.")
+
+    /// How many times one run switches to a newer catalog before leaving the rest to the next run.
+    [<Literal>]
+    let private MaximumCatalogSwitchesPerRun = 3
 
     /// Rejects active commands after their lease-protected participation read observes pause.
     let private requireActive (current: RepositoryState) = if current.Paused then raise (LibraryPausedException())
@@ -319,7 +337,7 @@ module internal LibrarySynchronization =
                     }
         }
 
-    /// Selects a baseline only for a fresh empty local Library root, preserving existing participation on retry.
+    /// Selects a baseline only when every Library folder is absent or empty, preserving existing participation on retry.
     let private enableParticipation (configuration: GraceConfiguration) correlationId cancellationToken =
         task {
             if not (OperatingSystem.IsWindows()) then
@@ -383,9 +401,12 @@ module internal LibrarySynchronization =
             let catalog = value result
 
             if catalog <> expected.Catalog then
+                if catalogOnlyAdds expected.Catalog catalog then
+                    raise (LibraryCatalogAddedException())
+
                 raise (
                     LibrarySyncFailureException(
-                        "Library catalog or applied predecessor changed; synchronization has stopped before local effects.",
+                        "A Library was removed from this repository or moved; synchronization has stopped before local effects.",
                         None,
                         None,
                         catalogChangedNextStep
@@ -394,6 +415,139 @@ module internal LibrarySynchronization =
 
             if state configuration <> expected then
                 invalidOp "Library catalog or applied predecessor changed; synchronization has stopped before local effects."
+        }
+
+    /// Requires every existing directory from the working root down to a Library folder to be an ordinary directory,
+    /// so creating or using that folder can't follow a junction or land beside a file.
+    let private requireOrdinaryAncestry (configuration: GraceConfiguration) (library: string) =
+        let workingRoot =
+            Path
+                .GetFullPath(configuration.RootDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar)
+
+        let mutable current = Path.GetDirectoryName(fullPath configuration library)
+
+        while current.Length > workingRoot.Length do
+            if File.Exists(current) then
+                invalidOp $"A file is in the way of the Library folder '{library}'."
+
+            if
+                Directory.Exists(current)
+                && File
+                    .GetAttributes(current)
+                    .HasFlag(FileAttributes.ReparsePoint)
+            then
+                invalidOp $"Library synchronization does not follow reparse points above '{library}'."
+
+            current <- Path.GetDirectoryName(current)
+
+    /// Requires an added Library's folder to be absent or an empty ordinary directory. Anything else stops sync with a
+    /// next step and leaves the folder alone, so files that were there before it became a Library never sync.
+    let private requireAddableRoot (configuration: GraceConfiguration) (library: string) =
+        requireOrdinaryAncestry configuration library
+        let path = fullPath configuration library
+
+        let occupied =
+            File.Exists(path)
+            || (Directory.Exists(path)
+                && (File
+                        .GetAttributes(path)
+                        .HasFlag(FileAttributes.ReparsePoint)
+                    || not (
+                        Directory.EnumerateFileSystemEntries(path)
+                        |> Seq.isEmpty
+                    )))
+
+        if occupied then
+            raise (
+                LibrarySyncFailureException(
+                    $"The repository added the Library '{library}', but that folder already has files on this copy.",
+                    Some library,
+                    None,
+                    occupiedRootNextStep library
+                )
+            )
+
+    /// Creates each selected Library folder that's missing. A missing folder that still holds synced or prepared work
+    /// stops sync instead, because recreating it empty would delete those files on every copy.
+    let private createMissingRoots (configuration: GraceConfiguration) (current: RepositoryState) =
+        let items = readItems configuration.GraceStatusFile configuration.RepositoryId
+        let operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
+
+        current.Catalog.Libraries
+        |> Array.iter (fun library ->
+            let path = fullPath configuration library
+
+            if not (Directory.Exists(path)) then
+                /// Reports whether a repository-relative path is this Library's folder or inside it.
+                let owns (relative: string) =
+                    pathsEqual relative library
+                    || relative.StartsWith(library + "/", StringComparison.OrdinalIgnoreCase)
+
+                let holdsWork =
+                    items
+                    |> Array.exists (fun item ->
+                        item.Tombstone.IsNone
+                        && owns (itemPath items item))
+                    || operations
+                       |> Array.exists (fun operation ->
+                           operation.Prepared
+                           && not operation.Terminal
+                           && (owns operation.SourcePath
+                               || owns operation.TargetPath))
+
+                if holdsWork then
+                    raise (
+                        LibrarySyncFailureException($"The Library folder '{library}' is missing on this copy.", Some library, None, missingRootNextStep library)
+                    )
+
+                requireAddableRoot configuration library
+                Directory.CreateDirectory(path) |> ignore)
+
+    /// Switches this copy to the server's catalog when it only added Libraries, then creates every selected Library
+    /// folder that's missing. Runs under the root lease, before capture and pulls, and after the baseline is applied.
+    /// The switch commits before any folder is created, so a crash in between leaves a selected Library whose folder the
+    /// next run creates. getCatalog reads the server's catalog; afterSwitch lets tests stop the run at that point.
+    let internal adoptCatalogWith afterSwitch (getCatalog: unit -> System.Threading.Tasks.Task<LibraryCatalogDto>) (configuration: GraceConfiguration) =
+        task {
+            let current = state configuration
+
+            if current.Baseline
+               |> Option.forall (fun baseline -> baseline.Applied) then
+                let! latest = getCatalog ()
+
+                if latest <> current.Catalog then
+                    if not (catalogOnlyAdds current.Catalog latest) then
+                        raise (
+                            LibrarySyncFailureException(
+                                "A Library was removed from this repository or moved; synchronization has stopped before local effects.",
+                                None,
+                                None,
+                                catalogChangedNextStep
+                            )
+                        )
+
+                    normalizeLibraries latest.Libraries
+                    |> Result.defaultWith invalidOp
+                    |> ignore
+
+                    let added =
+                        latest.Libraries
+                        |> Array.filter (fun library ->
+                            not (
+                                current.Catalog.Libraries
+                                |> Array.exists (pathsEqual library)
+                            ))
+
+                    let requireAddable () =
+                        added
+                        |> Array.iter (requireAddableRoot configuration)
+
+                    requireAddable ()
+                    selectCatalogWith requireAddable configuration.GraceStatusFile current latest
+                    afterSwitch ()
+
+                createMissingRoots configuration (state configuration)
         }
 
     /// Separates completed filenames, retained rejection and uncertain or obstructed progress.
@@ -500,7 +654,6 @@ module internal LibrarySynchronization =
             let operation =
                 {
                     OperationId = Guid.NewGuid()
-                    CatalogVersion = current.Catalog.Version
                     Work = OperationWork.ExplicitRename({ SourcePath = source; TargetPath = target; MaterializedItem = item }, RenameProgress.Selected)
                     CreatedAtTicks = DateTime.UtcNow.Ticks
                 }
@@ -546,7 +699,6 @@ module internal LibrarySynchronization =
                 |> Array.tryPick (fun operation ->
                     if operation.Prepared
                        && not operation.Terminal
-                       && operation.ExpectedCatalogVersion = current.Catalog.Version
                        && operation.ExpectedCursor = current.AppliedCursor then
                         operation.Accepted
                         |> Option.bind (fun change ->
@@ -627,7 +779,6 @@ module internal LibrarySynchronization =
                                 |> Array.choose (fun operation ->
                                     if operation.Prepared
                                        && not operation.Terminal
-                                       && operation.ExpectedCatalogVersion = current.Catalog.Version
                                        && operation.ExpectedCursor = current.AppliedCursor
                                        && pathsEqual operation.TargetPath relative then
                                         operation.Accepted
@@ -699,7 +850,6 @@ module internal LibrarySynchronization =
                         |> Array.filter (fun operation ->
                             operation.Prepared
                             && not operation.Terminal
-                            && operation.ExpectedCatalogVersion = current.Catalog.Version
                             && operation.ExpectedCursor = current.AppliedCursor
                             && pathsEqual operation.TargetPath relative
                             && operation.Accepted
@@ -724,7 +874,6 @@ module internal LibrarySynchronization =
                             operation.Rename
                             && not operation.Prepared
                             && not operation.Terminal
-                            && operation.ExpectedCatalogVersion = current.Catalog.Version
                             && pathsEqual operation.TargetPath relative)
 
                     if not (
@@ -764,8 +913,7 @@ module internal LibrarySynchronization =
 
                                 OperationWork.SavedFile({ SourcePath = relative; Object = saved; Base = sourceBase }, SavedFileProgress.Captured)
 
-                        let operation =
-                            { OperationId = Guid.NewGuid(); CatalogVersion = current.Catalog.Version; Work = work; CreatedAtTicks = DateTime.UtcNow.Ticks }
+                        let operation = { OperationId = Guid.NewGuid(); Work = work; CreatedAtTicks = DateTime.UtcNow.Ticks }
 
                         insertOperation configuration.GraceStatusFile configuration.RepositoryId operation
                         afterInsert operation
@@ -803,10 +951,6 @@ module internal LibrarySynchronization =
 
                 let current = state configuration
                 do! checkCatalog configuration correlationId current
-
-                if current.Catalog.Version
-                   <> operation.ExpectedCatalogVersion then
-                    invalidOp "Saved Library operation belongs to another catalog version."
 
                 let mutable prepared = None
 
@@ -989,7 +1133,6 @@ module internal LibrarySynchronization =
                 |> Option.defaultValue
                     {
                         OperationId = change.OperationId
-                        CatalogVersion = expected.Catalog.Version
                         Work = OperationWork.Incoming(change, priorPath, previous, ApplicationProgress.AwaitingPreparation)
                         CreatedAtTicks = DateTime.UtcNow.Ticks
                     }
@@ -1089,8 +1232,6 @@ module internal LibrarySynchronization =
                     cancellationToken.ThrowIfCancellationRequested()
 
                     if state configuration <> expected
-                       || expected.Catalog.Version
-                          <> operation.ExpectedCatalogVersion
                        || expected.AppliedCursor <> operation.ExpectedCursor then
                         invalidOp "Library catalog or predecessor changed before filesystem effects."
 
@@ -1400,65 +1541,80 @@ module internal LibrarySynchronization =
             let mutable submitting: PendingOperation option = None
 
             try
+                do! adoptCatalogWith ignore (fun () -> catalog configuration correlationId) configuration
+
                 if (state configuration).Baseline.IsSome then
                     do! LibraryBaseline.resumeWith ignore (baselineRemote configuration correlationId) configuration cancellationToken
 
                 let mutable again = true
                 let mutable caughtUp = false
                 let mutable pagesLeft = MaximumPagesPerRun
+                let mutable catalogSwitches = 0
 
                 while again do
-                    cancellationToken.ThrowIfCancellationRequested()
-                    captureSaved configuration |> ignore
-                    let before = state configuration
-                    let pending = readOperations configuration.GraceStatusFile configuration.RepositoryId
-                    let mutable submitted = false
-                    let mutable index = 0
+                    let mutable catalogAdded = false
 
-                    while index < pending.Length do
+                    try
                         cancellationToken.ThrowIfCancellationRequested()
-                        let operation = pending[index]
+                        captureSaved configuration |> ignore
+                        let before = state configuration
+                        let pending = readOperations configuration.GraceStatusFile configuration.RepositoryId
+                        let mutable submitted = false
+                        let mutable index = 0
 
-                        let originReady =
-                            operation.OriginatingCreateId
-                            |> Option.forall (fun id ->
-                                pending
-                                |> Array.exists (fun value -> value.OperationId = id && value.Terminal))
+                        while index < pending.Length do
+                            cancellationToken.ThrowIfCancellationRequested()
+                            let operation = pending[index]
 
-                        if operation.Direction = "local"
-                           && not operation.Terminal
-                           && operation.Accepted.IsNone
-                           && originReady then
-                            submitting <- Some operation
-                            do! submitLocal configuration correlationId operation
-                            submitting <- None
-                            submitted <- true
+                            let originReady =
+                                operation.OriginatingCreateId
+                                |> Option.forall (fun id ->
+                                    pending
+                                    |> Array.exists (fun value -> value.OperationId = id && value.Terminal))
 
-                        index <- index + 1
+                            if operation.Direction = "local"
+                               && not operation.Terminal
+                               && operation.Accepted.IsNone
+                               && originReady then
+                                submitting <- Some operation
+                                do! submitLocal configuration correlationId operation
+                                submitting <- None
+                                submitted <- true
 
-                    cancellationToken.ThrowIfCancellationRequested()
-                    let! completePull, pagesUsed = pull configuration correlationId pagesLeft cancellationToken
-                    pagesLeft <- pagesLeft - pagesUsed
-                    caughtUp <- completePull
+                            index <- index + 1
 
-                    if completePull
-                       && (state configuration).Baseline.IsSome then
-                        finishOnboarding configuration.GraceStatusFile (state configuration)
+                        cancellationToken.ThrowIfCancellationRequested()
+                        let! completePull, pagesUsed = pull configuration correlationId pagesLeft cancellationToken
+                        pagesLeft <- pagesLeft - pagesUsed
+                        caughtUp <- completePull
 
-                    let captured = captureSaved configuration
+                        if completePull
+                           && (state configuration).Baseline.IsSome then
+                            finishOnboarding configuration.GraceStatusFile (state configuration)
 
-                    let remaining =
-                        readOperations configuration.GraceStatusFile configuration.RepositoryId
-                        |> Array.filter (fun operation -> not operation.Terminal)
+                        let captured = captureSaved configuration
 
-                    again <-
-                        completePull
-                        && pagesLeft > 0
-                        && remaining.Length > 0
-                        && (submitted
-                            || captured
-                            || before.AppliedCursor
-                               <> (state configuration).AppliedCursor)
+                        let remaining =
+                            readOperations configuration.GraceStatusFile configuration.RepositoryId
+                            |> Array.filter (fun operation -> not operation.Terminal)
+
+                        again <-
+                            completePull
+                            && pagesLeft > 0
+                            && remaining.Length > 0
+                            && (submitted
+                                || captured
+                                || before.AppliedCursor
+                                   <> (state configuration).AppliedCursor)
+                    with
+                    | :? LibraryCatalogAddedException when catalogSwitches < MaximumCatalogSwitchesPerRun -> catalogAdded <- true
+
+                    // A Library was added while this run was working. Everything done so far is durable and idempotent,
+                    // so switch to the new catalog and go around again.
+                    if catalogAdded then
+                        catalogSwitches <- catalogSwitches + 1
+                        submitting <- None
+                        do! adoptCatalogWith ignore (fun () -> catalog configuration correlationId) configuration
 
                 let current = state configuration
 
@@ -1557,6 +1713,8 @@ module internal LibrarySynchronization =
                     use! held = WorkingDirectoryUpdateCoordination.Lease.acquire scope cancellationToken
                     do! initialize configuration.GraceStatusFile
                     requireActive (state configuration)
+                    // Pick up any added Library first, so a rename right after an addition isn't refused.
+                    do! adoptCatalogWith ignore (fun () -> catalog configuration correlationId) configuration
                     do! checkCatalog configuration correlationId (state configuration)
                     return selectRenameWith ignore configuration sourcePath newName
                 }

@@ -4594,8 +4594,8 @@ module Watch =
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
 
     /// Widens Watch's Library exclusion to every root that any catalog read during this Watch lifetime marked as
-    /// Library-owned. Until a copy can adopt catalog changes, excluding both old and new roots means version control never
-    /// publishes a Library file. Work Watch queued before a root was added was classified under the old catalog, so an
+    /// Library-owned. Excluding both old and new roots means version control never publishes a Library file, including
+    /// one in a Library this copy's sync hasn't switched to yet. Work Watch queued before a root was added was classified under the old catalog, so an
     /// added root requests a resync that drops queued files the wider exclusion now covers and rescans with it. Call this
     /// from Watch's own async flow: the shared path policy it sets is async-local, and Watch's startup policy lifetime
     /// restores the original value when Watch exits.
@@ -10168,6 +10168,20 @@ module Watch =
                         if libraryWatchState.Catalog
                            <> previousLibraryCatalog then
                             widenWatchLibraryExclusion libraryWatchState.Catalog.Libraries
+
+                        // This tick's sync run may have switched the copy to a catalog with an added Library, and
+                        // downloaded into it, before Watch's own catalog read sees the addition. Exclude every root sync
+                        // selected before version control looks at this tick's changes. Widening is a no-op when
+                        // nothing is new, and a failed read leaves the next catalog refresh to catch up.
+                        let selectedLibraries =
+                            try
+                                Grace.CLI.LibraryLocalState.readRepository cachedOperationalConfiguration.GraceStatusFile operationalConfiguration.RepositoryId
+                                |> Option.map (fun selected -> selected.Catalog.Libraries)
+                                |> Option.defaultValue Array.empty
+                            with
+                            | _ -> Array.empty
+
+                        widenWatchLibraryExclusion selectedLibraries
 
                         do!
                             processWatchTimerLocalRecoveryWithReplay

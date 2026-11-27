@@ -70,29 +70,32 @@ module internal LibraryBaseline =
 
             parent <- Path.GetDirectoryName(parent)
 
-    /// Keeps initial acquisition restricted to an empty ordinary local Library root.
-    let private requireEmptyRoot (configuration: GraceConfiguration) (catalog: LibraryCatalogDto) =
+    /// Keeps initial acquisition restricted to empty ordinary local folders for every Library in the repository, and
+    /// returns their full paths.
+    let private requireEmptyRoots (configuration: GraceConfiguration) (catalog: LibraryCatalogDto) =
         if catalog.RepositoryId <> configuration.RepositoryId
-           || catalog.Libraries.Length <> 1 then
-            invalidOp "Library onboarding requires one Library in this repository."
+           || catalog.Libraries.Length = 0 then
+            invalidOp "Library onboarding requires at least one Library in this repository."
 
-        let root = fullPath configuration catalog.Libraries[0]
-        requireParents configuration root
+        catalog.Libraries
+        |> Array.map (fun library ->
+            let root = fullPath configuration library
+            requireParents configuration root
 
-        if
-            File.Exists(root)
-            || (Directory.Exists(root)
-                && (File
-                        .GetAttributes(root)
-                        .HasFlag(FileAttributes.ReparsePoint)
-                    || not (
-                        Directory.EnumerateFileSystemEntries(root)
-                        |> Seq.isEmpty
-                    )))
-        then
-            invalidOp "Library onboarding requires an empty ordinary local Library root."
+            if
+                File.Exists(root)
+                || (Directory.Exists(root)
+                    && (File
+                            .GetAttributes(root)
+                            .HasFlag(FileAttributes.ReparsePoint)
+                        || not (
+                            Directory.EnumerateFileSystemEntries(root)
+                            |> Seq.isEmpty
+                        )))
+            then
+                invalidOp $"Library onboarding requires an empty ordinary local folder for every Library; '{library}' isn't."
 
-        root
+            root)
 
     /// Reads exact persisted selection state between remote calls and filesystem effects.
     let private current (configuration: GraceConfiguration) =
@@ -100,12 +103,16 @@ module internal LibraryBaseline =
         |> Option.get
 
     /// Rechecks the catalog and exact local selection after remote work and before affected publication or completion.
+    /// A catalog that only added Libraries doesn't stop the baseline: its boundary covers the selected Libraries, and the
+    /// copy switches to the larger catalog once the baseline is applied.
     let private check (remote: Remote) (configuration: GraceConfiguration) (expected: RepositoryState) =
         task {
             let! catalog = remote.Catalog()
 
-            if catalog <> expected.Catalog
-               || current configuration <> expected then
+            if
+                not (catalogOnlyAdds expected.Catalog catalog)
+                || current configuration <> expected
+            then
                 invalidOp "Library baseline catalog or selection changed; local work is retained."
         }
 
@@ -125,14 +132,17 @@ module internal LibraryBaseline =
     let startWith observe (remote: Remote) (configuration: GraceConfiguration) =
         task {
             let! page = remote.Start()
-            let root = requireEmptyRoot configuration page.LibraryCatalog
+            let roots = requireEmptyRoots configuration page.LibraryCatalog
             let! catalog = remote.Catalog()
 
             if catalog <> page.LibraryCatalog then
                 invalidOp "Library catalog changed before baseline selection."
 
-            requireEmptyRoot configuration catalog |> ignore
-            Directory.CreateDirectory(root) |> ignore
+            requireEmptyRoots configuration catalog |> ignore
+
+            roots
+            |> Array.iter (fun root -> Directory.CreateDirectory(root) |> ignore)
+
             let selected = selection configuration page
             saveBaselinePage configuration.GraceStatusFile None selected page false
             observe "page"
@@ -153,14 +163,14 @@ module internal LibraryBaseline =
                 let expected = current configuration
                 do! check remote configuration expected
 
-                requireEmptyRoot configuration expected.Catalog
+                requireEmptyRoots configuration expected.Catalog
                 |> ignore
 
                 let baseline = expected.Baseline.Value
                 let! page = remote.Continue baseline.BootstrapId expected.BaselinePageToken.Value
                 do! check remote configuration expected
 
-                requireEmptyRoot configuration expected.Catalog
+                requireEmptyRoots configuration expected.Catalog
                 |> ignore
 
                 match page with
@@ -168,14 +178,15 @@ module internal LibraryBaseline =
                 | None ->
                     let! page = remote.Start()
                     do! check remote configuration expected
-
-                    requireEmptyRoot configuration expected.Catalog
-                    |> ignore
-
                     let selected = selection configuration page
 
-                    if selected.Catalog <> expected.Catalog then
-                        invalidOp "Expired baseline restart cannot adopt a changed catalog."
+                    // Nothing is installed yet, so a restart can take a catalog that only added Libraries, as long as
+                    // every folder, old and new, is still empty.
+                    if not (catalogOnlyAdds expected.Catalog selected.Catalog) then
+                        invalidOp "Expired baseline restart can't follow a removed or moved Library."
+
+                    requireEmptyRoots configuration selected.Catalog
+                    |> Array.iter (fun root -> Directory.CreateDirectory(root) |> ignore)
 
                     saveBaselinePage configuration.GraceStatusFile (Some expected) selected page true
 
