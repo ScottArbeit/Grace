@@ -828,7 +828,6 @@ module internal LibrarySynchronization =
                         | None ->
                             let request = scoped configuration correlationId (SubmitLibraryChangeParameters())
                             request.OperationId <- operation.OperationId
-                            request.LibraryCatalogVersion <- operation.ExpectedCatalogVersion
                             request.ItemKind <- LibraryOperation.kindToWire operation.Kind
 
                             match prior with
@@ -909,10 +908,10 @@ module internal LibrarySynchronization =
 
                 let expectedHash =
                     match toChangeCommand configuration.RepositoryId request with
-                    | LibraryChangeCommand.CreateFile (_, hash, _, _, _)
-                    | LibraryChangeCommand.CreateDirectory (_, hash, _, _)
-                    | LibraryChangeCommand.UpdateContent (_, hash, _, _, _, _, _)
-                    | LibraryChangeCommand.Rename (_, hash, _, _, _, _) -> hash
+                    | LibraryChangeCommand.CreateFile (_, hash, _, _)
+                    | LibraryChangeCommand.CreateDirectory (_, hash, _)
+                    | LibraryChangeCommand.UpdateContent (_, hash, _, _, _, _)
+                    | LibraryChangeCommand.Rename (_, hash, _, _, _) -> hash
                     | _ -> invalidOp "Unexpected local Library request kind."
 
                 if receipt.OperationId <> operation.OperationId

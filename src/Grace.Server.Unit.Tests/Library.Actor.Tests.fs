@@ -349,7 +349,6 @@ type LibraryActorTests() =
         LibraryChangeCommand.CreateDirectory(
             operation,
             $"create-{name.Length}-{operation:N}",
-            catalogVersion,
             {
                 Parent = longRootParent
                 Name = name
@@ -425,7 +424,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    catalog.Version,
                     {
                         Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
                         Name = "denied"
@@ -506,7 +504,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    catalog.Version,
                     {
                         Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
                         Name = "allowed"
@@ -760,7 +757,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     Guid.NewGuid(),
                     $"create-{name}",
-                    catalogVersion,
                     {
                         Parent = callerParent
                         Name = name
@@ -795,7 +791,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     Guid.NewGuid(),
                     $"create-{name}",
-                    catalogVersion,
                     {
                         Parent = parent
                         Name = name
@@ -834,7 +829,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.Rename(
                     Guid.NewGuid(),
                     "rename-long",
-                    catalogVersion,
                     fileId,
                     { ItemId = fileId; ExpectedNamespaceVersion = namespaceVersion },
                     String.replicate 150 "r"
@@ -865,7 +859,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.Move(
                     Guid.NewGuid(),
                     "move-long",
-                    catalogVersion,
                     fileId,
                     { ItemId = fileId; ExpectedNamespaceVersion = fileNamespace },
                     { Kind = "item"; LibraryPath = None; ItemId = Some directoryId }
@@ -907,7 +900,6 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     Guid.NewGuid(),
                     "create-reused",
-                    catalogVersion,
                     { Parent = longRootParent; Name = reusedName; ExpectedSlotVersion = reusedVersion; ExpectedState = "vacant" }
                 )
 

@@ -296,7 +296,7 @@ module Library =
     /// Converts one valid public parameter object into the closed actor command union.
     let toChangeCommand repositoryId (parameters: SubmitLibraryChangeParameters) =
         let requestHashInput =
-            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.LibraryCatalogVersion:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.CreationSlotExpectation}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
+            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.CreationSlotExpectation}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
 
         let requestHash =
             requestHashInput
@@ -307,25 +307,12 @@ module Library =
 
         match parameters.ChangeKind with
         | ChangeKind.CreateFile ->
-            LibraryChangeCommand.CreateFile(
-                parameters.OperationId,
-                requestHash,
-                parameters.LibraryCatalogVersion,
-                parameters.CreationSlotExpectation.Value,
-                parameters.UploadSessionId.Value
-            )
-        | ChangeKind.CreateDirectory ->
-            LibraryChangeCommand.CreateDirectory(
-                parameters.OperationId,
-                requestHash,
-                parameters.LibraryCatalogVersion,
-                parameters.CreationSlotExpectation.Value
-            )
+            LibraryChangeCommand.CreateFile(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value, parameters.UploadSessionId.Value)
+        | ChangeKind.CreateDirectory -> LibraryChangeCommand.CreateDirectory(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value)
         | ChangeKind.UpdateContent ->
             LibraryChangeCommand.UpdateContent(
                 parameters.OperationId,
                 requestHash,
-                parameters.LibraryCatalogVersion,
                 parameters.ItemId.Value,
                 parameters.NamespacePrecondition,
                 parameters.ContentPrecondition.Value,
@@ -335,7 +322,6 @@ module Library =
             LibraryChangeCommand.Rename(
                 parameters.OperationId,
                 requestHash,
-                parameters.LibraryCatalogVersion,
                 parameters.ItemId.Value,
                 parameters.NamespacePrecondition.Value,
                 parameters.DestinationName
@@ -344,7 +330,6 @@ module Library =
             LibraryChangeCommand.Move(
                 parameters.OperationId,
                 requestHash,
-                parameters.LibraryCatalogVersion,
                 parameters.ItemId.Value,
                 parameters.NamespacePrecondition.Value,
                 parameters.DestinationParent.Value
@@ -353,7 +338,6 @@ module Library =
             LibraryChangeCommand.Delete(
                 parameters.OperationId,
                 requestHash,
-                parameters.LibraryCatalogVersion,
                 parameters.ItemId.Value,
                 parameters.NamespacePrecondition.Value,
                 parameters.ContentPrecondition

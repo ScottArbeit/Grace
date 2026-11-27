@@ -80,7 +80,6 @@ module LibraryAdmissionHttpTests =
             return!
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = Guid.NewGuid(),
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.CreateDirectory,
                     ItemKind = ItemKind.Directory,
                     CreationSlotExpectation = Some expectation
@@ -98,7 +97,6 @@ module LibraryAdmissionHttpTests =
             return!
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = operation,
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable prepared.UploadSessionId,
@@ -116,7 +114,6 @@ module LibraryAdmissionHttpTests =
             return!
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = operation,
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.UpdateContent,
                     ItemKind = ItemKind.File,
                     ItemId = Nullable item.ItemId,
@@ -163,7 +160,6 @@ module LibraryAdmissionHttpTests =
             let! renamed =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = Guid.NewGuid(),
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.Rename,
                     ItemKind = ItemKind.Directory,
                     ItemId = Nullable directory.ItemId,
@@ -181,7 +177,6 @@ module LibraryAdmissionHttpTests =
             let! moved =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = Guid.NewGuid(),
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.Move,
                     ItemKind = ItemKind.Directory,
                     ItemId = Nullable directory.ItemId,
@@ -229,7 +224,6 @@ module LibraryAdmissionHttpTests =
             let stale =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = operation,
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.UpdateContent,
                     ItemKind = ItemKind.File,
                     ItemId = Nullable original.ItemId,
@@ -273,7 +267,6 @@ module LibraryAdmissionHttpTests =
             let! deleted =
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = Guid.NewGuid(),
-                    LibraryCatalogVersion = catalog.Version,
                     ChangeKind = ChangeKind.Delete,
                     ItemKind = ItemKind.Directory,
                     ItemId = Nullable directory.ItemId,

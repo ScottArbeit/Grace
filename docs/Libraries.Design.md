@@ -49,8 +49,9 @@ Every call first finishes any saved decision. Then `Submit`:
 
 1. Returns the recorded receipt if this operation ID was seen before, or rejects a different request under the same
    ID.
-1. Checks the catalog version, preconditions, slot vacancy, capacity, and the 1,024-byte path limit. For content, it
-   checks the completed upload session.
+1. Checks that a root the change names is still in the catalog, then preconditions, slot vacancy, capacity, and the
+   1,024-byte path limit. For content, it checks the completed upload session. A catalog change doesn't reject a
+   change in a Library the catalog still has, so a save queued before another Library was added still lands.
 1. Saves the complete decision in control as `Pending`. This is the commit point: from here, repair finishes the
    decision rather than reconsidering it.
 1. Writes the accepted change, activates retained content, writes the item and slot projections, writes the receipt,

@@ -25,32 +25,22 @@ module LibraryDecision =
     /// Returns the operation identity embedded in a validated command.
     let operationId =
         function
-        | LibraryChangeCommand.CreateFile (value, _, _, _, _)
-        | LibraryChangeCommand.CreateDirectory (value, _, _, _)
-        | LibraryChangeCommand.UpdateContent (value, _, _, _, _, _, _)
-        | LibraryChangeCommand.Rename (value, _, _, _, _, _)
-        | LibraryChangeCommand.Move (value, _, _, _, _, _)
-        | LibraryChangeCommand.Delete (value, _, _, _, _, _) -> value
+        | LibraryChangeCommand.CreateFile (value, _, _, _)
+        | LibraryChangeCommand.CreateDirectory (value, _, _)
+        | LibraryChangeCommand.UpdateContent (value, _, _, _, _, _)
+        | LibraryChangeCommand.Rename (value, _, _, _, _)
+        | LibraryChangeCommand.Move (value, _, _, _, _)
+        | LibraryChangeCommand.Delete (value, _, _, _, _) -> value
 
     /// Returns the normalized request hash embedded in a validated command.
     let requestHash =
         function
-        | LibraryChangeCommand.CreateFile (_, value, _, _, _)
-        | LibraryChangeCommand.CreateDirectory (_, value, _, _)
-        | LibraryChangeCommand.UpdateContent (_, value, _, _, _, _, _)
-        | LibraryChangeCommand.Rename (_, value, _, _, _, _)
-        | LibraryChangeCommand.Move (_, value, _, _, _, _)
-        | LibraryChangeCommand.Delete (_, value, _, _, _, _) -> value
-
-    /// Returns the catalog version observed by the command caller.
-    let catalogVersion =
-        function
-        | LibraryChangeCommand.CreateFile (_, _, value, _, _)
-        | LibraryChangeCommand.CreateDirectory (_, _, value, _)
-        | LibraryChangeCommand.UpdateContent (_, _, value, _, _, _, _)
-        | LibraryChangeCommand.Rename (_, _, value, _, _, _)
-        | LibraryChangeCommand.Move (_, _, value, _, _, _)
-        | LibraryChangeCommand.Delete (_, _, value, _, _, _) -> value
+        | LibraryChangeCommand.CreateFile (_, value, _, _)
+        | LibraryChangeCommand.CreateDirectory (_, value, _)
+        | LibraryChangeCommand.UpdateContent (_, value, _, _, _, _)
+        | LibraryChangeCommand.Rename (_, value, _, _, _)
+        | LibraryChangeCommand.Move (_, value, _, _, _)
+        | LibraryChangeCommand.Delete (_, value, _, _, _) -> value
 
     /// Reports whether a change names a Library root, as its parent or destination, that the current catalog no longer
     /// has. #1111 decision 1: that is the only way a catalog change makes a change stale. A change under a live
@@ -58,9 +48,9 @@ module LibraryDecision =
     let namesRootOutside (catalog: LibraryCatalogDto) command =
         let parent =
             match command with
-            | LibraryChangeCommand.CreateFile (_, _, _, expectation, _) -> Some expectation.Parent
-            | LibraryChangeCommand.CreateDirectory (_, _, _, expectation) -> Some expectation.Parent
-            | LibraryChangeCommand.Move (_, _, _, _, _, destination) -> Some destination
+            | LibraryChangeCommand.CreateFile (_, _, expectation, _) -> Some expectation.Parent
+            | LibraryChangeCommand.CreateDirectory (_, _, expectation) -> Some expectation.Parent
+            | LibraryChangeCommand.Move (_, _, _, _, destination) -> Some destination
             | LibraryChangeCommand.UpdateContent _
             | LibraryChangeCommand.Rename _
             | LibraryChangeCommand.Delete _ -> None

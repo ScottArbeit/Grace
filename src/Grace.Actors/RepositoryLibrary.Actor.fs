@@ -1091,7 +1091,7 @@ type RepositoryLibraryActor
                                     }
 
                                 match command with
-                                | LibraryChangeCommand.CreateFile (_, _, _, submitted, uploadSessionId) ->
+                                | LibraryChangeCommand.CreateFile (_, _, submitted, uploadSessionId) ->
                                     let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
                                     let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
 
@@ -1144,7 +1144,7 @@ type RepositoryLibraryActor
                                                 acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
                                                 |> submit
 
-                                | LibraryChangeCommand.CreateDirectory (_, _, _, submitted) ->
+                                | LibraryChangeCommand.CreateDirectory (_, _, submitted) ->
                                     let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
                                     let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
 
@@ -1192,7 +1192,7 @@ type RepositoryLibraryActor
                                             acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
                                             |> submit
 
-                                | LibraryChangeCommand.UpdateContent (_, _, _, itemId, namespacePrecondition, contentPrecondition, uploadSessionId) ->
+                                | LibraryChangeCommand.UpdateContent (_, _, itemId, namespacePrecondition, contentPrecondition, uploadSessionId) ->
                                     match! readItem repositoryId itemId with
                                     | None ->
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.ItemMissing control.Catalog
@@ -1287,7 +1287,7 @@ type RepositoryLibraryActor
                                                     acceptedRecord cursor requestHash correlationId change None true destinationExists.IsNone
                                                     |> submit
 
-                                | LibraryChangeCommand.Rename (_, _, _, itemId, namespacePrecondition, newName) ->
+                                | LibraryChangeCommand.Rename (_, _, itemId, namespacePrecondition, newName) ->
                                     match! readItem repositoryId itemId with
                                     | None ->
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.ItemMissing control.Catalog
@@ -1341,7 +1341,7 @@ type RepositoryLibraryActor
                                                 acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
                                                 |> submit
 
-                                | LibraryChangeCommand.Move (_, _, _, itemId, namespacePrecondition, submittedParent) ->
+                                | LibraryChangeCommand.Move (_, _, itemId, namespacePrecondition, submittedParent) ->
                                     let destinationParent = canonicalParent control.Catalog submittedParent
 
                                     match! readItem repositoryId itemId with
@@ -1405,7 +1405,7 @@ type RepositoryLibraryActor
                                                 acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
                                                 |> submit
 
-                                | LibraryChangeCommand.Delete (_, _, _, itemId, namespacePrecondition, contentPrecondition) ->
+                                | LibraryChangeCommand.Delete (_, _, itemId, namespacePrecondition, contentPrecondition) ->
                                     match! readItem repositoryId itemId with
                                     | None ->
                                         let! receipt = reject repositoryId operationId requestHash RejectionReason.ItemMissing control.Catalog

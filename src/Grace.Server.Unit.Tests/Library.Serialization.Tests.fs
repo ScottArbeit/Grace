@@ -177,27 +177,18 @@ type LibrarySerializationTests() =
 
         let commands =
             [|
-                LibraryChangeCommand.CreateFile(operationId, receipt.RequestHash, catalogVersion, creationExpectation, uploadSessionId)
-                LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), "directory-hash", catalogVersion, creationExpectation)
-                LibraryChangeCommand.UpdateContent(
-                    Guid.NewGuid(),
-                    "update-hash",
-                    catalogVersion,
-                    itemId,
-                    Some namespacePrecondition,
-                    contentPrecondition,
-                    uploadSessionId
-                )
-                LibraryChangeCommand.Rename(Guid.NewGuid(), "rename-hash", catalogVersion, itemId, namespacePrecondition, "renamed.raw")
+                LibraryChangeCommand.CreateFile(operationId, receipt.RequestHash, creationExpectation, uploadSessionId)
+                LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), "directory-hash", creationExpectation)
+                LibraryChangeCommand.UpdateContent(Guid.NewGuid(), "update-hash", itemId, Some namespacePrecondition, contentPrecondition, uploadSessionId)
+                LibraryChangeCommand.Rename(Guid.NewGuid(), "rename-hash", itemId, namespacePrecondition, "renamed.raw")
                 LibraryChangeCommand.Move(
                     Guid.NewGuid(),
                     "move-hash",
-                    catalogVersion,
                     itemId,
                     namespacePrecondition,
                     { Kind = "item"; LibraryPath = None; ItemId = Some secondItemId }
                 )
-                LibraryChangeCommand.Delete(Guid.NewGuid(), "delete-hash", catalogVersion, itemId, namespacePrecondition, Some contentPrecondition)
+                LibraryChangeCommand.Delete(Guid.NewGuid(), "delete-hash", itemId, namespacePrecondition, Some contentPrecondition)
             |]
 
         let catalogResult =

@@ -479,19 +479,18 @@ module Library =
 
     /// Carries one validated Library change after HTTP shape checks and before actor-owned state checks.
     type LibraryChangeCommand =
-        | CreateFile of LibraryOperationId * string * LibraryCatalogVersion * LibraryCreationSlotExpectationDto * UploadSessionId
-        | CreateDirectory of LibraryOperationId * string * LibraryCatalogVersion * LibraryCreationSlotExpectationDto
+        | CreateFile of LibraryOperationId * string * LibraryCreationSlotExpectationDto * UploadSessionId
+        | CreateDirectory of LibraryOperationId * string * LibraryCreationSlotExpectationDto
         | UpdateContent of
             LibraryOperationId *
             string *
-            LibraryCatalogVersion *
             LibraryItemId *
             LibraryNamespacePreconditionDto option *
             LibraryContentPreconditionDto *
             UploadSessionId
-        | Rename of LibraryOperationId * string * LibraryCatalogVersion * LibraryItemId * LibraryNamespacePreconditionDto * string
-        | Move of LibraryOperationId * string * LibraryCatalogVersion * LibraryItemId * LibraryNamespacePreconditionDto * LibraryParentDto
-        | Delete of LibraryOperationId * string * LibraryCatalogVersion * LibraryItemId * LibraryNamespacePreconditionDto * LibraryContentPreconditionDto option
+        | Rename of LibraryOperationId * string * LibraryItemId * LibraryNamespacePreconditionDto * string
+        | Move of LibraryOperationId * string * LibraryItemId * LibraryNamespacePreconditionDto * LibraryParentDto
+        | Delete of LibraryOperationId * string * LibraryItemId * LibraryNamespacePreconditionDto * LibraryContentPreconditionDto option
 
     /// Persists one immutable accepted item change in the repository journal.
     [<CLIMutable; GenerateSerializer>]

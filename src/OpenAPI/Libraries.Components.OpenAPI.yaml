@@ -365,7 +365,6 @@
         - type: object
           properties:
             OperationId: { $ref: '#/LibraryOperationId' }
-            LibraryCatalogVersion: { $ref: '#/LibraryCatalogVersion' }
             ChangeKind: { $ref: '#/LibraryChangeKind' }
             ItemKind: { $ref: '#/LibraryItemKind' }
             ItemId:
@@ -395,7 +394,7 @@
               type: string
               format: uuid
               nullable: true
-          required: [OperationId, LibraryCatalogVersion, ChangeKind, ItemKind]
+          required: [OperationId, ChangeKind, ItemKind]
     PrepareLibraryContentParameters:
       allOf:
         - $ref: '#/LibraryParameters'

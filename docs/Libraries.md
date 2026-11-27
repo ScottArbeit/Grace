@@ -44,7 +44,6 @@ Authorization is rechecked against the stored repository identity before a read,
 Each change request provides:
 
 - One stable operation ID.
-- The exact current Library catalog version.
 - The change and item kinds.
 - The exact namespace, content, or destination-slot preconditions required by that change kind.
 - An upload session ID when complete bytes are required.

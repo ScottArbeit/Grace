@@ -374,7 +374,6 @@ module LibrarySynchronizationWindowsServerTests =
             create.OrganizationId <- organizationId
             create.RepositoryId <- repositoryId.ToString("D")
             create.OperationId <- Guid.NewGuid()
-            create.LibraryCatalogVersion <- catalogVersion
             create.ChangeKind <- ChangeKind.CreateDirectory
             create.ItemKind <- ItemKind.Directory
             create.CreationSlotExpectation <- Some { Parent = parent; Name = name; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
@@ -525,7 +524,6 @@ module LibrarySynchronizationWindowsServerTests =
             request.OrganizationId <- organizationId
             request.RepositoryId <- repositoryId.ToString("D")
             request.OperationId <- Guid.NewGuid()
-            request.LibraryCatalogVersion <- catalogVersion
             request.ItemId <- Nullable item.ItemId
             request.ItemKind <- ItemKind.File
             request.NamespacePrecondition <- Some { ItemId = item.ItemId; ExpectedNamespaceVersion = item.Namespace.Value.NamespaceVersion }
@@ -2375,7 +2373,6 @@ module LibrarySynchronizationWindowsServerTests =
             rename.OrganizationId <- organizationId
             rename.RepositoryId <- repositoryId.ToString("D")
             rename.OperationId <- Guid.NewGuid()
-            rename.LibraryCatalogVersion <- catalog.Version
             rename.ChangeKind <- ChangeKind.Rename
             rename.ItemKind <- ItemKind.Directory
             rename.ItemId <- Nullable directory.ItemId
