@@ -1952,6 +1952,11 @@ module Application =
                                |> addMetadata typeof<Reminder.CreateReminderParameters> ]
                     ]
                 subRoute
+                    "/usage"
+                    [
+                        GET [ route "/storage" StorageUsage.GetStorage ]
+                    ]
+                subRoute
                     "/admin"
                     [
                         POST [ route "/directory-version-size/diagnose" (composeHandlers requireSystemAdmin DirectoryVersion.DiagnoseSize)

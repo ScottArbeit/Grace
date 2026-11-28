@@ -769,7 +769,7 @@ type SaveBoundaryActorTests() =
         )
 
         match childPlan.CounterCommand with
-        | RepositoryContentCounterCommand.AddReference (_, _, commandStoragePoolId, manifestAddress) ->
+        | RepositoryContentCounterCommand.AddReference (_, _, commandStoragePoolId, manifestAddress, _) ->
             Assert.That(commandStoragePoolId, Is.EqualTo(archiveStoragePoolId))
             Assert.That(manifestAddress, Is.EqualTo(childManifest.ManifestAddress))
         | _ -> Assert.Fail("Expected nested child manifest planning to add stored-pool manifest ownership.")

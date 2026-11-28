@@ -60,6 +60,8 @@
     <Compile Include="Library.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
+    <Compile Include="RepositoryStorageMeter.Actor.Tests.fs" />
+    <Compile Include="StorageUsage.Server.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />
     <Compile Include="Reminder.Actor.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />

@@ -44,6 +44,9 @@ module RepositoryContentCounter =
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Keys a repository's storage meter by the first segment of every counter key, so the meter shares their partition.
+    let storageMeterPrimaryKey (repositoryId: RepositoryId) = $"{repositoryId:N}"
+
     /// Builds the stable identity for one exact positive logical count replacement.
     let repairOperationId (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) expectedRevision rebuiltCount =
         RepositoryContentCounterOperationId
@@ -58,13 +61,13 @@ module RepositoryContentCounter =
     /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _) -> operationId
+        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _, _) -> operationId
         | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> operationId
 
     /// Coordinates command target logic for the RepositoryContentCounter actor.
     let private commandTarget command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (_, repositoryId, storagePoolId, manifestAddress)
+        | RepositoryContentCounterCommand.AddReference (_, repositoryId, storagePoolId, manifestAddress, _)
         | RepositoryContentCounterCommand.RemoveReference (_, repositoryId, storagePoolId, manifestAddress) -> repositoryId, storagePoolId, manifestAddress
 
     /// Attempts to find the bounded completed change for one operation.
@@ -145,6 +148,10 @@ module RepositoryContentCounter =
             Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace manifestAddress then
             Some(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty ManifestAddress.")
+        elif (match command with
+              | RepositoryContentCounterCommand.AddReference (_, _, _, _, logicalSize) -> logicalSize < 0L
+              | RepositoryContentCounterCommand.RemoveReference _ -> false) then
+            Some(graceError metadata.CorrelationId "RepositoryContentCounter AddReference requires a logical size of zero or more.")
         elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress then
             Some(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
         elif targetMismatch counter repositoryId storagePoolId manifestAddress then
@@ -180,10 +187,10 @@ module RepositoryContentCounter =
                     "Repository content counter command replayed."
             | None ->
                 match command with
-                | RepositoryContentCounterCommand.AddReference _ ->
+                | RepositoryContentCounterCommand.AddReference (_, _, _, _, logicalSize) ->
                     let counterEvent =
                         {
-                            Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, storagePoolId, manifestAddress)
+                            Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, storagePoolId, manifestAddress, logicalSize)
                             Metadata = metadata
                         }
 
@@ -354,6 +361,7 @@ module RepositoryContentCounter =
                     else
                         RepositoryContentCounterChangeOperation.Removed
 
+                // A repair from zero keeps the manifest again, so the meter adds the size the counter recorded.
                 let repaired =
                     { counter with
                         Count = command.RebuiltCount
@@ -368,6 +376,7 @@ module RepositoryContentCounter =
                                     Revision = counter.Revision + 1L
                                 }
                     }
+                    |> RepositoryContentCounterDto.WithMeterChangeForCrossing counter.Count command.RebuiltCount (counter.Revision + 1L)
 
                 Ok
                     {
@@ -488,6 +497,36 @@ module RepositoryContentCounter =
                                     return Ok localDecision
         }
 
+    /// Removes the meter changes the repository's storage meter has applied; unknown revisions are already gone.
+    let releaseMeterChanges (revisions: int64 list) (counter: RepositoryContentCounterDto) =
+        { counter with
+            PendingMeterChanges =
+                counter.PendingMeterChanges
+                |> List.filter (fun change -> not (List.contains change.Revision revisions))
+        }
+
+    /// Reports whether a snapshot committed a meter change that the previous snapshot did not have.
+    let hasNewMeterChange (previous: RepositoryContentCounterDto) (next: RepositoryContentCounterDto) =
+        next.PendingMeterChanges
+        |> List.exists (fun change -> not (List.contains change previous.PendingMeterChanges))
+
+    /// Sends the storage meter a one-way hint after a commit. The save never awaits the meter and never fails because
+    /// of it; a lost hint leaves the change pending, and the meter's partition query finds it.
+    let notifyMeterSafely (log: ILogger) (notify: unit -> Task) =
+        task {
+            try
+                do! notify ()
+            with
+            | ex ->
+                log.LogWarning(
+                    "{CurrentInstant}: Node: {HostName}; Storage meter hint was not sent; the change stays pending. Error: {Error}",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    ex.Message
+                )
+        }
+        :> Task
+
     /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
         (
@@ -509,12 +548,27 @@ module RepositoryContentCounter =
 
             Task.CompletedTask
 
-        /// Overwrites the bounded RepositoryContentCounter snapshot after one completed transition.
+        /// Overwrites the bounded RepositoryContentCounter snapshot after one completed transition, then hints the
+        /// repository's storage meter when the snapshot committed a zero crossing.
         member private this.ApplySnapshot(snapshot: RepositoryContentCounterDto) : Task =
+            let grainFactory = this.GrainFactory
+
             (task {
+                let previous = counter
                 state.State <- snapshot
                 do! state.WriteStateAsync()
                 counter <- snapshot
+
+                if hasNewMeterChange previous snapshot then
+                    do!
+                        notifyMeterSafely log (fun () ->
+                            grainFactory
+                                .GetGrain<IRepositoryStorageMeterActor>(
+                                    storageMeterPrimaryKey snapshot.RepositoryId
+                                )
+                                .NotifyPendingChange
+                                snapshot.StoragePoolId
+                                snapshot.ManifestAddress)
             }
             :> Task)
 
@@ -579,13 +633,30 @@ module RepositoryContentCounter =
                         return Error error
                 }
 
+            /// Returns the meter changes this counter committed that the storage meter has not released yet.
+            member this.GetPendingMeterChanges correlationId =
+                this.correlationId <- correlationId
+                counter.PendingMeterChanges |> returnTask
+
+            /// Durably removes meter changes the storage meter has applied, before the meter forgets their ids.
+            member this.ReleaseMeterChanges revisions correlationId =
+                task {
+                    this.correlationId <- correlationId
+                    let released = releaseMeterChanges revisions counter
+
+                    if released.PendingMeterChanges
+                       <> counter.PendingMeterChanges then
+                        do! this.ApplySnapshot released
+                }
+                :> Task
+
             /// Persists and replays one add until its dependent manifest workflow and receipt are durable.
-            member this.AddTrackedReference operationId repositoryId storagePoolId manifestAddress metadata =
+            member this.AddTrackedReference operationId repositoryId storagePoolId manifestAddress logicalSize metadata =
                 task {
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, "AddTrackedReference")
 
-                    let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
+                    let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress, logicalSize)
 
                     match! handleTrackedAdd this.ApplySnapshot (Some(this.GetPrimaryKeyString())) counter command metadata with
                     | Ok decision -> return Ok(GraceReturnValue.Create decision metadata.CorrelationId)

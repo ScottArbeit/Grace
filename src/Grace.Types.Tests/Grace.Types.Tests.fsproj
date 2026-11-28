@@ -35,6 +35,7 @@
     <Compile Include="RabinChunking.Shared.Tests.fs" />
     <Compile Include="Queue.Types.Tests.fs" />
     <Compile Include="WorkItem.Types.Tests.fs" />
+    <Compile Include="Usage.Types.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

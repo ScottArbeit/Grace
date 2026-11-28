@@ -70,6 +70,7 @@ module Orleans =
                             | StateName.PromotionSet -> repositoryId ()
                             | StateName.PromotionQueue -> repositoryId ()
                             | StateName.RepositoryContentCounter -> firstGrainKeySegment ()
+                            | StateName.RepositoryStorageMeter -> firstGrainKeySegment ()
                             | StateName.ValidationSet -> repositoryId ()
                             | StateName.ValidationResult -> repositoryId ()
                             | StateName.Artifact -> repositoryId ()

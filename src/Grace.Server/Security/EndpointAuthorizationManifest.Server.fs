@@ -299,6 +299,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/setStatus" Authenticated
             endpoint "POST" "/repository/setVisibility" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/repository/undelete" Authenticated
+            endpoint "GET" "/usage/storage" (Authorized(OwnerAdmin, Owner))
             endpoint "POST" "/review/checkpoint" Authenticated
             endpoint "POST" "/review/candidate/attestations" Authenticated
             endpoint "POST" "/review/candidate/cancel" Authenticated

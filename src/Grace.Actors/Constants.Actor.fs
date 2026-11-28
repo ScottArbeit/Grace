@@ -117,6 +117,9 @@ module Constants =
         let RepositoryContentCounter = "RepositoryContentCounterActor"
 
         [<Literal>]
+        let RepositoryStorageMeter = "RepositoryStorageMeterActor"
+
+        [<Literal>]
         let ManifestContributionWorkflow = "ManifestContributionWorkflowActor"
 
         [<Literal>]
@@ -213,6 +216,9 @@ module Constants =
 
         [<Literal>]
         let RepositoryContentCounter = "RepoContentCounter"
+
+        [<Literal>]
+        let RepositoryStorageMeter = "RepoStorageMeter"
 
         [<Literal>]
         let ManifestContributionWorkflow = "ManifestContributionWorkflow"

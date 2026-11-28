@@ -335,7 +335,7 @@ type RepositoryLibraryActor
                         RepositoryContentCounter.primaryKey repositoryId manifest.StoragePoolId manifest.ManifestAddress
                     )
 
-                match! counter.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress metadata with
+                match! counter.AddTrackedReference counterOperationId repositoryId manifest.StoragePoolId manifest.ManifestAddress manifest.Size metadata with
                 | Error error -> return invalidOp $"Library manifest counter failed: {error.Error}"
                 | Ok result ->
                     let transition =

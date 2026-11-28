@@ -1917,7 +1917,7 @@ module Services =
         | :? JsonException as error -> raise (InvalidDataException("DirectoryVersion source could not be decoded.", error))
 
     /// Enumerates only the configured repository partition and DirectoryVersion grain without provisioning storage.
-    let internal readDirectoryVersionSizeFromContainer (container: Container) validateManifest scope correlationId cancellationToken =
+    let internal readDirectoryVersionSizeFromContainer (container: Container) validateManifest (scope: UsageScope) correlationId cancellationToken =
         task {
             let query =
                 QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey")

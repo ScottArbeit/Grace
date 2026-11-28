@@ -220,7 +220,8 @@ module Reference =
                 RepositoryId = repositoryId
                 ReferenceId = referenceId
                 Manifest = manifest
-                CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.StoragePoolId, manifest.ManifestAddress)
+                CounterCommand =
+                    RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.StoragePoolId, manifest.ManifestAddress, manifest.Size)
                 WorkflowRanges = workflowRangesForManifest manifest
             })
 

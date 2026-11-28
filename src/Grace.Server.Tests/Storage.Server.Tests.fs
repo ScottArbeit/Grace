@@ -234,7 +234,7 @@ module internal LibraryActorSnapshots =
 
             let actor = client.GetGrain<IRepositoryContentCounterActor>(RepositoryContentCounter.primaryKey repositoryId storagePoolId manifestAddress)
 
-            let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
+            let command = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress, 1L)
 
             let! result =
                 actor.Handle command metadata

@@ -33,7 +33,7 @@ type RepositoryContentCounterActorTests() =
             Properties = Dictionary<string, string>()
         }
 
-    let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
+    let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress, 2765L)
 
     let remove operationId = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, storagePoolId, manifestAddress)
 
@@ -223,7 +223,7 @@ type RepositoryContentCounterActorTests() =
                 Assert.Fail($"Expected add to succeed, got {error.Error}.")
                 RepositoryContentCounterDto.Default, []
 
-        let mismatchedCommand = RepositoryContentCounterCommand.AddReference("op-add-1", repositoryId, storagePoolId, otherManifestAddress)
+        let mismatchedCommand = RepositoryContentCounterCommand.AddReference("op-add-1", repositoryId, storagePoolId, otherManifestAddress, 2765L)
         let replay = RepositoryContentCounterActor.decideCommand firstEvents afterFirst mismatchedCommand (metadata "corr-add-reused")
 
         match replay with
@@ -256,7 +256,7 @@ type RepositoryContentCounterActorTests() =
 
         Assert.That(archiveKey, Is.Not.EqualTo(defaultKey))
 
-        let archiveAdd = RepositoryContentCounterCommand.AddReference("op-add-archive", repositoryId, otherStoragePoolId, manifestAddress)
+        let archiveAdd = RepositoryContentCounterCommand.AddReference("op-add-archive", repositoryId, otherStoragePoolId, manifestAddress, 2765L)
 
         let result =
             RepositoryContentCounterActor.decideCommandForKey (Some defaultKey) [] RepositoryContentCounterDto.Default archiveAdd (metadata "corr-cross-pool")

@@ -852,8 +852,15 @@ module Interfaces =
             repositoryId: RepositoryId ->
             storagePoolId: StoragePoolId ->
             manifestAddress: ManifestAddress ->
+            logicalSize: int64 ->
             eventMetadata: EventMetadata ->
                 Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Returns the storage meter changes this counter committed that the repository's meter has not released.
+        abstract member GetPendingMeterChanges: correlationId: CorrelationId -> Task<RepositoryStorageMeterChange list>
+
+        /// Durably removes meter changes the repository's storage meter has applied. Unknown revisions are ignored.
+        abstract member ReleaseMeterChanges: revisions: int64 list -> correlationId: CorrelationId -> Task
 
         /// Releases the tracked add identity after its dependent workflow and receipt are durable.
         abstract member CompleteTrackedReference:
@@ -862,6 +869,20 @@ module Interfaces =
         /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
         abstract member ReconcilePositiveCount:
             command: RepositoryContentCounterRepairCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+    /// Defines the operations for a repository's storage meter, keyed by the repository ID in "N" format.
+    /// The meter reads zero crossings from RepositoryContentCounter actors; it never decides what Grace keeps.
+    [<Interface>]
+    type IRepositoryStorageMeterActor =
+        inherit IGrainWithStringKey
+
+        /// Hints that a counter committed a meter change. One-way, so a counter never waits on the meter.
+        [<Orleans.Concurrency.OneWay>]
+        abstract member NotifyPendingChange: storagePoolId: StoragePoolId -> manifestAddress: ManifestAddress -> Task
+
+        /// Applies every committed change it can reach, then returns the retained logical bytes of manifest-backed files.
+        /// Fails when a counter with pending changes could not be read, so a read never undercounts silently.
+        abstract member ReadRetainedManifestBytes: correlationId: CorrelationId -> Task<int64>
 
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]

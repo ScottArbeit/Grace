@@ -44,6 +44,17 @@ module RepositoryContentCounter =
             Revision: int64
         }
 
+    /// One storage meter change committed with a zero crossing that the repository's storage meter has not released yet.
+    /// The revision is the counter revision of the crossing, so (StoragePoolId, ManifestAddress, Revision) names it once.
+    [<GenerateSerializer>]
+    type RepositoryStorageMeterChange =
+        {
+            [<Id(0u)>]
+            Revision: int64
+            [<Id(1u)>]
+            LogicalBytesDelta: int64
+        }
+
     /// Represents repository content counter command.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterCommand =
@@ -51,7 +62,8 @@ module RepositoryContentCounter =
             operationId: RepositoryContentCounterOperationId *
             repositoryId: RepositoryId *
             storagePoolId: StoragePoolId *
-            manifestAddress: ManifestAddress
+            manifestAddress: ManifestAddress *
+            logicalSize: int64
         | RemoveReference of
             operationId: RepositoryContentCounterOperationId *
             repositoryId: RepositoryId *
@@ -86,7 +98,8 @@ module RepositoryContentCounter =
             operationId: RepositoryContentCounterOperationId *
             repositoryId: RepositoryId *
             storagePoolId: StoragePoolId *
-            manifestAddress: ManifestAddress
+            manifestAddress: ManifestAddress *
+            logicalSize: int64
         | ReferenceRemoved of operationId: RepositoryContentCounterOperationId
 
         /// Returns known nested union types for serializers.
@@ -140,6 +153,12 @@ module RepositoryContentCounter =
             /// Retains one exact add until its dependent workflow and Library receipt are durable.
             [<Id(7u)>]
             PendingTrackedAdd: RepositoryContentCounterCompletedChange option
+            /// The manifest's logical size, recorded by the first add so every release subtracts the same number.
+            [<Id(8u)>]
+            LogicalSize: int64
+            /// Zero crossings committed with the count that the repository's storage meter has not released yet.
+            [<Id(9u)>]
+            PendingMeterChanges: RepositoryStorageMeterChange list
         }
 
         /// Preserves the established read name while the durable snapshot stores the contract's `Count` field.
@@ -168,12 +187,32 @@ module RepositoryContentCounter =
                 Revision = 0L
                 LastCompletedChange = None
                 PendingTrackedAdd = None
+                LogicalSize = 0L
+                PendingMeterChanges = []
             }
+
+        /// Appends the storage meter change for a count that crossed zero at `revision`, using the recorded size.
+        static member WithMeterChangeForCrossing previousCount nextCount revision (counter: RepositoryContentCounterDto) =
+            let delta =
+                if previousCount = 0L && nextCount > 0L then counter.LogicalSize
+                elif previousCount > 0L && nextCount = 0L then -counter.LogicalSize
+                else 0L
+
+            if delta = 0L then
+                counter
+            else
+                { counter with
+                    PendingMeterChanges =
+                        counter.PendingMeterChanges
+                        @ [
+                            { Revision = revision; LogicalBytesDelta = delta }
+                        ]
+                }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto counterEvent current =
             match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, storagePoolId, manifestAddress) ->
+            | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, storagePoolId, manifestAddress, logicalSize) ->
                 let nextCount = current.Count + 1L
 
                 { current with
@@ -194,6 +233,7 @@ module RepositoryContentCounter =
                             current.ManifestAddress
                     Count = nextCount
                     Revision = current.Revision + 1L
+                    LogicalSize = if current.LogicalSize = 0L then logicalSize else current.LogicalSize
                     LastCompletedChange =
                         Some
                             {
@@ -204,6 +244,7 @@ module RepositoryContentCounter =
                                 Revision = current.Revision + 1L
                             }
                 }
+                |> RepositoryContentCounterDto.WithMeterChangeForCrossing current.Count nextCount (current.Revision + 1L)
             | RepositoryContentCounterEventType.ReferenceRemoved operationId ->
                 let nextReferenceCount = max 0L (current.Count - 1L)
 
@@ -220,6 +261,7 @@ module RepositoryContentCounter =
                                 Revision = current.Revision + 1L
                             }
                 }
+                |> RepositoryContentCounterDto.WithMeterChangeForCrossing current.Count nextReferenceCount (current.Revision + 1L)
 
     /// Represents repository content counter decision.
     [<GenerateSerializer>]

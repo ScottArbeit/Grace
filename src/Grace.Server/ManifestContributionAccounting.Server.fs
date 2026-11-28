@@ -451,7 +451,8 @@ module ManifestContributionAccounting =
                     directoryVersionManifestOperationId relationship,
                     relationship.RepositoryId,
                     relationship.StoragePoolId,
-                    relationship.ManifestAddress
+                    relationship.ManifestAddress,
+                    manifest.Size
                 )
 
             match! counterActor.Handle counterCommand metadata with
