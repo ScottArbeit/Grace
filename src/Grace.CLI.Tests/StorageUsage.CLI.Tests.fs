@@ -67,6 +67,6 @@ type StorageUsageCliTests() =
 
             for parameters in [ named; missing ] do
                 match! Grace.SDK.Usage.GetStorage(parameters) with
-                | Error error -> Assert.That(error.Error, Does.Contain "explicit owner, organization, and repository GUIDs")
+                | Error error -> Assert.That(error.Error, Does.Contain "need explicit owner, organization, and repository GUIDs")
                 | Ok _ -> Assert.Fail "Expected the SDK to reject the request locally."
         }

@@ -22,7 +22,21 @@ type Usage() =
                 | _ -> false
 
             if isNull (box parameters) then
-                return Error(GraceError.Create "Explicit owner, organization, and repository IDs are required." "")
+                return Error(GraceError.Create "Usage reads need explicit owner, organization, and repository GUIDs." "")
+            elif
+                [
+                    parameters.OwnerName
+                    parameters.OrganizationName
+                    parameters.RepositoryName
+                ]
+                |> List.exists (String.IsNullOrEmpty >> not)
+            then
+                return
+                    Error(
+                        GraceError.Create
+                            "Usage reads need explicit owner, organization, and repository GUIDs; names are not accepted."
+                            parameters.CorrelationId
+                    )
             elif
                 not
                     (
@@ -30,17 +44,11 @@ type Usage() =
                         && validId parameters.OrganizationId
                         && validId parameters.RepositoryId
                     )
-                || [
-                    parameters.OwnerName
-                    parameters.OrganizationName
-                    parameters.RepositoryName
-                   ]
-                   |> List.exists (String.IsNullOrEmpty >> not)
             then
                 return
                     Error(
                         GraceError.Create
-                            "Usage reads take explicit owner, organization, and repository GUIDs, without name selectors."
+                            "Usage reads need explicit owner, organization, and repository GUIDs. Pass --owner-id, --organization-id, and --repository-id, or run inside a connected repository."
                             parameters.CorrelationId
                     )
             else
