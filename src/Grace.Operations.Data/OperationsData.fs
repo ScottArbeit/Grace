@@ -5,12 +5,6 @@ open System
 open System.Data
 open System.Threading
 
-/// Identifies the Grace operations data assembly until the daily usage ledger adds its persistence contracts.
-[<AbstractClass; Sealed>]
-type internal OperationsDataAssembly =
-    class
-    end
-
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
 

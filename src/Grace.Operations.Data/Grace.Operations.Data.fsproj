@@ -16,10 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.2" />
     <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="7.1.2" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
