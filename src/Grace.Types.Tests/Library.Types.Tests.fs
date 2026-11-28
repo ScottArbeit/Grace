@@ -146,6 +146,20 @@ type LibraryTypesTests() =
         let invalidRename = change ChangeKind.Rename ItemKind.File
         invalidRename.ItemId <- Nullable(Guid.NewGuid())
 
+        // A name that is present but not one portable segment is refused here, with the portable-name reason.
+        let namedCreate name =
+            let create = change ChangeKind.CreateDirectory ItemKind.Directory
+            create.DestinationParent <- Some parent
+            create.DestinationName <- name
+            create
+
+        let renameTo name =
+            let rename = change ChangeKind.Rename ItemKind.File
+            rename.ItemId <- Nullable(Guid.NewGuid())
+            rename.NamespacePrecondition <- Some { ItemId = rename.ItemId.Value; ExpectedNamespaceVersion = Guid.NewGuid() }
+            rename.DestinationName <- name
+            rename
+
         Assert.Multiple(
             Action (fun () ->
                 assertOk () (validateChangeShape createFile)
@@ -153,7 +167,15 @@ type LibraryTypesTests() =
                 Assert.That(isError (validateChangeShape createFileWithoutName), Is.True)
                 Assert.That(isError (validateChangeShape createDirectoryWithoutParent), Is.True)
                 assertOk () (validateChangeShape deleteDirectory)
-                Assert.That(isError (validateChangeShape invalidRename), Is.True))
+                Assert.That(isError (validateChangeShape invalidRename), Is.True)
+
+                for name in [ ""; "CON"; "a/b"; "trailing." ] do
+                    Assert.That(isError (validateChangeShape (namedCreate name)), Is.True, $"create {name}")
+                    Assert.That(isError (validateChangeShape (renameTo name)), Is.True, $"rename {name}")
+
+                Assert.That(validateChangeShape (namedCreate ""), Is.EqualTo(Result<unit, string>.Error "A non-empty repository-relative path is required."))
+
+                assertOk () (validateChangeShape (renameTo "renamed.txt")))
         )
 
     /// Confirms hashes, tokens, and paging obey the public wire bounds.

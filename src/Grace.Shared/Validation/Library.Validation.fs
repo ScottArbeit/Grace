@@ -162,25 +162,27 @@ module Library =
         let suffix = if attempt = 0 then baseSuffix else $"{baseSuffix}.{attempt}"
         let originalExtension = Path.GetExtension name
 
-        let extension =
-            if Encoding.UTF8.GetByteCount(suffix + originalExtension) < MaximumSegmentBytes then
-                originalExtension
-            else
-                String.Empty
+        let withStem stem extension =
+            let maximumStemBytes =
+                MaximumSegmentBytes
+                - Encoding.UTF8.GetByteCount(suffix + extension)
 
-        let stem =
-            if String.IsNullOrEmpty extension then
-                name
-            else
-                Path.GetFileNameWithoutExtension name
+            utf8Prefix maximumStemBytes stem
+            + suffix
+            + extension
 
-        let maximumStemBytes =
-            MaximumSegmentBytes
-            - Encoding.UTF8.GetByteCount(suffix + extension)
+        // Without the extension, the whole name is the stem. That form starts with the original name, or with more of it
+        // than any device name holds, so it is portable whenever the original name is.
+        let wholeNameStem = withStem name String.Empty
 
-        utf8Prefix maximumStemBytes stem
-        + suffix
-        + extension
+        if Encoding.UTF8.GetByteCount(suffix + originalExtension) < MaximumSegmentBytes then
+            // A long extension can leave room for only a few bytes of the stem, and those can spell a Windows device
+            // name: "Console." and a 232-byte extension would become "Con.conflict-…". Drop the extension instead.
+            let keptExtension = withStem (Path.GetFileNameWithoutExtension name) originalExtension
+
+            if isDeviceName keptExtension then wholeNameStem else keptExtension
+        else
+            wholeNameStem
 
     /// Normalizes and sorts one complete root set while enforcing uniqueness, overlap, and count bounds.
     let normalizeLibraries (libraries: string array) =
@@ -340,10 +342,15 @@ module Library =
                 && not hasUpload
             | _ -> false
 
-        if valid then
-            Ok()
-        else
+        if not valid then
             Error "The change fields do not match the selected change and item kinds."
+        elif hasName then
+            // A create or rename names one portable segment. Checking it here answers a bad name with a 400 instead of
+            // letting the actor throw on it.
+            normalizeName parameters.DestinationName
+            |> Result.map ignore
+        else
+            Ok()
 
     /// Converts one valid public parameter object into the closed actor command union.
     let toChangeCommand repositoryId (parameters: SubmitLibraryChangeParameters) =

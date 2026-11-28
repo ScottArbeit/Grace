@@ -1091,7 +1091,10 @@ type RepositoryLibraryActor
                                                     }
 
                                             // A free name over the record limit is refused before the upload is resolved,
-                                            // so a refused create never writes a content location.
+                                            // as it was before #1127. An occupied name can't be: whether the create merges
+                                            // depends on its content, so a conflict copy refused after this can leave a
+                                            // content location no change names, as a refused stale edit can. A later change
+                                            // with the same bytes reuses it, and every other read starts from an accepted item.
                                             let freeNameAtCapacity =
                                                 occupant.IsNone
                                                 && LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true (not recorded)

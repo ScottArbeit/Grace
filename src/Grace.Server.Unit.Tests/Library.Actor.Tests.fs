@@ -555,6 +555,25 @@ type LibraryActorTests() =
                 Assert.That(first.Contains("\uFFFD", StringComparison.Ordinal), Is.False))
         )
 
+    /// A long extension leaves room for only a few bytes of the stem. When those spell a Windows device name, as
+    /// "Console" cut to "Con" or "COM10" cut to "COM1" would, the conflict name drops the extension, so it stays a name
+    /// Grace accepts.
+    [<TestCase("Console", 232)>]
+    [<TestCase("COM10", 231)>]
+    member _.ConflictNameNeverCutsTheStemToADeviceName(stem: string, extensionLength: int) =
+        let original = stem + "." + String.replicate extensionLength "a"
+        let first = Grace.Shared.Validation.Library.conflictName original operationId 0
+        let second = Grace.Shared.Validation.Library.conflictName original operationId 1
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(Library.normalizeName original, Is.EqualTo(Ok original: Result<string, string>))
+                Assert.That(Library.normalizeName first, Is.EqualTo(Ok first: Result<string, string>))
+                Assert.That(Library.normalizeName second, Is.EqualTo(Ok second: Result<string, string>))
+                Assert.That(first, Does.StartWith(stem + ".aaa"))
+                Assert.That(first, Does.EndWith(".conflict-6aa16ee48")))
+        )
+
     /// Directory moves reject a descendant path that exceeds the repository-relative UTF-8 limit.
     [<Test>]
     member _.MovedDescendantsMustStayWithinOwnedPortablePaths() =
@@ -1120,6 +1139,31 @@ type LibraryActorTests() =
 
             let! result = actor.Submit (createDirectory (Guid.NewGuid()) name) "user:test" authorization "corr-conflict-long"
             Assert.That((receiptOf result).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
+        }
+
+    /// A create that meets a name whose conflict copy would cut the stem to a device name still keeps both. Before
+    /// conflictName dropped the extension here, the server threw on its own candidate on every retry.
+    [<Test>]
+    member _.ConflictCopyOfACreateNeverTakesADeviceName() =
+        task {
+            let parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+            let catalog = { longRootCatalog with Libraries = [| "Library" |] }
+            let name = "Console." + String.replicate 232 "a"
+            let file = liveItem (Guid.NewGuid()) ItemKind.File parent name (Guid.NewGuid())
+            let actor, _, provider = memoryActor (controlWith catalog 1L 1 1) (fun storage -> seedOccupant storage file)
+            use _provider = provider
+            let operation = Guid.NewGuid()
+            let create = LibraryChangeCommand.CreateDirectory(operation, $"create-device-{operation:N}", parent, name)
+
+            let! result = actor.Submit create "user:test" authorization "corr-conflict-device"
+            let receipt = receiptOf result
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.ConflictCopy))
+
+                    Assert.That(receipt.Change.Value.Item.Namespace.Value.Name, Is.EqualTo(Grace.Shared.Validation.Library.conflictName name operation 0)))
+            )
         }
 
     /// Waiting for a committed item to become visible backs off on a fixed schedule, then gives up.
