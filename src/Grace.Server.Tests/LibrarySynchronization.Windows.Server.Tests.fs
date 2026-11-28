@@ -3659,8 +3659,9 @@ module LibrarySynchronizationWindowsServerTests =
                     [||]
         }
 
-    /// The composed (NFC) and decomposed spellings of 'café', written as escapes so an editor can't normalize either.
-    let private composedCafe, decomposedCafe = "café", "café"
+    /// The composed (NFC) and decomposed spellings of 'caf' + U+00E9, built from code points so a formatter or an editor
+    /// that normalizes text can't make them equal.
+    let private composedCafe, decomposedCafe = "caf" + string (char 0x00E9), "cafe" + string (char 0x0301)
 
     /// #1133: B creates a folder or a file whose name is decomposed, as names from macOS often are. Every copy ends with
     /// it under the composed name the server stores, and nothing is left under the decomposed one.

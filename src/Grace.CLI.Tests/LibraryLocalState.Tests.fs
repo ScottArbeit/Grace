@@ -1997,9 +1997,9 @@ module LibraryLocalStateTests =
             )
         }
 
-    /// The composed (NFC) and decomposed spellings of the same accented name, written as escapes so neither is lost to
-    /// an editor that normalizes text.
-    let private composedCafe, decomposedCafe = "café", "café"
+    /// The composed (NFC) and decomposed spellings of the same accented name, built from code points so a formatter or an
+    /// editor that normalizes text can't make them equal.
+    let private composedCafe, decomposedCafe = "caf" + string (char 0x00E9), "cafe" + string (char 0x0301)
 
     /// Lists every entry name under a copy's Library folder, as written on disk.
     let private libraryNames (configuration: Grace.Shared.Client.Configuration.GraceConfiguration) =
@@ -2018,6 +2018,7 @@ module LibraryLocalStateTests =
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
 
+            Assert.That(String.Equals(composedCafe, decomposedCafe, StringComparison.Ordinal), Is.False)
             let! configuration, before, _ = renameCopy ()
             let library = Path.Combine(configuration.RootDirectory, "Library")
 
@@ -2107,3 +2108,24 @@ module LibraryLocalStateTests =
                 Is.False
             )
         }
+
+    /// #1133: a message names each spelling so the two read differently, with every combining character written as a
+    /// code point, including one outside the Basic Multilingual Plane.
+    [<Test>]
+    let ``spellOut writes combining characters as code points`` () =
+        Assert.That(LibrarySynchronization.spellOut composedCafe, Is.EqualTo("'caf" + string (char 0x00E9) + "'"))
+        Assert.That(LibrarySynchronization.spellOut (decomposedCafe + ".txt"), Is.EqualTo("'cafe' + U+0301 + '.txt'"))
+        Assert.That(LibrarySynchronization.spellOut ("x" + Text.Rune(0x1D165).ToString()), Is.EqualTo("'x' + U+1D165"))
+
+        Assert.That(
+            LibrarySynchronization.spellOut (
+                String(
+                    [|
+                        char 0x1112
+                        char 0x1161
+                        char 0x11AB
+                    |]
+                )
+            ),
+            Is.EqualTo("U+1112 + U+1161 + U+11AB")
+        )

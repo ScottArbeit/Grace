@@ -700,19 +700,20 @@ module internal LibrarySynchronization =
         try
             let mutable inQuote = false
 
-            for character in name do
+            // Walk by code point, so a mark outside the Basic Multilingual Plane is spelled out too.
+            for rune in name.EnumerateRunes() do
                 let combining =
-                    match Char.GetUnicodeCategory character with
+                    match Text.Rune.GetUnicodeCategory rune with
                     | Globalization.UnicodeCategory.NonSpacingMark
                     | Globalization.UnicodeCategory.SpacingCombiningMark
                     | Globalization.UnicodeCategory.EnclosingMark -> true
                     // Decomposed Hangul is a run of conjoining jamo.
-                    | _ -> int character >= 0x1100 && int character <= 0x11FF
+                    | _ -> rune.Value >= 0x1100 && rune.Value <= 0x11FF
 
                 if combining then
                     if inQuote then spelled.Append("'") |> ignore
                     if spelled.Length > 0 then spelled.Append(" + ") |> ignore
-                    spelled.Append($"U+{int character:X4}") |> ignore
+                    spelled.Append($"U+{rune.Value:X4}") |> ignore
                     inQuote <- false
                 else
                     if not inQuote then
@@ -720,7 +721,7 @@ module internal LibrarySynchronization =
                         spelled.Append("'") |> ignore
                         inQuote <- true
 
-                    spelled.Append(character) |> ignore
+                    spelled.Append(rune.ToString()) |> ignore
 
             if inQuote then spelled.Append("'") |> ignore
             spelled.ToString()
@@ -781,7 +782,7 @@ module internal LibrarySynchronization =
 
                             let final =
                                 match composedSpelling name with
-                                | None -> entry
+                                | None -> Some entry
                                 | Some composed ->
                                     let sibling =
                                         entries
@@ -796,7 +797,7 @@ module internal LibrarySynchronization =
                                     | Some sibling ->
                                         raise (
                                             LibrarySyncFailureException(
-                                                $"'{relative directory}' holds two spellings of one name: {spellOut sibling.Name} and {spellOut name}. They look the same, but Windows keeps them apart, and Grace syncs only the composed spelling.",
+                                                $"'{relative directory}' holds two spellings of one name: {spellOut sibling.Name} and {spellOut name}. Windows keeps them apart, but Grace treats them as one name, so it can't tell which one you mean.",
                                                 Some(relative entry),
                                                 None,
                                                 twoSpellingsNextStep
@@ -813,19 +814,30 @@ module internal LibrarySynchronization =
                                                 composeBlockedNextStep
                                             )
 
-                                        try
-                                            if attributes.HasFlag(FileAttributes.Directory) then
-                                                Directory.Move(entry, target)
-                                            else
-                                                File.Move(entry, target)
-                                        with
-                                        | :? IOException as ex -> raise (blocked ex)
-                                        | :? UnauthorizedAccessException as ex -> raise (blocked ex)
+                                        let moved =
+                                            try
+                                                if attributes.HasFlag(FileAttributes.Directory) then
+                                                    Directory.Move(entry, target)
+                                                else
+                                                    File.Move(entry, target)
 
-                                        afterRename target
-                                        target
+                                                true
+                                            with
+                                            // Removed since the listing, so there's nothing left to rename.
+                                            | :? FileNotFoundException
+                                            | :? DirectoryNotFoundException -> false
+                                            | :? IOException as ex -> raise (blocked ex)
+                                            | :? UnauthorizedAccessException as ex -> raise (blocked ex)
 
-                            if attributes.HasFlag(FileAttributes.Directory) then directories.Push(final)
+                                        if moved then
+                                            afterRename target
+                                            Some target
+                                        else
+                                            None
+
+                            match final with
+                            | Some final when attributes.HasFlag(FileAttributes.Directory) -> directories.Push(final)
+                            | _ -> ()
 
     /// With the root lease held, captures observable saved files before incoming metadata can replace their base; paused copies are skipped.
     /// Zero-byte input is excluded before creating pending operations or preparing uploads. Empty files remain present
