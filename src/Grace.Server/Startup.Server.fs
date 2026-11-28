@@ -1763,7 +1763,6 @@ module Application =
                                route "/content/read" (composeHandlers requireLibraryRead Library.PrepareContentRead)
                                |> addMetadata typeof<PrepareLibraryContentReadParameters>
 
-
                                route "/status/get" (composeHandlers requireLibraryRead Library.GetStatus)
                                |> addMetadata typeof<GetLibraryStatusParameters> ]
 
