@@ -707,8 +707,11 @@ module internal LibrarySynchronization =
                     | Globalization.UnicodeCategory.NonSpacingMark
                     | Globalization.UnicodeCategory.SpacingCombiningMark
                     | Globalization.UnicodeCategory.EnclosingMark -> true
-                    // Decomposed Hangul is a run of conjoining jamo.
-                    | _ -> rune.Value >= 0x1100 && rune.Value <= 0x11FF
+                    // Decomposed Hangul is a run of conjoining jamo, from the Hangul Jamo block and its two extensions.
+                    | _ ->
+                        (rune.Value >= 0x1100 && rune.Value <= 0x11FF)
+                        || (rune.Value >= 0xA960 && rune.Value <= 0xA97F)
+                        || (rune.Value >= 0xD7B0 && rune.Value <= 0xD7FF)
 
                 if combining then
                     if inQuote then spelled.Append("'") |> ignore
@@ -784,6 +787,14 @@ module internal LibrarySynchronization =
                                 match composedSpelling name with
                                 | None -> Some entry
                                 | Some composed ->
+                                    let twoSpellings siblingName =
+                                        LibrarySyncFailureException(
+                                            $"'{relative directory}' holds two spellings of one name: {spellOut siblingName} and {spellOut name}. Windows keeps them apart, but Grace treats them as one name, so it can't tell which one you mean.",
+                                            Some(relative entry),
+                                            None,
+                                            twoSpellingsNextStep
+                                        )
+
                                     let sibling =
                                         entries
                                         |> Array.tryFind (fun other ->
@@ -794,15 +805,7 @@ module internal LibrarySynchronization =
                                                 composed)
 
                                     match sibling with
-                                    | Some sibling ->
-                                        raise (
-                                            LibrarySyncFailureException(
-                                                $"'{relative directory}' holds two spellings of one name: {spellOut sibling.Name} and {spellOut name}. Windows keeps them apart, but Grace treats them as one name, so it can't tell which one you mean.",
-                                                Some(relative entry),
-                                                None,
-                                                twoSpellingsNextStep
-                                            )
-                                        )
+                                    | Some sibling -> raise (twoSpellings sibling.Name)
                                     | None ->
                                         let target = Path.Combine(directory, composed)
 
@@ -826,6 +829,8 @@ module internal LibrarySynchronization =
                                             // Removed since the listing, so there's nothing left to rename.
                                             | :? FileNotFoundException
                                             | :? DirectoryNotFoundException -> false
+                                            // The composed name appeared since the listing.
+                                            | :? IOException when File.Exists(target) || Directory.Exists(target) -> raise (twoSpellings composed)
                                             | :? IOException as ex -> raise (blocked ex)
                                             | :? UnauthorizedAccessException as ex -> raise (blocked ex)
 

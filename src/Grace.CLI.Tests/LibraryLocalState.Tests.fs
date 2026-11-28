@@ -2129,3 +2129,72 @@ module LibraryLocalStateTests =
             ),
             Is.EqualTo("U+1112 + U+1161 + U+11AB")
         )
+
+    /// #1133: the folder changes while Grace composes names. An entry removed after the listing is skipped, because there's
+    /// nothing left to rename. A composed name that appears after the listing stops capture as two spellings of one
+    /// name, not as a file another program has open.
+    [<TestCase(false); TestCase(true)>]
+    let ``composing names copes with entries that change after the listing`` composedAppears =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, _, _ = renameCopy ()
+            let library = Path.Combine(configuration.RootDirectory, "Library")
+
+            let resume =
+                "re"
+                + string (char 0x0301)
+                + "sume"
+                + string (char 0x0301)
+
+            for name in [ decomposedCafe; resume ] do
+                File.WriteAllText(Path.Combine(library, name + ".txt"), name)
+
+            // After the first rename, change whichever decomposed file is still waiting.
+            let changeTheOther (renamed: string) =
+                for name in [ decomposedCafe; resume ] do
+                    let waiting = Path.Combine(library, name + ".txt")
+
+                    if
+                        File.Exists(waiting)
+                        && not (
+                            String.Equals(
+                                Path.GetFileName(renamed),
+                                name.Normalize(Text.NormalizationForm.FormC)
+                                + ".txt",
+                                StringComparison.Ordinal
+                            )
+                        )
+                    then
+                        if composedAppears then
+                            File.WriteAllText(
+                                Path.Combine(
+                                    library,
+                                    name.Normalize(Text.NormalizationForm.FormC)
+                                    + ".txt"
+                                ),
+                                "made meanwhile"
+                            )
+                        else
+                            File.Delete(waiting)
+
+            if composedAppears then
+                let failure =
+                    Assert.Throws<LibrarySynchronization.LibrarySyncFailureException>(
+                        Action(fun () -> LibrarySynchronization.composeNamesWith changeTheOther configuration)
+                    )
+
+                Assert.That(failure.NextStep, Is.EqualTo(LibrarySynchronization.twoSpellingsNextStep))
+                Assert.That(failure.Message, Does.Contain("two spellings of one name"))
+            else
+                LibrarySynchronization.composeNamesWith changeTheOther configuration
+                let names = libraryNames configuration
+                Assert.That(names, Has.Length.EqualTo(2), String.Join(", ", names))
+
+                Assert.That(
+                    names
+                    |> Array.forall (fun name -> name.IsNormalized(Text.NormalizationForm.FormC)),
+                    Is.True
+                )
+        }
