@@ -1996,3 +1996,114 @@ module LibraryLocalStateTests =
                 Is.True
             )
         }
+
+    /// The composed (NFC) and decomposed spellings of the same accented name, written as escapes so neither is lost to
+    /// an editor that normalizes text.
+    let private composedCafe, decomposedCafe = "café", "café"
+
+    /// Lists every entry name under a copy's Library folder, as written on disk.
+    let private libraryNames (configuration: Grace.Shared.Client.Configuration.GraceConfiguration) =
+        Directory.GetFileSystemEntries(Path.Combine(configuration.RootDirectory, "Library"), "*", SearchOption.AllDirectories)
+        |> Array.map (fun path ->
+            Path
+                .GetRelativePath(configuration.RootDirectory, path)
+                .Replace('\\', '/'))
+        |> Array.sort
+
+    /// #1133: a crash after Grace gives a decomposed name its composed spelling, but before capture records anything,
+    /// leaves a name the next capture reads like any other. Nothing durable ever names the decomposed spelling.
+    [<Test>]
+    let ``a decomposed name is captured under its composed spelling after a crash between rename and capture`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let library = Path.Combine(configuration.RootDirectory, "Library")
+
+            Directory.CreateDirectory(Path.Combine(library, decomposedCafe))
+            |> ignore
+
+            File.WriteAllText(Path.Combine(library, decomposedCafe + ".txt"), "saved with a decomposed name")
+            let retained = readOperations configuration.GraceStatusFile before.RepositoryId
+
+            throws<OperationCanceledException> (fun () -> LibrarySynchronization.composeNamesWith (fun _ -> raise (OperationCanceledException())) configuration)
+
+            Assert.That(readOperations configuration.GraceStatusFile before.RepositoryId, Is.EqualTo<PendingOperation>(retained))
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+
+            Assert.That(
+                libraryNames configuration,
+                Is.EqualTo<string array>(
+                    Array.sort [| "Library/item.bin"
+                                  $"Library/{composedCafe}"
+                                  $"Library/{composedCafe}.txt" |]
+                )
+            )
+
+            let captured =
+                readOperations configuration.GraceStatusFile before.RepositoryId
+                |> Array.filter (fun operation -> not operation.Terminal)
+                |> Array.map (fun operation -> operation.SourcePath, operation.Placement.Name)
+                |> Array.sort
+
+            Assert.That(
+                captured,
+                Is.EqualTo<(string * string) array>(
+                    Array.sort [| $"Library/{composedCafe}", composedCafe
+                                  $"Library/{composedCafe}.txt", composedCafe + ".txt" |]
+                )
+            )
+        }
+
+    /// #1133: an entry another program has open keeps its spelling, and capture stops with its path and a next step
+    /// instead of recording it under a name no other copy will show. Once it's closed, capture renames and records it.
+    [<TestCase(false); TestCase(true)>]
+    let ``a decomposed name another program has open stops capture until it is closed`` inFolder =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! configuration, before, _ = renameCopy ()
+            let library = Path.Combine(configuration.RootDirectory, "Library")
+
+            let entry, openPath =
+                if inFolder then
+                    let folder = Path.Combine(library, decomposedCafe)
+                    Directory.CreateDirectory(folder) |> ignore
+                    decomposedCafe, Path.Combine(folder, "cover.txt")
+                else
+                    decomposedCafe + ".txt", Path.Combine(library, decomposedCafe + ".txt")
+
+            File.WriteAllText(openPath, "open in an editor")
+            let retained = readOperations configuration.GraceStatusFile before.RepositoryId
+
+            // Editors commonly share read and write, but not delete, which a rename needs.
+            let held = new FileStream(openPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite)
+
+            try
+                let failure =
+                    Assert.Throws<LibrarySynchronization.LibrarySyncFailureException>(
+                        Action (fun () ->
+                            LibrarySynchronization.captureSaved configuration
+                            |> ignore)
+                    )
+
+                Assert.That(failure.Path, Is.EqualTo(Some $"Library/{entry}"))
+                Assert.That(failure.Message, Does.Contain("'cafe' + U+0301"))
+                Assert.That(failure.NextStep, Is.EqualTo(LibrarySynchronization.composeBlockedNextStep))
+                Assert.That(File.Exists(openPath), Is.True)
+                Assert.That(readOperations configuration.GraceStatusFile before.RepositoryId, Is.EqualTo<PendingOperation>(retained))
+            finally
+                held.Dispose()
+
+            Assert.That(LibrarySynchronization.captureSaved configuration, Is.True)
+            let composedEntry = entry.Normalize(Text.NormalizationForm.FormC)
+            Assert.That(libraryNames configuration, Does.Contain($"Library/{composedEntry}"))
+
+            Assert.That(
+                libraryNames configuration
+                |> Array.exists (fun name -> name.Contains(decomposedCafe, StringComparison.Ordinal)),
+                Is.False
+            )
+        }

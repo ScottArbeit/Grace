@@ -692,11 +692,146 @@ module internal LibrarySynchronization =
 
         { OperationId = operation.OperationId; SourcePath = operation.SourcePath; TargetPath = operation.TargetPath; Outcome = outcome }
 
+    /// Quotes a name for a message with its combining characters written as code points ('cafe' + U+0301), so two
+    /// spellings that look the same read differently.
+    let internal spellOut (name: string) =
+        let spelled = stringBuilderPool.Get()
+
+        try
+            let mutable inQuote = false
+
+            for character in name do
+                let combining =
+                    match Char.GetUnicodeCategory character with
+                    | Globalization.UnicodeCategory.NonSpacingMark
+                    | Globalization.UnicodeCategory.SpacingCombiningMark
+                    | Globalization.UnicodeCategory.EnclosingMark -> true
+                    // Decomposed Hangul is a run of conjoining jamo.
+                    | _ -> character >= 'ᄀ' && character <= 'ᇿ'
+
+                if combining then
+                    if inQuote then spelled.Append("'") |> ignore
+                    if spelled.Length > 0 then spelled.Append(" + ") |> ignore
+                    spelled.Append($"U+{int character:X4}") |> ignore
+                    inQuote <- false
+                else
+                    if not inQuote then
+                        if spelled.Length > 0 then spelled.Append(" + ") |> ignore
+                        spelled.Append("'") |> ignore
+                        inQuote <- true
+
+                    spelled.Append(character) |> ignore
+
+            if inQuote then spelled.Append("'") |> ignore
+            spelled.ToString()
+        finally
+            stringBuilderPool.Return(spelled)
+
+    /// Returns a name's composed (NFC) spelling when it differs from the name, or None when the name is already composed
+    /// or holds text that has no composed form.
+    let private composedSpelling (name: string) =
+        try
+            if name.IsNormalized(Text.NormalizationForm.FormC) then
+                None
+            else
+                Some(name.Normalize(Text.NormalizationForm.FormC))
+        with
+        | :? ArgumentException -> None
+
+    /// Next step when a folder holds two spellings of one name, so Grace can't tell which one the person means.
+    let internal twoSpellingsNextStep = "Rename or remove one of them. Library sync waits until then and changes neither. Version-control work isn't affected."
+
+    /// Next step when Grace can't give an entry its composed spelling, usually because another program has it open.
+    let internal composeBlockedNextStep =
+        "Close any program that has it open. Grace Watch retries automatically; run 'grace library sync run' to retry now. Version-control work isn't affected."
+
+    /// #1133: Renames every entry under the participating Library roots whose name isn't composed (NFC) to its composed
+    /// spelling, which looks the same and is what the server stores and every other copy shows. Windows treats
+    /// 'cafe' + U+0301 and 'café' as different names, so without this a decomposed entry never matches its item and the
+    /// files inside it never sync. Grace records only composed paths, so a rename never leaves a pending operation's path
+    /// stale, and a crash after any rename leaves names the next capture reads like any other. Stops, renaming nothing
+    /// more, when the folder already holds another spelling of the composed name, or when the entry can't be renamed.
+    /// Reparse points are left for capture to refuse. `afterRename` runs after each rename, for tests.
+    let internal composeNamesWith afterRename (configuration: GraceConfiguration) =
+        let current = state configuration
+
+        let relative (path: string) =
+            Path
+                .GetRelativePath(configuration.RootDirectory, path)
+                .Replace('\\', '/')
+
+        if not (current.Paused || current.Baseline.IsSome) then
+            for libraryRoot in current.Catalog.Libraries do
+                let directories = Collections.Generic.Stack<string>()
+                let root = fullPath configuration libraryRoot
+
+                if Directory.Exists(root) then directories.Push(root)
+
+                while directories.Count > 0 do
+                    let directory = directories.Pop()
+                    let entries = Directory.GetFileSystemEntries(directory)
+
+                    for entry in entries do
+                        let attributes = File.GetAttributes(entry)
+
+                        if not (attributes.HasFlag(FileAttributes.ReparsePoint)) then
+                            let name = Path.GetFileName(entry)
+
+                            let final =
+                                match composedSpelling name with
+                                | None -> entry
+                                | Some composed ->
+                                    let sibling =
+                                        entries
+                                        |> Array.tryFind (fun other ->
+                                            other <> entry
+                                            && pathsEqual
+                                                (composedSpelling (Path.GetFileName(other))
+                                                 |> Option.defaultValue (Path.GetFileName(other)))
+                                                composed)
+
+                                    match sibling with
+                                    | Some sibling ->
+                                        raise (
+                                            LibrarySyncFailureException(
+                                                $"'{relative directory}' holds two spellings of one name: {spellOut (Path.GetFileName(sibling))} and {spellOut name}. They look the same, but Windows keeps them apart, and Grace syncs only the composed spelling.",
+                                                Some(relative entry),
+                                                None,
+                                                twoSpellingsNextStep
+                                            )
+                                        )
+                                    | None ->
+                                        let target = Path.Combine(directory, composed)
+
+                                        let blocked (ex: exn) =
+                                            LibrarySyncFailureException(
+                                                $"Grace couldn't rename {spellOut name} in '{relative directory}' to its composed spelling {spellOut composed}: {ex.Message}",
+                                                Some(relative entry),
+                                                None,
+                                                composeBlockedNextStep
+                                            )
+
+                                        try
+                                            if attributes.HasFlag(FileAttributes.Directory) then
+                                                Directory.Move(entry, target)
+                                            else
+                                                File.Move(entry, target)
+                                        with
+                                        | :? IOException as ex -> raise (blocked ex)
+                                        | :? UnauthorizedAccessException as ex -> raise (blocked ex)
+
+                                        afterRename target
+                                        target
+
+                            if attributes.HasFlag(FileAttributes.Directory) then directories.Push(final)
+
     /// With the root lease held, captures observable saved files before incoming metadata can replace their base; paused copies are skipped.
     /// Zero-byte input is excluded before creating pending operations or preparing uploads. Empty files remain present
     /// and protected; already-captured positive sources and exact submitted requests are retained. Preserve
     /// `ItemTombstoned` rejection and saved input after deletion.
     let internal captureSavedWith afterInsert (configuration: GraceConfiguration) =
+        // Capture reads names as the server stores them, so give every decomposed name its composed spelling first.
+        composeNamesWith ignore configuration
         let current = state configuration
         let items = readItems configuration.GraceStatusFile configuration.RepositoryId
         let mutable operations = readOperations configuration.GraceStatusFile configuration.RepositoryId
