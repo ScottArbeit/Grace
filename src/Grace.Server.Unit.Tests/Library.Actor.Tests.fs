@@ -560,6 +560,7 @@ type LibraryActorTests() =
     /// Grace accepts.
     [<TestCase("Console", 232)>]
     [<TestCase("COM10", 231)>]
+    [<TestCase("COM¹puter", 230)>]
     member _.ConflictNameNeverCutsTheStemToADeviceName(stem: string, extensionLength: int) =
         let original = stem + "." + String.replicate extensionLength "a"
         let first = Grace.Shared.Validation.Library.conflictName original operationId 0

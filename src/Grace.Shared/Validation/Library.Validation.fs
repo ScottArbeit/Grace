@@ -39,13 +39,14 @@ module Library =
               '?'
               '*' ]
 
-    /// Returns true when a segment names a portable Windows device name.
+    /// Returns true when a segment names a portable Windows device name. Windows counts the superscript digits ¹, ² and ³
+    /// as digits in COM and LPT names, so COM¹.txt is as reserved as COM1.txt.
     let private isDeviceName (segment: string) =
         let stem = segment.Split('.')[0]
 
         Regex.IsMatch(
             stem,
-            "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$",
+            "^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$",
             RegexOptions.IgnoreCase
             ||| RegexOptions.CultureInvariant
         )
@@ -342,8 +343,19 @@ module Library =
                 && not hasUpload
             | _ -> false
 
+        // A root parent names its Library and an item parent names its folder, never both. The actor can't place an item
+        // under any other shape, so it is refused here with a 400.
+        let parentIsWellFormed =
+            match parameters.DestinationParent with
+            | Some { Kind = "root"; LibraryPath = Some _; ItemId = None }
+            | Some { Kind = "item"; LibraryPath = None; ItemId = Some _ }
+            | None -> true
+            | Some _ -> false
+
         if not valid then
             Error "The change fields do not match the selected change and item kinds."
+        elif not parentIsWellFormed then
+            Error "A Library parent is either a root with a Library path or an item with an item ID."
         elif hasName then
             // A create or rename names one portable segment. Checking it here answers a bad name with a 400 instead of
             // letting the actor throw on it.
