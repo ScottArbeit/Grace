@@ -3590,27 +3590,6 @@ paths:
           $ref: '#/components/responses/410'
         '500':
           $ref: '#/components/responses/500'
-  /libraries/namespace/get-slot:
-    post:
-      tags:
-        - Libraries
-      summary: Get one current occupied or remembered-vacant Library namespace slot.
-      operationId: GetLibraryNamespaceSlot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GetLibraryNamespaceSlotParameters'
-      responses:
-        '200':
-          $ref: '#/components/responses/LibraryNamespaceSlotResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '403':
-          $ref: '#/components/responses/403'
-        '500':
-          $ref: '#/components/responses/500'
   /libraries/status/get:
     post:
       tags:
@@ -5508,9 +5487,6 @@ components:
     LibraryNamespaceVersion:
       type: string
       format: uuid
-    LibraryNamespaceSlotVersion:
-      type: string
-      format: uuid
     LibraryContentVersionId:
       type: string
       format: uuid
@@ -5694,24 +5670,6 @@ components:
         - Content
         - ContentRevision
         - Tombstone
-    LibraryNamespaceSlotDto:
-      type: object
-      properties:
-        Parent:
-          $ref: '#/components/schemas/LibraryParentDto'
-        Name:
-          type: string
-        SlotVersion:
-          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
-        OccupantItemId:
-          allOf:
-            - $ref: '#/components/schemas/LibraryItemId'
-          nullable: true
-      required:
-        - Parent
-        - Name
-        - SlotVersion
-        - OccupantItemId
     LibraryCatalogDto:
       type: object
       properties:
@@ -5762,24 +5720,6 @@ components:
         - ItemId
         - ExpectedContentVersionId
         - ExpectedContentRevision
-    LibraryCreationSlotExpectationDto:
-      type: object
-      properties:
-        Parent:
-          $ref: '#/components/schemas/LibraryParentDto'
-        Name:
-          type: string
-        ExpectedSlotVersion:
-          $ref: '#/components/schemas/LibraryNamespaceSlotVersion'
-        ExpectedState:
-          type: string
-          enum:
-            - vacant
-      required:
-        - Parent
-        - Name
-        - ExpectedSlotVersion
-        - ExpectedState
     LibraryChangeDto:
       type: object
       properties:
@@ -6089,10 +6029,6 @@ components:
               allOf:
                 - $ref: '#/components/schemas/LibraryContentPreconditionDto'
               nullable: true
-            CreationSlotExpectation:
-              allOf:
-                - $ref: '#/components/schemas/LibraryCreationSlotExpectationDto'
-              nullable: true
             DestinationParent:
               allOf:
                 - $ref: '#/components/schemas/LibraryParentDto'
@@ -6143,18 +6079,6 @@ components:
             - ItemId
             - ContentVersionId
             - ContentRevision
-    GetLibraryNamespaceSlotParameters:
-      allOf:
-        - $ref: '#/components/schemas/LibraryParameters'
-        - type: object
-          properties:
-            Parent:
-              $ref: '#/components/schemas/LibraryParentDto'
-            Name:
-              type: string
-          required:
-            - Parent
-            - Name
     GetLibraryStatusParameters:
       allOf:
         - $ref: '#/components/schemas/LibraryParameters'
@@ -6223,13 +6147,6 @@ components:
           properties:
             ReturnValue:
               $ref: '#/components/schemas/LibraryContentReadDto'
-    LibraryNamespaceSlotReturnValue:
-      allOf:
-        - $ref: '#/components/schemas/LibraryReturnValueBase'
-        - type: object
-          properties:
-            ReturnValue:
-              $ref: '#/components/schemas/LibraryNamespaceSlotDto'
     LibraryStatusReturnValue:
       allOf:
         - $ref: '#/components/schemas/LibraryReturnValueBase'
@@ -9693,12 +9610,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/LibraryContentReadReturnValue'
-    LibraryNamespaceSlotResponse:
-      description: Current occupied or remembered-vacant namespace slot.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/LibraryNamespaceSlotReturnValue'
     LibraryStatusResponse:
       description: Content-free Library repository status.
       content:

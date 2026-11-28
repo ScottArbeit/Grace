@@ -228,7 +228,6 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/libraries/bootstrap/continue"
             "POST", "/libraries/changes/get"
             "POST", "/libraries/content/read"
-            "POST", "/libraries/namespace/get-slot"
             "POST", "/libraries/status/get"
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.LibraryRead, ResourceKind.Repository))

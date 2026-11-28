@@ -268,7 +268,6 @@ module LibraryCliParsingTests =
                   "PrepareContent"
                   "PrepareContentRead"
                   "DownloadContent"
-                  "GetNamespaceSlot"
                   "GetStatus" ]
 
         methods |> should equal expected

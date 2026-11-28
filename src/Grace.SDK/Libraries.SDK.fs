@@ -54,10 +54,6 @@ type Libraries() =
     static member public PrepareContentRead(parameters: PrepareLibraryContentReadParameters) =
         postServer<PrepareLibraryContentReadParameters, LibraryContentReadDto> (parameters |> ensureCorrelationIdIsSet, "libraries/content/read")
 
-    /// Reads one normalized namespace slot and its current vacancy token.
-    static member public GetNamespaceSlot(parameters: GetLibraryNamespaceSlotParameters) =
-        postServer<GetLibraryNamespaceSlotParameters, LibraryNamespaceSlotDto> (parameters |> ensureCorrelationIdIsSet, "libraries/namespace/get-slot")
-
     /// Reads content-free synchronization status for one repository.
     static member public GetStatus(parameters: GetLibraryStatusParameters) =
         postServer<GetLibraryStatusParameters, LibraryRepositoryStatusDto> (parameters |> ensureCorrelationIdIsSet, "libraries/status/get")

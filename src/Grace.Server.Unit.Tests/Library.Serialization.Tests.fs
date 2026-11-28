@@ -56,13 +56,12 @@ type LibrarySerializationTests() =
         let uploadSessionId = Guid.Parse("918d5491-fc38-4010-886c-17541171670f")
         let catalogVersion = Guid.Parse("b951c903-6194-4c34-a3ce-c59b9ad7a9ee")
         let namespaceVersion = Guid.Parse("f57f34be-d57f-4987-b7ae-a926799beab4")
-        let slotVersion = Guid.Parse("a8bcd35e-e35f-486c-8783-5d763cdb2a83")
         let secondItemId = Guid.Parse("712ee530-5485-4515-a56e-67f068780a3a")
         let priorContentVersionId = Guid.Parse("20fbaf83-ff7e-4531-a267-5766b146ef23")
         let timestamp = Instant.FromUtc(2026, 9, 7, 7, 8, 9)
         let parent = { Kind = "root"; LibraryPath = Some "Media"; ItemId = None }
 
-        let slot = { Parent = parent; Name = "photo.raw"; SlotVersion = slotVersion; OccupantItemId = Some itemId }
+        let slot = { Parent = parent; Name = "photo.raw"; OccupantItemId = Some itemId }
 
         let content =
             {
@@ -173,12 +172,10 @@ type LibrarySerializationTests() =
 
         let contentPrecondition = { ItemId = itemId; ExpectedContentVersionId = priorContentVersionId; ExpectedContentRevision = "cursor-11" }
 
-        let creationExpectation = { Parent = parent; Name = slot.Name; ExpectedSlotVersion = slotVersion; ExpectedState = "vacant" }
-
         let commands =
             [|
-                LibraryChangeCommand.CreateFile(operationId, receipt.RequestHash, creationExpectation, uploadSessionId)
-                LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), "directory-hash", creationExpectation)
+                LibraryChangeCommand.CreateFile(operationId, receipt.RequestHash, parent, slot.Name, uploadSessionId)
+                LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), "directory-hash", parent, slot.Name)
                 LibraryChangeCommand.UpdateContent(Guid.NewGuid(), "update-hash", itemId, Some namespacePrecondition, contentPrecondition, uploadSessionId)
                 LibraryChangeCommand.Rename(Guid.NewGuid(), "rename-hash", itemId, namespacePrecondition, "renamed.raw")
                 LibraryChangeCommand.Move(
@@ -301,7 +298,6 @@ type LibrarySerializationTests() =
                 Assert.That(roundTrip serviceProvider status, Is.EqualTo(status))
                 Assert.That(roundTrip serviceProvider namespacePrecondition, Is.EqualTo(namespacePrecondition))
                 Assert.That(roundTrip serviceProvider contentPrecondition, Is.EqualTo(contentPrecondition))
-                Assert.That(roundTrip serviceProvider creationExpectation, Is.EqualTo(creationExpectation))
                 Assert.That(roundTrip serviceProvider commands, Is.EqualTo(box commands))
                 Assert.That(roundTrip serviceProvider authorization, Is.EqualTo(authorization))
                 Assert.That(roundTrip serviceProvider acceptedRecord, Is.EqualTo(acceptedRecord))

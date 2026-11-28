@@ -312,8 +312,6 @@ paths:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1read'
   /libraries/content/{readToken}:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1content~1{readToken}'
-  /libraries/namespace/get-slot:
-    $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1namespace~1get-slot'
   /libraries/status/get:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1status~1get'
 
@@ -624,8 +622,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogVersion'
     LibraryNamespaceVersion:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceVersion'
-    LibraryNamespaceSlotVersion:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotVersion'
     LibraryContentVersionId:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentVersionId'
     LibraryBootstrapId:
@@ -656,16 +652,12 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryConflictProvenanceDto'
     LibraryItemDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryItemDto'
-    LibraryNamespaceSlotDto:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotDto'
     LibraryCatalogDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCatalogDto'
     LibraryNamespacePreconditionDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespacePreconditionDto'
     LibraryContentPreconditionDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreconditionDto'
-    LibraryCreationSlotExpectationDto:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryCreationSlotExpectationDto'
     LibraryChangeDto:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryChangeDto'
     LibraryOperationReceiptDto:
@@ -706,8 +698,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentParameters'
     PrepareLibraryContentReadParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/PrepareLibraryContentReadParameters'
-    GetLibraryNamespaceSlotParameters:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryNamespaceSlotParameters'
     GetLibraryStatusParameters:
       $ref: 'Libraries.Components.OpenAPI.yaml#/GetLibraryStatusParameters'
     LibraryReturnValueBase:
@@ -726,8 +716,6 @@ components:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentPreparationReturnValue'
     LibraryContentReadReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryContentReadReturnValue'
-    LibraryNamespaceSlotReturnValue:
-      $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotReturnValue'
     LibraryStatusReturnValue:
       $ref: 'Libraries.Components.OpenAPI.yaml#/LibraryStatusReturnValue'
 

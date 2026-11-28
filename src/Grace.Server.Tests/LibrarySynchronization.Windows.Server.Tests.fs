@@ -406,15 +406,6 @@ module LibrarySynchronizationWindowsServerTests =
     /// Occupies one conflict candidate through the public namespace contract before the stale edit submits.
     let private occupyDirectoryAsync (repositoryId: Guid) parent name =
         task {
-            let slotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
-            slotRequest.OwnerId <- ownerId
-            slotRequest.OrganizationId <- organizationId
-            slotRequest.RepositoryId <- repositoryId.ToString("D")
-            slotRequest.Parent <- Some parent
-            slotRequest.Name <- name
-            slotRequest.CorrelationId <- generateCorrelationId ()
-            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent slotRequest)
-            let! slot = requireReturnValueAsync<LibraryNamespaceSlotDto> slotResponse
             let create = Parameters.Library.SubmitLibraryChangeParameters()
             create.OwnerId <- ownerId
             create.OrganizationId <- organizationId
@@ -422,7 +413,8 @@ module LibrarySynchronizationWindowsServerTests =
             create.OperationId <- Guid.NewGuid()
             create.ChangeKind <- ChangeKind.CreateDirectory
             create.ItemKind <- ItemKind.Directory
-            create.CreationSlotExpectation <- Some { Parent = parent; Name = name; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+            create.DestinationParent <- Some parent
+            create.DestinationName <- name
             create.CorrelationId <- generateCorrelationId ()
             use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent create)
             let! _ = requireReturnValueAsync<LibraryOperationReceiptDto> response
@@ -914,10 +906,11 @@ module LibrarySynchronizationWindowsServerTests =
                 output |> Seq.iter TestContext.Progress.WriteLine
         }
 
-    /// A Library failure never stops Watch: after two copies create the same filename, Watch keeps saving
-    /// version-controlled work, and status says what failed, where, and what to do next.
+    /// A Library failure never stops Watch: after the Watched copy edits a file another copy has deleted, which the
+    /// server rejects every time until the edit-after-delete rule is built, Watch keeps saving version-controlled
+    /// work, and status says what failed, where, and what to do next.
     [<Test>]
-    let ``Watch keeps saving version-controlled work after a same-name Library create fails`` () =
+    let ``Watch keeps saving version-controlled work after a Library change is rejected`` () =
         task {
             if not (OperatingSystem.IsWindows()) then
                 Assert.Ignore("Windows filesystem contract.")
@@ -933,19 +926,27 @@ module LibrarySynchronizationWindowsServerTests =
             let! enabled = runWatched (syncCommand "enable")
             Assert.That(enabled.ExitCode, Is.Zero, enabled.StandardOutput + enabled.StandardError)
 
-            // The other copy creates the file first, and the server accepts it.
-            File.WriteAllText(Path.Combine(copyB, "Library", "same.txt"), "created first by the other copy")
+            // Both copies have the file, then the other copy's delete reaches the server.
+            File.WriteAllText(Path.Combine(copyB, "Library", "same.txt"), "created by the other copy")
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! pulled = runWatched (syncCommand "run")
+            Assert.That(pulled.ExitCode, Is.Zero, pulled.StandardOutput + pulled.StandardError)
 
-            // The Watched copy saves different bytes under the same name before it has pulled the other copy's file.
+            let original =
+                Grace.CLI.LibraryLocalState.readItems (localDb copyB) repositoryId
+                |> Array.exactlyOne
+
+            let! _ = changeNamespaceAsync repositoryId original true
+
+            // The Watched copy edits the file before it has pulled the delete.
             let sameA = Path.Combine(copyA, "Library", "same.txt")
-            File.WriteAllText(sameA, "saved second by the Watched copy")
+            File.WriteAllText(sameA, "edited by the Watched copy")
 
             let watch, output = startWatch copyA token
             use _watchProcess = watch
 
             try
-                // Watch's first Library sync is rejected because the name is taken. Watch records it and keeps running.
+                // Watch's first Library sync is rejected because the file is gone. Watch records it and keeps running.
                 do!
                     waitWhileWatchRuns watch output (fun () ->
                         (Grace.CLI.LibraryLocalState.readHealth (localDb copyA) repositoryId)
@@ -987,13 +988,12 @@ module LibrarySynchronizationWindowsServerTests =
                 let! status = runWatched (syncCommand "status")
                 Assert.That(status.ExitCode, Is.Zero, status.StandardOutput + status.StandardError)
                 Assert.That(status.StandardOutput, Does.Contain("\"State\": \"blocked\""))
-                Assert.That(status.StandardOutput, Does.Contain("Library creation slot is occupied"))
+                Assert.That(status.StandardOutput, Does.Contain(RejectionReason.ItemTombstoned))
                 Assert.That(status.StandardOutput, Does.Contain("Library/same.txt"))
-                Assert.That(status.StandardOutput, Does.Contain("Another working copy created a file with this name first."))
+                Assert.That(status.StandardOutput, Does.Contain("The server rejected this change. Your saved file is kept."))
 
-                // Both copies keep their own bytes.
-                Assert.That(File.ReadAllText(sameA), Is.EqualTo("saved second by the Watched copy"))
-                Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "same.txt")), Is.EqualTo("created first by the other copy"))
+                // The Watched copy keeps its edit.
+                Assert.That(File.ReadAllText(sameA), Is.EqualTo("edited by the Watched copy"))
                 Assert.That(watch.HasExited, Is.False, String.Join(Environment.NewLine, output))
             finally
                 if not watch.HasExited then watch.Kill(true)
@@ -1350,7 +1350,7 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(
                 request.ContentPrecondition.IsNone
                 && not request.UploadSessionId.HasValue
-                && request.CreationSlotExpectation.IsNone,
+                && request.DestinationParent.IsNone,
                 Is.True
             )
 
@@ -2997,20 +2997,11 @@ module LibrarySynchronizationWindowsServerTests =
             let! _ = changeLibraryAsync repositoryId true "Gone"
             let parent = { Kind = "root"; LibraryPath = Some "Gone"; ItemId = None }
 
-            let slotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
-            slotRequest.OwnerId <- ownerId
-            slotRequest.OrganizationId <- organizationId
-            slotRequest.RepositoryId <- repositoryId.ToString("D")
-            slotRequest.Parent <- Some parent
-            slotRequest.Name <- "temporary"
-            slotRequest.CorrelationId <- generateCorrelationId ()
-            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent slotRequest)
-            let! slot = requireReturnValueAsync<LibraryNamespaceSlotDto> slotResponse
-
             let create = Parameters.Library.SubmitLibraryChangeParameters()
             create.ChangeKind <- ChangeKind.CreateDirectory
             create.ItemKind <- ItemKind.Directory
-            create.CreationSlotExpectation <- Some { Parent = parent; Name = "temporary"; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+            create.DestinationParent <- Some parent
+            create.DestinationName <- "temporary"
             let! created = submitAcceptedAsync repositoryId create
 
             let delete = Parameters.Library.SubmitLibraryChangeParameters()
@@ -3339,4 +3330,331 @@ module LibrarySynchronizationWindowsServerTests =
             Assert.That(File.ReadAllText(Path.Combine(copyB, "Library", "renamed.txt")), Is.EqualTo("first version"))
             Assert.That(File.ReadAllText(pathB), Is.EqualTo("saved on B"))
             Assert.That(otherLibraryFiles copyB [ "source.txt"; "renamed.txt" ], Is.Empty)
+        }
+
+    /// Orders a copy's Library files, as Library-relative path and text, the same way for every copy.
+    let private sortContents (contents: (string * string) array) =
+        contents
+        |> Array.sortWith (fun (left, _) (right, _) -> String.CompareOrdinal(left, right))
+
+    /// Lists every file under a copy's Library folder as its Library-relative path and text.
+    let private libraryContents copy =
+        let library = Path.Combine(copy, "Library")
+
+        Directory.GetFiles(library, "*", SearchOption.AllDirectories)
+        |> Array.map (fun path ->
+            Path
+                .GetRelativePath(library, path)
+                .Replace('\\', '/'),
+            File.ReadAllText path)
+        |> sortContents
+
+    /// Requires every copy to hold exactly these Library files, with no extra folder, and to be current with nothing
+    /// pending.
+    let private requireConvergedAsync serverUri (copies: string array) (expected: (string * string) array) (folders: string array) =
+        task {
+            let mutable index = 0
+
+            while index < copies.Length do
+                let copy = copies[index]
+                let library = Path.Combine(copy, "Library")
+
+                let actualFolders =
+                    Directory.GetDirectories(library, "*", SearchOption.AllDirectories)
+                    |> Array.map (fun path ->
+                        Path
+                            .GetRelativePath(library, path)
+                            .Replace('\\', '/'))
+                    |> Array.sort
+
+                Assert.That(libraryContents copy, Is.EqualTo<(string * string) array>(sortContents expected), copy)
+                Assert.That(actualFolders, Is.EqualTo<string array>(Array.sort folders), copy)
+                let! status = requireGraceSuccessAsync copy serverUri (syncCommand "status")
+                Assert.That(status, Does.Contain("\"State\": \"current\""), status)
+                Assert.That(status, Does.Contain("\"PendingOperationCount\": 0"), status)
+                index <- index + 1
+        }
+
+    /// Returns the operation of a copy's own create at one repository-relative Library path.
+    let private localCreateId copy repositoryId (path: string) =
+        let create =
+            Grace.CLI.LibraryLocalState.readOperations (localDb copy) repositoryId
+            |> Array.find (fun operation ->
+                operation.Direction = "local"
+                && operation.SourcePath = path)
+
+        create.OperationId
+
+    /// Names the conflict copy a create's own operation gives a taken name.
+    let private conflictCopyName name operationId = Grace.Shared.Validation.Library.conflictName name operationId 0
+
+    /// Creates a file over HTTP, as another copy would, and returns its accepted item.
+    let private createFileOverHttpAsync (repositoryId: Guid) name (text: string) =
+        task {
+            let operation = Guid.NewGuid()
+            let! prepared = LibraryHttp.prepare (repositoryId.ToString("D")) operation (Text.Encoding.UTF8.GetBytes text)
+            let create = Parameters.Library.SubmitLibraryChangeParameters()
+            create.OwnerId <- ownerId
+            create.OrganizationId <- organizationId
+            create.RepositoryId <- repositoryId.ToString("D")
+            create.OperationId <- operation
+            create.ChangeKind <- ChangeKind.CreateFile
+            create.ItemKind <- ItemKind.File
+            create.UploadSessionId <- Nullable prepared.UploadSessionId
+            create.DestinationParent <- Some { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
+            create.DestinationName <- name
+            create.CorrelationId <- generateCorrelationId ()
+            use! response = Client.PostAsync("/libraries/changes/submit", createJsonContent create)
+            let! receipt = requireReturnValueAsync<LibraryOperationReceiptDto> response
+            Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.Accepted), serialize receipt)
+            return receipt.Change.Value.Item
+        }
+
+    /// #1127: A and B create notes.txt before either syncs, and every run succeeds. With different bytes, both copies
+    /// end with A's version at the name and B's beside it, under the conflict-copy name of B's create. With the same
+    /// bytes, both copies end with one file and one item.
+    [<TestCase(false); TestCase(true)>]
+    let ``two copies that create the same file name both keep their version`` identical =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync (if identical then "same-name-same" else "same-name-different")
+            use proxy = createdProxy
+            let textA = "created on A"
+            let textB = if identical then textA else "created on B"
+            File.WriteAllText(Path.Combine(copyA, "Library", "notes.txt"), textA)
+            File.WriteAllText(Path.Combine(copyB, "Library", "notes.txt"), textB)
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let createB = localCreateId copyB repositoryId "Library/notes.txt"
+
+            let expected =
+                if identical then
+                    [| "notes.txt", textA |]
+                else
+                    [|
+                        "notes.txt", textA
+                        conflictCopyName "notes.txt" createB, textB
+                    |]
+
+            do! requireConvergedAsync proxy.BaseAddress [| copyA; copyB |] expected [||]
+
+            if identical then
+                let liveItems copy =
+                    Grace.CLI.LibraryLocalState.readItems (localDb copy) repositoryId
+                    |> Array.filter (fun item -> item.Tombstone.IsNone)
+                    |> Array.map (fun item -> item.ItemId)
+
+                Assert.That(liveItems copyA, Has.Length.EqualTo(1))
+                Assert.That(liveItems copyB, Is.EqualTo<Guid array>(liveItems copyA))
+        }
+
+    /// #1127: A's create of the same name lands after B has frozen its own create and just before B's request reaches
+    /// the server. B still keeps both versions, exactly as if A had synced first.
+    [<Test>]
+    let ``a same-name create that lands while the other copy submits keeps both versions`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-race"
+            use proxy = createdProxy
+            File.WriteAllText(Path.Combine(copyA, "Library", "notes.txt"), "created on A")
+            File.WriteAllText(Path.Combine(copyB, "Library", "notes.txt"), "created on B")
+
+            proxy.BeforeNextSubmit (fun () ->
+                task {
+                    let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+                    ()
+                }
+                :> Task)
+
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let createB = localCreateId copyB repositoryId "Library/notes.txt"
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        "notes.txt", "created on A"
+                        conflictCopyName "notes.txt" createB, "created on B"
+                    |]
+                    [||]
+        }
+
+    /// #1127: B's create fails to reach the server once, and meanwhile another copy takes the name and gives it up. The
+    /// name is free again, so B's create lands there.
+    [<Test>]
+    let ``a create waiting to submit takes a name that was used and freed meanwhile`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-freed"
+            use proxy = createdProxy
+            File.WriteAllText(Path.Combine(copyB, "Library", "notes.txt"), "created on B")
+            let freed = ref None
+
+            proxy.BeforeNextSubmit (fun () ->
+                task {
+                    let! held = createFileOverHttpAsync repositoryId "notes.txt" "held briefly elsewhere"
+                    let! deleted = changeNamespaceAsync repositoryId held true
+                    freed.Value <- Some deleted
+                    return raise (InvalidOperationException("Injected submit failure."))
+                }
+                :> Task)
+
+            let! failed = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(failed.ExitCode, Is.Not.Zero, failed.StandardOutput + failed.StandardError)
+
+            // The name really was taken and given up while B's create waited.
+            Assert.That(
+                freed.Value
+                |> Option.exists (fun deleted -> deleted.Item.Tombstone.IsSome),
+                Is.True,
+                "The other copy's create and delete didn't commit."
+            )
+
+            let createB = localCreateId copyB repositoryId "Library/notes.txt"
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            do! requireConvergedAsync proxy.BaseAddress [| copyA; copyB |] [| "notes.txt", "created on B" |] [||]
+
+            // The file at the name is B's own frozen create, not a new one.
+            let liveAtName copy =
+                Grace.CLI.LibraryLocalState.readItems (localDb copy) repositoryId
+                |> Array.filter (fun item -> item.Tombstone.IsNone)
+                |> Array.map (fun item -> item.ItemId)
+
+            let createdByB = Grace.Actors.LibraryDecision.deterministicGuid repositoryId createB "item"
+            Assert.That(liveAtName copyA, Is.EqualTo<Guid array>([| createdByB |]))
+            Assert.That(liveAtName copyB, Is.EqualTo<Guid array>([| createdByB |]))
+        }
+
+    /// #1127: A and B both create Photos. A adds a.txt, B adds b.txt, and both add cover.txt with different bytes. Every
+    /// copy ends with one Photos folder holding all of them and one conflict copy of cover.txt.
+    [<Test>]
+    let ``two copies that create the same folder end with one folder holding both sets of files`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-folder"
+            use proxy = createdProxy
+            let photosA, photosB = Path.Combine(copyA, "Library", "Photos"), Path.Combine(copyB, "Library", "Photos")
+            Directory.CreateDirectory(photosA) |> ignore
+            Directory.CreateDirectory(photosB) |> ignore
+            File.WriteAllText(Path.Combine(photosA, "a.txt"), "only on A")
+            File.WriteAllText(Path.Combine(photosA, "cover.txt"), "cover from A")
+            File.WriteAllText(Path.Combine(photosB, "b.txt"), "only on B")
+            File.WriteAllText(Path.Combine(photosB, "cover.txt"), "cover from B")
+
+            // A copy captures a folder's files once the folder has synced, so each copy needs two runs.
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let coverB = localCreateId copyB repositoryId "Library/Photos/cover.txt"
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        "Photos/a.txt", "only on A"
+                        "Photos/b.txt", "only on B"
+                        "Photos/cover.txt", "cover from A"
+                        "Photos/" + conflictCopyName "cover.txt" coverB, "cover from B"
+                    |]
+                    [| "Photos" |]
+        }
+
+    /// #1127, and the case PR #1123 couldn't verify: A edits plan.txt, and B and C each keep a late save as sync replaces
+    /// it (#1122). Both kept files get the same conflict-copy name, from A's edit. The second to sync keeps both again,
+    /// under its own create's conflict-copy name, and all three copies end with all four versions.
+    [<Test>]
+    let ``two copies that keep a late save for the same incoming edit both keep it`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-late-saves"
+            use proxy = createdProxy
+            let copyC = Path.Combine(Path.GetDirectoryName(copyB), "C")
+            Directory.CreateDirectory(copyC) |> ignore
+            configureWorkingCopy copyC repositoryId proxy.BaseAddress
+            let! _ = requireGraceSuccessAsync copyC proxy.BaseAddress (syncCommand "enable")
+            File.WriteAllText(Path.Combine(copyA, "Library", "plan.txt"), "first version")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyC proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(Path.Combine(copyA, "Library", "plan.txt"), "edited on A")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            let! savedB = runWithSaveBeforeDisplaceAsync copyB proxy.BaseAddress "saved on B" "plan.txt"
+            Assert.That(savedB.ExitCode, Is.Zero, savedB.StandardOutput + savedB.StandardError)
+
+            let keptB =
+                Path.GetFileName(
+                    (otherLibraryFiles copyB [ "plan.txt" ]
+                     |> Array.exactlyOne)
+                )
+
+            // C keeps its save under the same name, because both are named from A's edit, so C's create of it meets B's.
+            let! savedC = runWithSaveBeforeDisplaceAsync copyC proxy.BaseAddress "saved on C" "plan.txt"
+            Assert.That(savedC.ExitCode, Is.Zero, savedC.StandardOutput + savedC.StandardError)
+
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyC proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let createC = localCreateId copyC repositoryId ("Library/" + keptB)
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB; copyC |]
+                    [|
+                        "plan.txt", "edited on A"
+                        keptB, "saved on B"
+                        conflictCopyName keptB createC, "saved on C"
+                    |]
+                    [||]
+        }
+
+    /// #1127: the proxy loses the receipt for B's conflict copy. B's next run resubmits the same request, gets the same
+    /// receipt, and every copy ends with exactly one conflict copy.
+    [<Test>]
+    let ``a lost conflict-copy receipt leaves exactly one conflict copy`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-lost-receipt"
+            use proxy = createdProxy
+            File.WriteAllText(Path.Combine(copyA, "Library", "notes.txt"), "created on A")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            File.WriteAllText(Path.Combine(copyB, "Library", "notes.txt"), "created on B")
+            proxy.DropNextAcceptedSubmitResponse()
+            let! lost = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(lost.ExitCode, Is.Not.Zero, lost.StandardOutput + lost.StandardError)
+            Assert.That(proxy.DroppedAcceptedSubmitCount, Is.EqualTo(1))
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let createB = localCreateId copyB repositoryId "Library/notes.txt"
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        "notes.txt", "created on A"
+                        conflictCopyName "notes.txt" createB, "created on B"
+                    |]
+                    [||]
         }

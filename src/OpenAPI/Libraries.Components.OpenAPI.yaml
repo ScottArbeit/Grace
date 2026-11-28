@@ -10,9 +10,6 @@
     LibraryNamespaceVersion:
       type: string
       format: uuid
-    LibraryNamespaceSlotVersion:
-      type: string
-      format: uuid
     LibraryContentVersionId:
       type: string
       format: uuid
@@ -126,17 +123,6 @@
             - $ref: '#/LibraryTombstoneDto'
           nullable: true
       required: [ItemId, ItemKind, LastChangeCursor, Namespace, Content, ContentRevision, Tombstone]
-    LibraryNamespaceSlotDto:
-      type: object
-      properties:
-        Parent: { $ref: '#/LibraryParentDto' }
-        Name: { type: string }
-        SlotVersion: { $ref: '#/LibraryNamespaceSlotVersion' }
-        OccupantItemId:
-          allOf:
-            - $ref: '#/LibraryItemId'
-          nullable: true
-      required: [Parent, Name, SlotVersion, OccupantItemId]
     LibraryCatalogDto:
       type: object
       properties:
@@ -166,16 +152,6 @@
         ExpectedContentVersionId: { $ref: '#/LibraryContentVersionId' }
         ExpectedContentRevision: { $ref: '#/LibraryCursor' }
       required: [ItemId, ExpectedContentVersionId, ExpectedContentRevision]
-    LibraryCreationSlotExpectationDto:
-      type: object
-      properties:
-        Parent: { $ref: '#/LibraryParentDto' }
-        Name: { type: string }
-        ExpectedSlotVersion: { $ref: '#/LibraryNamespaceSlotVersion' }
-        ExpectedState:
-          type: string
-          enum: [vacant]
-      required: [Parent, Name, ExpectedSlotVersion, ExpectedState]
     LibraryChangeDto:
       type: object
       properties:
@@ -379,10 +355,6 @@
               allOf:
                 - $ref: '#/LibraryContentPreconditionDto'
               nullable: true
-            CreationSlotExpectation:
-              allOf:
-                - $ref: '#/LibraryCreationSlotExpectationDto'
-              nullable: true
             DestinationParent:
               allOf:
                 - $ref: '#/LibraryParentDto'
@@ -417,14 +389,6 @@
             ContentVersionId: { $ref: '#/LibraryContentVersionId' }
             ContentRevision: { $ref: '#/LibraryCursor' }
           required: [ItemId, ContentVersionId, ContentRevision]
-    GetLibraryNamespaceSlotParameters:
-      allOf:
-        - $ref: '#/LibraryParameters'
-        - type: object
-          properties:
-            Parent: { $ref: '#/LibraryParentDto' }
-            Name: { type: string }
-          required: [Parent, Name]
     GetLibraryStatusParameters:
       allOf:
         - $ref: '#/LibraryParameters'
@@ -471,12 +435,6 @@
         - type: object
           properties:
             ReturnValue: { $ref: '#/LibraryContentReadDto' }
-    LibraryNamespaceSlotReturnValue:
-      allOf:
-        - $ref: '#/LibraryReturnValueBase'
-        - type: object
-          properties:
-            ReturnValue: { $ref: '#/LibraryNamespaceSlotDto' }
     LibraryStatusReturnValue:
       allOf:
         - $ref: '#/LibraryReturnValueBase'
@@ -528,11 +486,6 @@
       content:
         application/json:
           schema: { $ref: '#/LibraryContentReadReturnValue' }
-    LibraryNamespaceSlotResponse:
-      description: Current occupied or remembered-vacant namespace slot.
-      content:
-        application/json:
-          schema: { $ref: '#/LibraryNamespaceSlotReturnValue' }
     LibraryStatusResponse:
       description: Content-free Library repository status.
       content:

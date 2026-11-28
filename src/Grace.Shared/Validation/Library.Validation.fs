@@ -39,13 +39,14 @@ module Library =
               '?'
               '*' ]
 
-    /// Returns true when a segment names a portable Windows device name.
+    /// Returns true when a segment names a portable Windows device name. Windows counts the superscript digits ¹, ² and ³
+    /// as digits in COM and LPT names, so COM¹.txt is as reserved as COM1.txt.
     let private isDeviceName (segment: string) =
         let stem = segment.Split('.')[0]
 
         Regex.IsMatch(
             stem,
-            "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$",
+            "^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$",
             RegexOptions.IgnoreCase
             ||| RegexOptions.CultureInvariant
         )
@@ -162,25 +163,27 @@ module Library =
         let suffix = if attempt = 0 then baseSuffix else $"{baseSuffix}.{attempt}"
         let originalExtension = Path.GetExtension name
 
-        let extension =
-            if Encoding.UTF8.GetByteCount(suffix + originalExtension) < MaximumSegmentBytes then
-                originalExtension
-            else
-                String.Empty
+        let withStem stem extension =
+            let maximumStemBytes =
+                MaximumSegmentBytes
+                - Encoding.UTF8.GetByteCount(suffix + extension)
 
-        let stem =
-            if String.IsNullOrEmpty extension then
-                name
-            else
-                Path.GetFileNameWithoutExtension name
+            utf8Prefix maximumStemBytes stem
+            + suffix
+            + extension
 
-        let maximumStemBytes =
-            MaximumSegmentBytes
-            - Encoding.UTF8.GetByteCount(suffix + extension)
+        // Without the extension, the whole name is the stem. That form starts with the original name, or with more of it
+        // than any device name holds, so it is portable whenever the original name is.
+        let wholeNameStem = withStem name String.Empty
 
-        utf8Prefix maximumStemBytes stem
-        + suffix
-        + extension
+        if Encoding.UTF8.GetByteCount(suffix + originalExtension) < MaximumSegmentBytes then
+            // A long extension can leave room for only a few bytes of the stem, and those can spell a Windows device
+            // name: "Console." and a 232-byte extension would become "Con.conflict-…". Drop the extension instead.
+            let keptExtension = withStem (Path.GetFileNameWithoutExtension name) originalExtension
+
+            if isDeviceName keptExtension then wholeNameStem else keptExtension
+        else
+            wholeNameStem
 
     /// Normalizes and sorts one complete root set while enforcing uniqueness, overlap, and count bounds.
     let normalizeLibraries (libraries: string array) =
@@ -284,7 +287,6 @@ module Library =
         let hasItemId = parameters.ItemId.HasValue
         let hasNamespace = parameters.NamespacePrecondition.IsSome
         let hasContent = parameters.ContentPrecondition.IsSome
-        let hasSlot = parameters.CreationSlotExpectation.IsSome
         let hasParent = parameters.DestinationParent.IsSome
         let hasName = not (isNull parameters.DestinationName)
         let hasUpload = parameters.UploadSessionId.HasValue
@@ -295,22 +297,19 @@ module Library =
                 not hasItemId
                 && not hasNamespace
                 && not hasContent
-                && hasSlot
-                && not hasParent
-                && not hasName
+                && hasParent
+                && hasName
                 && hasUpload
             | ChangeKind.CreateDirectory ->
                 not hasItemId
                 && not hasNamespace
                 && not hasContent
-                && hasSlot
-                && not hasParent
-                && not hasName
+                && hasParent
+                && hasName
                 && not hasUpload
             | ChangeKind.UpdateContent ->
                 hasItemId
                 && hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && hasUpload
@@ -318,7 +317,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && not hasParent
                 && hasName
                 && not hasUpload
@@ -326,7 +324,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && hasParent
                 && not hasName
                 && not hasUpload
@@ -334,7 +331,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && not hasUpload
@@ -342,21 +338,36 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && not hasUpload
             | _ -> false
 
-        if valid then
-            Ok()
-        else
+        // A root parent names its Library and an item parent names its folder, never both. The actor can't place an item
+        // under any other shape, so it is refused here with a 400.
+        let parentIsWellFormed =
+            match parameters.DestinationParent with
+            | Some { Kind = "root"; LibraryPath = Some _; ItemId = None }
+            | Some { Kind = "item"; LibraryPath = None; ItemId = Some _ }
+            | None -> true
+            | Some _ -> false
+
+        if not valid then
             Error "The change fields do not match the selected change and item kinds."
+        elif not parentIsWellFormed then
+            Error "A Library parent is either a root with a Library path or an item with an item ID."
+        elif hasName then
+            // A create or rename names one portable segment. Checking it here answers a bad name with a 400 instead of
+            // letting the actor throw on it.
+            normalizeName parameters.DestinationName
+            |> Result.map ignore
+        else
+            Ok()
 
     /// Converts one valid public parameter object into the closed actor command union.
     let toChangeCommand repositoryId (parameters: SubmitLibraryChangeParameters) =
         let requestHashInput =
-            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.CreationSlotExpectation}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
+            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
 
         let requestHash =
             requestHashInput
@@ -367,8 +378,15 @@ module Library =
 
         match parameters.ChangeKind with
         | ChangeKind.CreateFile ->
-            LibraryChangeCommand.CreateFile(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value, parameters.UploadSessionId.Value)
-        | ChangeKind.CreateDirectory -> LibraryChangeCommand.CreateDirectory(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value)
+            LibraryChangeCommand.CreateFile(
+                parameters.OperationId,
+                requestHash,
+                parameters.DestinationParent.Value,
+                parameters.DestinationName,
+                parameters.UploadSessionId.Value
+            )
+        | ChangeKind.CreateDirectory ->
+            LibraryChangeCommand.CreateDirectory(parameters.OperationId, requestHash, parameters.DestinationParent.Value, parameters.DestinationName)
         | ChangeKind.UpdateContent ->
             LibraryChangeCommand.UpdateContent(
                 parameters.OperationId,

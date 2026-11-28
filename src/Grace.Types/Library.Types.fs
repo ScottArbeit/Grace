@@ -17,7 +17,6 @@ module Library =
     type LibraryOperationId = Guid
     type LibraryCatalogVersion = Guid
     type LibraryNamespaceVersion = Guid
-    type LibraryNamespaceSlotVersion = Guid
     type LibraryContentVersionId = Guid
     type LibraryBootstrapId = Guid
     type LibraryCursor = string
@@ -226,8 +225,6 @@ module Library =
             [<Id(1u)>]
             Name: string
             [<Id(2u)>]
-            SlotVersion: LibraryNamespaceSlotVersion
-            [<Id(3u)>]
             OccupantItemId: LibraryItemId option
         }
 
@@ -286,20 +283,6 @@ module Library =
             ExpectedContentVersionId: LibraryContentVersionId
             [<Id(2u)>]
             ExpectedContentRevision: LibraryCursor
-        }
-
-    /// Proves that the caller observed one exact vacant destination slot.
-    [<CLIMutable; GenerateSerializer>]
-    type LibraryCreationSlotExpectationDto =
-        {
-            [<Id(0u)>]
-            Parent: LibraryParentDto
-            [<Id(1u)>]
-            Name: string
-            [<Id(2u)>]
-            ExpectedSlotVersion: LibraryNamespaceSlotVersion
-            [<Id(3u)>]
-            ExpectedState: string
         }
 
     /// Describes one accepted repository-ordered Library change and its resulting item.
@@ -479,8 +462,8 @@ module Library =
 
     /// Carries one validated Library change after HTTP shape checks and before actor-owned state checks.
     type LibraryChangeCommand =
-        | CreateFile of LibraryOperationId * string * LibraryCreationSlotExpectationDto * UploadSessionId
-        | CreateDirectory of LibraryOperationId * string * LibraryCreationSlotExpectationDto
+        | CreateFile of LibraryOperationId * string * LibraryParentDto * string * UploadSessionId
+        | CreateDirectory of LibraryOperationId * string * LibraryParentDto * string
         | UpdateContent of
             LibraryOperationId *
             string *

@@ -216,24 +216,6 @@
         '410': { $ref: './Responses.OpenAPI.yaml#/410' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
-  /libraries/namespace/get-slot:
-    post:
-      tags:
-        - Libraries
-      summary: Get one current occupied or remembered-vacant Library namespace slot.
-      operationId: GetLibraryNamespaceSlot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: './Libraries.Components.OpenAPI.yaml#/GetLibraryNamespaceSlotParameters' }
-      responses:
-        '200': { $ref: './Libraries.Components.OpenAPI.yaml#/LibraryNamespaceSlotResponse' }
-        '400':
-          $ref: './Responses.OpenAPI.yaml#/400'
-        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
-        '500':
-          $ref: './Responses.OpenAPI.yaml#/500'
   /libraries/status/get:
     post:
       tags:

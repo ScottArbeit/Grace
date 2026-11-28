@@ -60,7 +60,6 @@ module Library =
         member val ItemId: Nullable<Guid> = Nullable() with get, set
         member val NamespacePrecondition: LibraryNamespacePreconditionDto option = None with get, set
         member val ContentPrecondition: LibraryContentPreconditionDto option = None with get, set
-        member val CreationSlotExpectation: LibraryCreationSlotExpectationDto option = None with get, set
         member val DestinationParent: LibraryParentDto option = None with get, set
         member val DestinationName: string = null with get, set
         member val UploadSessionId: Nullable<Guid> = Nullable() with get, set
@@ -79,12 +78,6 @@ module Library =
         member val ItemId = Guid.Empty with get, set
         member val ContentVersionId = Guid.Empty with get, set
         member val ContentRevision = String.Empty with get, set
-
-    /// Reads one normalized namespace slot and its current vacancy token.
-    type GetLibraryNamespaceSlotParameters() =
-        inherit LibraryParameters()
-        member val Parent: LibraryParentDto option = None with get, set
-        member val Name = String.Empty with get, set
 
     /// Requests content-free synchronization service status for one repository.
     type GetLibraryStatusParameters() =

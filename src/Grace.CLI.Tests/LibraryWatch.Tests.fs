@@ -232,16 +232,16 @@ module LibraryWatchTests =
 
             let run () =
                 LibrarySynchronization.LibrarySyncFailureException(
-                    "Library creation slot is occupied; saved bytes are retained.",
+                    "Library submission returned rejected: itemTombstoned. Saved input remains pending.",
                     Some "Library/same.txt",
                     Some operationId,
-                    "Another working copy created a file with this name first."
+                    "The server rejected this change. Your saved file is kept."
                 )
                 :> exn
                 |> LibrarySynchronization.describeFailure SyncFailureSource.Sync None None
                 |> recordFailure configuration.GraceStatusFile configuration.RepositoryId
 
-                Task.FromException(InvalidOperationException("Library creation slot is occupied; saved bytes are retained."))
+                Task.FromException(InvalidOperationException("Library submission returned rejected: itemTombstoned. Saved input remains pending."))
 
             let tickPorts = ports configuration (fun () -> now) calls (fun () -> Task.FromResult startup) run
 
@@ -249,7 +249,7 @@ module LibraryWatchTests =
             let! status = LibrarySynchronization.status configuration
             Assert.That(status.LastErrorPath, Is.EqualTo(Some "Library/same.txt"))
             Assert.That(status.LastErrorOperationId, Is.EqualTo(Some operationId))
-            Assert.That(status.NextStep, Is.EqualTo(Some "Another working copy created a file with this name first."))
+            Assert.That(status.NextStep, Is.EqualTo(Some "The server rejected this change. Your saved file is kept."))
         }
 
     /// A catalog failure, and its recovery, never erase the reason a sync is still blocked.
@@ -265,10 +265,10 @@ module LibraryWatchTests =
                 repositoryId
                 {
                     Source = SyncFailureSource.Sync
-                    Message = "Library creation slot is occupied; saved bytes are retained."
+                    Message = "Library submission returned rejected: itemTombstoned. Saved input remains pending."
                     Path = Some "Library/same.txt"
                     OperationId = None
-                    NextStep = "Another working copy created a file with this name first."
+                    NextStep = "The server rejected this change. Your saved file is kept."
                     AtUnixTicks = now
                 }
 
@@ -289,7 +289,7 @@ module LibraryWatchTests =
 
             clearFailure db repositoryId SyncFailureSource.Catalog
             let! afterRecovery = LibrarySynchronization.status configuration
-            Assert.That(afterRecovery.LastError, Is.EqualTo(Some "Library creation slot is occupied; saved bytes are retained."))
+            Assert.That(afterRecovery.LastError, Is.EqualTo(Some "Library submission returned rejected: itemTombstoned. Saved input remains pending."))
             Assert.That(afterRecovery.LastErrorPath, Is.EqualTo(Some "Library/same.txt"))
 
             recordSyncSuccess db repositoryId (now + 2L)
@@ -397,16 +397,16 @@ module LibraryWatchTests =
                 LibraryCatalogVersion = None
                 AppliedCursor = None
                 PendingOperationCount = 1
-                LastError = Some "Library creation slot is occupied; saved bytes are retained."
+                LastError = Some "Library submission returned rejected: itemTombstoned. Saved input remains pending."
                 LastErrorAt = Some(NodaTime.Instant.FromUtc(2026, 11, 25, 10, 0))
                 LastErrorPath = Some "Library/same.txt"
                 LastErrorOperationId = None
-                NextStep = Some "Another working copy created a file with this name first."
+                NextStep = Some "The server rejected this change. Your saved file is kept."
                 LastSuccessfulSyncAt = None
             }
 
         let text = LibraryCommand.synchronizationStatusText status
         Assert.That(text, Does.StartWith("Library synchronization: Enabled=True, Paused=False, State=blocked, Pending=1."))
-        Assert.That(text, Does.Contain("Last error at 2026-11-25T10:00:00Z: Library creation slot is occupied"))
+        Assert.That(text, Does.Contain("Last error at 2026-11-25T10:00:00Z: Library submission returned rejected: itemTombstoned"))
         Assert.That(text, Does.Contain("Affected path: Library/same.txt"))
-        Assert.That(text, Does.Contain("Next step: Another working copy created a file with this name first."))
+        Assert.That(text, Does.Contain("Next step: The server rejected this change. Your saved file is kept."))

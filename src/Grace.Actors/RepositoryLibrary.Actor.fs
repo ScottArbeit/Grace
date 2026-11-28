@@ -230,30 +230,13 @@ type RepositoryLibraryActor
 
         loop Set.empty parent
 
-    /// Returns the current or initial vacant slot observed by callers.
-    let getSlot repositoryId parent name =
+    /// Reads the remembered slot at one parent/name: whether a slot record exists, which the record counts need, and the
+    /// live item that occupies it, if any.
+    let readOccupant repositoryId parent name =
         task {
             match! readSlot repositoryId parent name with
-            | Some (record, _) -> return record.Slot
-            | None ->
-                return
-                    ({
-                         Parent = parent
-                         Name = LibraryDecision.normalizeName name
-                         SlotVersion = LibraryDecision.initialSlotVersion repositoryId parent name
-                         OccupantItemId = None
-                     }: LibraryNamespaceSlotDto)
-        }
-
-    /// Verifies a caller's exact vacant-slot observation.
-    let slotExpectationMatches repositoryId (expectation: LibraryCreationSlotExpectationDto) =
-        task {
-            let! slot = getSlot repositoryId expectation.Parent expectation.Name
-
-            return
-                String.Equals(expectation.ExpectedState, "vacant", StringComparison.OrdinalIgnoreCase)
-                && slot.OccupantItemId.IsNone
-                && slot.SlotVersion = expectation.ExpectedSlotVersion
+            | Some (record, _) -> return true, record.Slot.OccupantItemId
+            | None -> return false, None
         }
 
     /// Reads and validates the existing upload session used by an accepted content change.
@@ -407,16 +390,7 @@ type RepositoryLibraryActor
                     && String.Equals(prior.Name, item.Namespace.Value.Name, StringComparison.OrdinalIgnoreCase)
                 )
                 ->
-                do!
-                    writeSlot
-                        repositoryId
-                        record.Cursor
-                        {
-                            Parent = prior.Parent
-                            Name = prior.Name
-                            SlotVersion = LibraryDecision.deterministicGuid repositoryId record.Change.OperationId "vacated-slot"
-                            OccupantItemId = None
-                        }
+                do! writeSlot repositoryId record.Cursor { Parent = prior.Parent; Name = prior.Name; OccupantItemId = None }
             | _ -> ()
 
             match item.Namespace with
@@ -427,16 +401,7 @@ type RepositoryLibraryActor
                     && String.Equals(record.PriorNamespace.Value.Name, ns.Name, StringComparison.OrdinalIgnoreCase)
                 )
                 ->
-                do!
-                    writeSlot
-                        repositoryId
-                        record.Cursor
-                        {
-                            Parent = ns.Parent
-                            Name = ns.Name
-                            SlotVersion = LibraryDecision.deterministicGuid repositoryId record.Change.OperationId "occupied-slot"
-                            OccupantItemId = Some item.ItemId
-                        }
+                do! writeSlot repositoryId record.Cursor { Parent = ns.Parent; Name = ns.Name; OccupantItemId = Some item.ItemId }
             | _ -> ()
         }
 
@@ -667,7 +632,8 @@ type RepositoryLibraryActor
             return result
         }
 
-    /// Chooses the first deterministic vacant sibling for a stale-content conflict copy.
+    /// Chooses the first deterministic vacant sibling for a conflict copy, and reports whether that name already has a
+    /// slot record.
     let chooseConflictSlot repositoryId parent originalName operationId =
         let rec loop attempt =
             task {
@@ -675,12 +641,10 @@ type RepositoryLibraryActor
                     return invalidOp "No bounded conflict-copy destination was available."
                 else
                     let candidate = Grace.Shared.Validation.Library.conflictName originalName operationId attempt
-                    let! slot = getSlot repositoryId parent candidate
 
-                    if slot.OccupantItemId.IsNone then
-                        return candidate, slot
-                    else
-                        return! loop (attempt + 1)
+                    match! readOccupant repositoryId parent candidate with
+                    | recorded, None -> return candidate, recorded
+                    | _, Some _ -> return! loop (attempt + 1)
             }
 
         loop 0
@@ -1093,107 +1057,144 @@ type RepositoryLibraryActor
                                         return Ok receipt
                                     }
 
-                                match command with
-                                | LibraryChangeCommand.CreateFile (_, _, submitted, uploadSessionId) ->
-                                    let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
-                                    let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
+                                // A create is decided against the slot as it is now, so two copies that create the same
+                                // name both keep their version (#1127). A free name takes the new item. The same bytes, or
+                                // a folder on a folder, merge into the item already there: the create is journaled as a
+                                // change of that item, and only its last-change cursor moves, so no other copy's
+                                // preconditions break. Anything else becomes a conflict copy beside it, named by this
+                                // create's own operation, as a stale edit's is.
+                                let create itemKind changeKind submittedParent submittedName uploadSessionId =
+                                    task {
+                                        let parent = canonicalParent control.Catalog submittedParent
+                                        let name = LibraryDecision.normalizeName submittedName
+                                        let! parentPath = resolveParentPath repositoryId control.Catalog parent
 
-                                    let destinationPath =
-                                        parentPath
-                                        + "/"
-                                        + LibraryDecision.normalizeName expectation.Name
-
-                                    let! exactVacancy = slotExpectationMatches repositoryId expectation
-                                    let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
-                                    let placement = LibraryDecision.placementRejection control.Catalog destinationPath
-
-                                    if not exactVacancy then
-                                        let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
-                                        return Ok receipt
-                                    elif placement.IsSome then
-                                        let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
-                                        return Ok receipt
-                                    elif LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true existingSlot.IsNone then
-                                        return Error "The Library current-record capacity has been reached."
-                                    else
-                                        match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
-                                        | Error reason ->
+                                        match LibraryDecision.placementRejection control.Catalog (parentPath + "/" + name) with
+                                        | Some reason ->
                                             let! receipt = reject repositoryId operationId requestHash reason control.Catalog
                                             return Ok receipt
-                                        | Ok location ->
-                                            let itemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
+                                        | None ->
+                                            let! recorded, occupantId = readOccupant repositoryId parent name
 
-                                            let ns =
-                                                {
-                                                    Parent = expectation.Parent
-                                                    Name = LibraryDecision.normalizeName expectation.Name
-                                                    NamespaceVersion = LibraryDecision.deterministicGuid repositoryId operationId "namespace"
-                                                }
+                                            let! occupant =
+                                                match occupantId with
+                                                | None -> Task.FromResult None
+                                                | Some occupantId ->
+                                                    task {
+                                                        match! readItem repositoryId occupantId with
+                                                        | Some (record, _) when
+                                                            record.Item.Tombstone.IsNone
+                                                            && record.Item.Namespace.IsSome
+                                                            ->
+                                                            return Some record.Item
+                                                        | _ -> return invalidOp "A Library slot names an item that isn't live."
+                                                    }
 
-                                            let item =
-                                                {
-                                                    ItemId = itemId
-                                                    ItemKind = ItemKind.File
-                                                    LastChangeCursor = publicCursor
-                                                    Namespace = Some ns
-                                                    Content = Some location.Content
-                                                    ContentRevision = Some publicCursor
-                                                    Tombstone = None
-                                                }
+                                            // A free name over the record limit is refused before the upload is resolved,
+                                            // as it was before #1127. An occupied name can't be: whether the create merges
+                                            // depends on its content, so a conflict copy refused after this can leave a
+                                            // content location no change names, as a refused stale edit can. A later change
+                                            // with the same bytes reuses it, and every other read starts from an accepted item.
+                                            let freeNameAtCapacity =
+                                                occupant.IsNone
+                                                && LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true (not recorded)
 
-                                            let change = acceptedChange operationId ChangeKind.CreateFile now principalId control.Catalog.Version item None
+                                            let! content =
+                                                match uploadSessionId with
+                                                | Some uploadSessionId when not freeNameAtCapacity ->
+                                                    task {
+                                                        match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
+                                                        | Ok location -> return Ok(Some location.Content)
+                                                        | Error reason -> return Error reason
+                                                    }
+                                                | _ -> Task.FromResult(Ok None)
 
-                                            return!
-                                                acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
-                                                |> submit
+                                            match freeNameAtCapacity, content with
+                                            | true, _ -> return Error "The Library current-record capacity has been reached."
+                                            | false, Error reason ->
+                                                let! receipt = reject repositoryId operationId requestHash reason control.Catalog
+                                                return Ok receipt
+                                            | false, Ok content ->
+                                                let newItem itemName =
+                                                    {
+                                                        ItemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
+                                                        ItemKind = itemKind
+                                                        LastChangeCursor = publicCursor
+                                                        Namespace =
+                                                            Some
+                                                                {
+                                                                    Parent = parent
+                                                                    Name = itemName
+                                                                    NamespaceVersion = LibraryDecision.deterministicGuid repositoryId operationId "namespace"
+                                                                }
+                                                        Content = content
+                                                        ContentRevision = content |> Option.map (fun _ -> publicCursor)
+                                                        Tombstone = None
+                                                    }
 
-                                | LibraryChangeCommand.CreateDirectory (_, _, submitted) ->
-                                    let expectation = { submitted with Parent = canonicalParent control.Catalog submitted.Parent }
-                                    let! parentPath = resolveParentPath repositoryId control.Catalog expectation.Parent
+                                                let contentVersion (value: LibraryContentVersionDto option) =
+                                                    value
+                                                    |> Option.map (fun content -> content.ContentVersionId)
 
-                                    let destinationPath =
-                                        parentPath
-                                        + "/"
-                                        + LibraryDecision.normalizeName expectation.Name
+                                                match occupant with
+                                                | None ->
+                                                    let change =
+                                                        acceptedChange operationId changeKind now principalId control.Catalog.Version (newItem name) None
 
-                                    let! exactVacancy = slotExpectationMatches repositoryId expectation
-                                    let! existingSlot = readSlot repositoryId expectation.Parent expectation.Name
-                                    let placement = LibraryDecision.placementRejection control.Catalog destinationPath
+                                                    return!
+                                                        acceptedRecord cursor requestHash correlationId change None true (not recorded)
+                                                        |> submit
+                                                | Some existing when
+                                                    existing.ItemKind = itemKind
+                                                    && (itemKind = ItemKind.Directory
+                                                        || contentVersion existing.Content = contentVersion content)
+                                                    ->
+                                                    let item = { existing with LastChangeCursor = publicCursor }
+                                                    let change = acceptedChange operationId changeKind now principalId control.Catalog.Version item None
 
-                                    if not exactVacancy then
-                                        let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
-                                        return Ok receipt
-                                    elif placement.IsSome then
-                                        let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
-                                        return Ok receipt
-                                    elif LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true existingSlot.IsNone then
-                                        return Error "The Library current-record capacity has been reached."
-                                    else
-                                        let itemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
+                                                    return!
+                                                        acceptedRecord cursor requestHash correlationId change existing.Namespace false false
+                                                        |> submit
+                                                | Some existing ->
+                                                    let! conflictName, conflictRecorded = chooseConflictSlot repositoryId parent name operationId
 
-                                        let ns =
-                                            {
-                                                Parent = expectation.Parent
-                                                Name = LibraryDecision.normalizeName expectation.Name
-                                                NamespaceVersion = LibraryDecision.deterministicGuid repositoryId operationId "namespace"
-                                            }
+                                                    match LibraryDecision.placementRejection control.Catalog (parentPath + "/" + conflictName) with
+                                                    | Some reason ->
+                                                        let! receipt = reject repositoryId operationId requestHash reason control.Catalog
+                                                        return Ok receipt
+                                                    | None when
+                                                        LibraryDecision.exceedsRecordCapacity
+                                                            control.ItemRecordCount
+                                                            control.SlotRecordCount
+                                                            true
+                                                            (not conflictRecorded)
+                                                        ->
+                                                        return Error "The Library current-record capacity has been reached."
+                                                    | None ->
+                                                        let conflict =
+                                                            { OriginalItemId = existing.ItemId; BaseContentVersionId = None; BaseContentRevision = None }
 
-                                        let item =
-                                            {
-                                                ItemId = itemId
-                                                ItemKind = ItemKind.Directory
-                                                LastChangeCursor = publicCursor
-                                                Namespace = Some ns
-                                                Content = None
-                                                ContentRevision = None
-                                                Tombstone = None
-                                            }
+                                                        let change =
+                                                            acceptedChange
+                                                                operationId
+                                                                changeKind
+                                                                now
+                                                                principalId
+                                                                control.Catalog.Version
+                                                                (newItem conflictName)
+                                                                (Some conflict)
 
-                                        let change = acceptedChange operationId ChangeKind.CreateDirectory now principalId control.Catalog.Version item None
+                                                        return!
+                                                            acceptedRecord cursor requestHash correlationId change None true (not conflictRecorded)
+                                                            |> submit
+                                    }
 
-                                        return!
-                                            acceptedRecord cursor requestHash correlationId change None true existingSlot.IsNone
-                                            |> submit
+                                match command with
+                                | LibraryChangeCommand.CreateFile (_, _, parent, name, uploadSessionId) ->
+                                    return! create ItemKind.File ChangeKind.CreateFile parent name (Some uploadSessionId)
+
+                                | LibraryChangeCommand.CreateDirectory (_, _, parent, name) ->
+                                    return! create ItemKind.Directory ChangeKind.CreateDirectory parent name None
 
                                 | LibraryChangeCommand.UpdateContent (_, _, itemId, namespacePrecondition, contentPrecondition, uploadSessionId) ->
                                     match! readItem repositoryId itemId with
@@ -1232,9 +1233,8 @@ type RepositoryLibraryActor
                                                 |> submit
                                         | Ok location ->
                                             let ns = current.Item.Namespace.Value
-                                            let! conflictName, destinationSlot = chooseConflictSlot repositoryId ns.Parent ns.Name operationId
+                                            let! conflictName, conflictRecorded = chooseConflictSlot repositoryId ns.Parent ns.Name operationId
                                             let! parentPath = resolveParentPath repositoryId control.Catalog ns.Parent
-                                            let! destinationExists = readSlot repositoryId ns.Parent conflictName
                                             let placement = LibraryDecision.placementRejection control.Catalog (parentPath + "/" + conflictName)
                                             let conflictItemId = LibraryDecision.deterministicGuid repositoryId operationId "conflict-item"
 
@@ -1263,9 +1263,7 @@ type RepositoryLibraryActor
                                                     Tombstone = None
                                                 }
 
-                                            if destinationSlot.OccupantItemId.IsSome then
-                                                return Error "The selected conflict-copy slot is no longer vacant."
-                                            elif placement.IsSome then
+                                            if placement.IsSome then
                                                 let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                                 return Ok receipt
                                             elif
@@ -1273,7 +1271,7 @@ type RepositoryLibraryActor
                                                     control.ItemRecordCount
                                                     control.SlotRecordCount
                                                     true
-                                                    destinationExists.IsNone then
+                                                    (not conflictRecorded) then
                                                 return Error "The Library current-record capacity has been reached."
                                             else
                                                 let change =
@@ -1287,7 +1285,7 @@ type RepositoryLibraryActor
                                                         (Some conflict)
 
                                                 return!
-                                                    acceptedRecord cursor requestHash correlationId change None true destinationExists.IsNone
+                                                    acceptedRecord cursor requestHash correlationId change None true (not conflictRecorded)
                                                     |> submit
 
                                 | LibraryChangeCommand.Rename (_, _, itemId, namespacePrecondition, newName) ->
@@ -1304,8 +1302,7 @@ type RepositoryLibraryActor
                                     | Some (current, _) ->
                                         let prior = current.Item.Namespace.Value
                                         let normalizedName = LibraryDecision.normalizeName newName
-                                        let! destination = getSlot repositoryId prior.Parent normalizedName
-                                        let! destinationRecord = readSlot repositoryId prior.Parent normalizedName
+                                        let! destinationRecorded, destinationOccupant = readOccupant repositoryId prior.Parent normalizedName
                                         let! parentPath = resolveParentPath repositoryId control.Catalog prior.Parent
 
                                         // A renamed directory changes the path of every live item under it.
@@ -1320,14 +1317,18 @@ type RepositoryLibraryActor
                                                     return LibraryDecision.placementRejection control.Catalog (parentPath + "/" + normalizedName)
                                             }
 
-                                        if destination.OccupantItemId.IsSome then
+                                        if destinationOccupant.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                             return Ok receipt
                                         elif placement.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                             return Ok receipt
                                         elif
-                                            LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount false destinationRecord.IsNone then
+                                            LibraryDecision.exceedsRecordCapacity
+                                                control.ItemRecordCount
+                                                control.SlotRecordCount
+                                                false
+                                                (not destinationRecorded) then
                                             return Error "The Library current-slot capacity has been reached."
                                         else
                                             let ns =
@@ -1341,7 +1342,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.Rename now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
+                                                acceptedRecord cursor requestHash correlationId change (Some prior) false (not destinationRecorded)
                                                 |> submit
 
                                 | LibraryChangeCommand.Move (_, _, itemId, namespacePrecondition, submittedParent) ->
@@ -1367,8 +1368,7 @@ type RepositoryLibraryActor
                                                 Task.FromResult false
 
                                         let! parentPath = resolveParentPath repositoryId control.Catalog destinationParent
-                                        let! destination = getSlot repositoryId destinationParent prior.Name
-                                        let! destinationRecord = readSlot repositoryId destinationParent prior.Name
+                                        let! destinationRecorded, destinationOccupant = readOccupant repositoryId destinationParent prior.Name
 
                                         // A moved directory changes the path of every live item under it.
                                         let! placement =
@@ -1384,14 +1384,18 @@ type RepositoryLibraryActor
 
                                         if cycle then
                                             return Error "A Library directory cannot move below itself."
-                                        elif destination.OccupantItemId.IsSome then
+                                        elif destinationOccupant.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash RejectionReason.SlotOccupied control.Catalog
                                             return Ok receipt
                                         elif placement.IsSome then
                                             let! receipt = reject repositoryId operationId requestHash placement.Value control.Catalog
                                             return Ok receipt
                                         elif
-                                            LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount false destinationRecord.IsNone then
+                                            LibraryDecision.exceedsRecordCapacity
+                                                control.ItemRecordCount
+                                                control.SlotRecordCount
+                                                false
+                                                (not destinationRecorded) then
                                             return Error "The Library current-slot capacity has been reached."
                                         else
                                             let ns =
@@ -1405,7 +1409,7 @@ type RepositoryLibraryActor
                                             let change = acceptedChange operationId ChangeKind.Move now principalId control.Catalog.Version item None
 
                                             return!
-                                                acceptedRecord cursor requestHash correlationId change (Some prior) false destinationRecord.IsNone
+                                                acceptedRecord cursor requestHash correlationId change (Some prior) false (not destinationRecorded)
                                                 |> submit
 
                                 | LibraryChangeCommand.Delete (_, _, itemId, namespacePrecondition, contentPrecondition) ->
@@ -1490,13 +1494,6 @@ type RepositoryLibraryActor
                                         return!
                                             acceptedRecord cursor requestHash correlationId change (Some prior) false false
                                             |> submit
-            }
-
-        member this.GetSlot parent name _ =
-            task {
-                let repositoryId = this.GetPrimaryKey()
-                let! control, _ = currentControl repositoryId
-                return! getSlot repositoryId (canonicalParent control.Catalog parent) name
             }
 
         member this.GetAcceptedChange contentRevision _ =

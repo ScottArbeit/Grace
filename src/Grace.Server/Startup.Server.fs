@@ -1762,9 +1762,6 @@ module Application =
                                route "/content/read" (composeHandlers requireLibraryRead Library.PrepareContentRead)
                                |> addMetadata typeof<PrepareLibraryContentReadParameters>
 
-                               route "/namespace/get-slot" (composeHandlers requireLibraryRead Library.GetNamespaceSlot)
-                               |> addMetadata typeof<GetLibraryNamespaceSlotParameters>
-
                                route "/status/get" (composeHandlers requireLibraryRead Library.GetStatus)
                                |> addMetadata typeof<GetLibraryStatusParameters> ]
 

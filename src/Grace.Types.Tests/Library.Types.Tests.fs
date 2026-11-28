@@ -120,11 +120,23 @@ type LibraryTypesTests() =
     [<Test>]
     member _.``change validation enforces exact field combinations``() =
         let parent = { Kind = "root"; LibraryPath = Some "shared"; ItemId = None }
-        let slot = { Parent = parent; Name = "file.txt"; ExpectedSlotVersion = Guid.NewGuid(); ExpectedState = "vacant" }
 
         let createFile = change ChangeKind.CreateFile ItemKind.File
-        createFile.CreationSlotExpectation <- Some slot
+        createFile.DestinationParent <- Some parent
+        createFile.DestinationName <- "file.txt"
         createFile.UploadSessionId <- Nullable(Guid.NewGuid())
+
+        // A create names where it goes; the server decides what happens if that name is taken.
+        let createFileWithoutName = change ChangeKind.CreateFile ItemKind.File
+        createFileWithoutName.DestinationParent <- Some parent
+        createFileWithoutName.UploadSessionId <- Nullable(Guid.NewGuid())
+
+        let createDirectory = change ChangeKind.CreateDirectory ItemKind.Directory
+        createDirectory.DestinationParent <- Some parent
+        createDirectory.DestinationName <- "folder"
+
+        let createDirectoryWithoutParent = change ChangeKind.CreateDirectory ItemKind.Directory
+        createDirectoryWithoutParent.DestinationName <- "folder"
 
         let deleteDirectory = change ChangeKind.Delete ItemKind.Directory
         deleteDirectory.ItemId <- Nullable(Guid.NewGuid())
@@ -134,11 +146,78 @@ type LibraryTypesTests() =
         let invalidRename = change ChangeKind.Rename ItemKind.File
         invalidRename.ItemId <- Nullable(Guid.NewGuid())
 
+        // A name that is present but not one portable segment is refused here, with the portable-name reason.
+        let namedCreate name =
+            let create = change ChangeKind.CreateDirectory ItemKind.Directory
+            create.DestinationParent <- Some parent
+            create.DestinationName <- name
+            create
+
+        let renameTo name =
+            let rename = change ChangeKind.Rename ItemKind.File
+            rename.ItemId <- Nullable(Guid.NewGuid())
+            rename.NamespacePrecondition <- Some { ItemId = rename.ItemId.Value; ExpectedNamespaceVersion = Guid.NewGuid() }
+            rename.DestinationName <- name
+            rename
+
+        // A parent is a root with only its path, or an item with only its ID; anything else is refused here.
+        let createUnder destination =
+            let create = change ChangeKind.CreateDirectory ItemKind.Directory
+            create.DestinationParent <- Some destination
+            create.DestinationName <- "folder"
+            create
+
+        let moveTo destination =
+            let move = change ChangeKind.Move ItemKind.File
+            move.ItemId <- Nullable(Guid.NewGuid())
+            move.NamespacePrecondition <- Some { ItemId = move.ItemId.Value; ExpectedNamespaceVersion = Guid.NewGuid() }
+            move.DestinationParent <- Some destination
+            move
+
+        let folderId = Guid.NewGuid()
+
+        let malformedParents =
+            [
+                { Kind = "item"; LibraryPath = None; ItemId = None }
+                { Kind = "item"; LibraryPath = Some "shared"; ItemId = Some folderId }
+                { Kind = "root"; LibraryPath = None; ItemId = None }
+                { Kind = "root"; LibraryPath = Some "shared"; ItemId = Some folderId }
+                { Kind = "folder"; LibraryPath = None; ItemId = Some folderId }
+            ]
+
         Assert.Multiple(
             Action (fun () ->
                 assertOk () (validateChangeShape createFile)
+                assertOk () (validateChangeShape createDirectory)
+                Assert.That(isError (validateChangeShape createFileWithoutName), Is.True)
+                Assert.That(isError (validateChangeShape createDirectoryWithoutParent), Is.True)
                 assertOk () (validateChangeShape deleteDirectory)
-                Assert.That(isError (validateChangeShape invalidRename), Is.True))
+                Assert.That(isError (validateChangeShape invalidRename), Is.True)
+
+                for destination in malformedParents do
+                    Assert.That(isError (validateChangeShape (createUnder destination)), Is.True, $"create under {destination}")
+                    Assert.That(isError (validateChangeShape (moveTo destination)), Is.True, $"move to {destination}")
+
+                let itemParent = { Kind = "item"; LibraryPath = None; ItemId = Some folderId }
+                assertOk () (validateChangeShape (createUnder itemParent))
+                assertOk () (validateChangeShape (moveTo itemParent))
+                assertOk () (validateChangeShape (moveTo parent))
+
+                for name in
+                    [
+                        ""
+                        "CON"
+                        "a/b"
+                        "trailing."
+                        "COM¹.txt"
+                        "LPT³"
+                    ] do
+                    Assert.That(isError (validateChangeShape (namedCreate name)), Is.True, $"create {name}")
+                    Assert.That(isError (validateChangeShape (renameTo name)), Is.True, $"rename {name}")
+
+                Assert.That(validateChangeShape (namedCreate ""), Is.EqualTo(Result<unit, string>.Error "A non-empty repository-relative path is required."))
+
+                assertOk () (validateChangeShape (renameTo "renamed.txt")))
         )
 
     /// Confirms hashes, tokens, and paging obey the public wire bounds.

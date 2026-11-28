@@ -79,46 +79,39 @@ module LibraryAdmissionHttpTests =
             return receipt
         }
 
-    /// Reads the current version of the slot a create expects to find vacant.
-    let private vacancy repository parent (name: string) =
-        task {
-            let request = Parameters.Library.GetLibraryNamespaceSlotParameters(Parent = Some parent, Name = name)
-            scope repository request
-            let! slot, _ = post<LibraryNamespaceSlotDto> "/libraries/namespace/get-slot" request
-            return { Parent = parent; Name = name; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
-        }
-
     /// Creates a directory and returns its receipt.
     let private createDirectory repository (catalog: LibraryCatalogDto) parent name =
-        task {
-            let! expectation = vacancy repository parent name
+        Parameters.Library.SubmitLibraryChangeParameters(
+            OperationId = Guid.NewGuid(),
+            ChangeKind = ChangeKind.CreateDirectory,
+            ItemKind = ItemKind.Directory,
+            DestinationParent = Some parent,
+            DestinationName = name
+        )
+        |> submit repository
 
-            return!
-                Parameters.Library.SubmitLibraryChangeParameters(
-                    OperationId = Guid.NewGuid(),
-                    ChangeKind = ChangeKind.CreateDirectory,
-                    ItemKind = ItemKind.Directory,
-                    CreationSlotExpectation = Some expectation
-                )
-                |> submit repository
-        }
-
-    /// Uploads bytes and creates a file from them, returning its receipt.
-    let private createFile repository (catalog: LibraryCatalogDto) parent name (text: string) =
+    /// Uploads bytes and returns the request that creates a file from them, so a test can submit it more than once.
+    let private createFileRequest repository parent name (text: string) =
         task {
             let operation = Guid.NewGuid()
             let! prepared = prepare repository operation (Encoding.UTF8.GetBytes text)
-            let! expectation = vacancy repository parent name
 
-            return!
+            return
                 Parameters.Library.SubmitLibraryChangeParameters(
                     OperationId = operation,
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable prepared.UploadSessionId,
-                    CreationSlotExpectation = Some expectation
+                    DestinationParent = Some parent,
+                    DestinationName = name
                 )
-                |> submit repository
+        }
+
+    /// Uploads bytes and creates a file from them, returning its receipt.
+    let private createFile repository (catalog: LibraryCatalogDto) parent name (text: string) =
+        task {
+            let! request = createFileRequest repository parent name text
+            return! submit repository request
         }
 
     /// Uploads new bytes for a file, claiming the given content as its base, and returns the receipt.
@@ -210,6 +203,64 @@ module LibraryAdmissionHttpTests =
             let edited = acceptedItem edited
             let! conflict = updateContent repository catalog edited original "stale edit"
             Assert.That(conflict.ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong), "conflict copy")
+        }
+
+    /// #1127: a file created at a name another copy took first keeps both versions. The same bytes merge into the file
+    /// already there, which keeps its content, revision and placement, so an edit based on it before the merge is still
+    /// an edit. Different bytes, or a file where a folder is, become a conflict copy named by the create's own operation,
+    /// and resubmitting that create, as a client does when its receipt is lost, returns the same receipt.
+    [<Test>]
+    let ``a same-name file create keeps both versions`` () =
+        task {
+            let repository = Guid.NewGuid().ToString("D")
+            let! catalog = libraryRepository repository "Shared"
+            let root = rootParent "Shared"
+            let! first = createFile repository catalog root "notes.txt" "alpha"
+            let original = acceptedItem first
+
+            let! same = createFile repository catalog root "Notes.txt" "alpha"
+            let merged = acceptedItem same
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(same.Change.Value.ChangeKind, Is.EqualTo ChangeKind.CreateFile)
+                    Assert.That(merged.ItemId, Is.EqualTo original.ItemId)
+                    Assert.That(merged.Namespace, Is.EqualTo original.Namespace)
+                    Assert.That(merged.Content, Is.EqualTo original.Content)
+                    Assert.That(merged.ContentRevision, Is.EqualTo original.ContentRevision)
+                    Assert.That(merged.LastChangeCursor, Is.Not.EqualTo original.LastChangeCursor))
+            )
+
+            let! edited = updateContent repository catalog original original "edit after the merge"
+            let edited = acceptedItem edited
+            Assert.That(edited.ItemId, Is.EqualTo original.ItemId, "An edit based on the item before the merge is still an edit.")
+
+            let! request = createFileRequest repository root "notes.txt" "beta"
+            let! different = submit repository request
+            let! resubmitted = submit repository request
+            let copy = different.Change.Value
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(different.Outcome, Is.EqualTo OutcomeKind.ConflictCopy)
+                    Assert.That(copy.ChangeKind, Is.EqualTo ChangeKind.CreateFile)
+                    Assert.That(copy.Item.ItemId, Is.Not.EqualTo original.ItemId)
+                    Assert.That(copy.Item.Namespace.Value.Parent, Is.EqualTo root)
+                    Assert.That(copy.Item.Namespace.Value.Name, Is.EqualTo(Validation.Library.conflictName "notes.txt" request.OperationId 0))
+                    Assert.That(copy.Conflict, Is.EqualTo(Some { OriginalItemId = original.ItemId; BaseContentVersionId = None; BaseContentRevision = None }))
+                    Assert.That(resubmitted, Is.EqualTo different))
+            )
+
+            let! folder = createDirectory repository catalog root "Photos"
+            let folder = acceptedItem folder
+            let! fileOnFolder = createFile repository catalog root "Photos" "not a folder"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(fileOnFolder.Outcome, Is.EqualTo OutcomeKind.ConflictCopy)
+                    Assert.That(fileOnFolder.Change.Value.Item.ItemKind, Is.EqualTo ItemKind.File)
+                    Assert.That(fileOnFolder.Change.Value.Conflict.Value.OriginalItemId, Is.EqualTo folder.ItemId))
+            )
         }
 
     /// A conflict copy follows the same capacity rule as a create: at the slot limit, a copy that needs a new slot record

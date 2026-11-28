@@ -423,24 +423,6 @@ module Library =
                     | Error reason -> return! error StatusCodes.Status403Forbidden context reason
             }
 
-    /// Reads one exact parent/name slot, including a deterministic first-generation vacancy.
-    let GetNamespaceSlot: HttpHandler =
-        fun _ context ->
-            task {
-                let ids = Services.getGraceIds context
-                let! parameters = context.BindJsonAsync<GetLibraryNamespaceSlotParameters>()
-
-                match parameters.Parent, normalizeName parameters.Name with
-                | Some parent, Ok name ->
-                    try
-                        let! slot = (libraryActor ids.RepositoryId).GetSlot parent name (Services.getCorrelationId context)
-
-                        return! ok context slot
-                    with
-                    | :? InvalidOperationException -> return! Services.result404NotFound context
-                | _ -> return! error StatusCodes.Status400BadRequest context "A parent and portable name are required."
-            }
-
     /// Returns the stored, content-free repository Library status. It reads storage directly instead of calling the
     /// actor, because activating the actor would repair a saved decision.
     let GetStatus: HttpHandler =
