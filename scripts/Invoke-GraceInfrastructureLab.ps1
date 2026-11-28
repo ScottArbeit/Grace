@@ -509,8 +509,8 @@ function Test-LabResources {
         throw "Service Bus '$serviceBusName' uses '$serviceBusSku', not Standard."
     }
 
-    Write-LabStatus 'Verifying both Service Bus topics are partitioned.'
-    foreach ($topicName in @('graceeventstream', 'grace-usage')) {
+    Write-LabStatus 'Verifying the Service Bus event topic is partitioned.'
+    foreach ($topicName in @('graceeventstream')) {
         $partitioningEnabled = Invoke-AzureCli @(
             'servicebus', 'topic', 'show',
             '--resource-group', $ResourceGroupName,
@@ -637,8 +637,6 @@ switch ($Action) {
                 'grace__azure_service_bus__namespace' = "$($outputs.serviceBusNamespace.value).servicebus.windows.net"
                 'grace__azure_service_bus__topic' = $outputs.serviceBusEventTopic.value
                 'grace__azure_service_bus__subscription' = $outputs.serviceBusEventSubscription.value
-                'grace__azure_service_bus__operational_facts_topic' = $outputs.serviceBusGraceUsageTopic.value
-                'grace__azure_service_bus__operational_facts_processor_subscription' = $outputs.serviceBusGraceUsageSubscription.value
                 'grace__operations__sql__connectionstring' = $outputs.sqlConnectionString.value
                 'grace__redis__host' = $redisDnsName
                 'grace__redis__port' = "$redisTlsPort"

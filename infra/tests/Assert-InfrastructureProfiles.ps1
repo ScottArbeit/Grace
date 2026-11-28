@@ -167,15 +167,12 @@ Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param serverPrivateKey' 
 Assert-Pattern $redisContainerModule '@secure\(\)[\s\S]*param aclFile' 'The lab Redis ACL input must be a secure Bicep parameter.'
 Assert-PatternAbsent $redisContainerModule 'output\s+\w*(password|privateKey|acl|certificate)' 'The lab Redis module must not output generated secure material.'
 
-Assert-Pattern $serviceBusModule 'graceUsageTopicName' 'The Service Bus module must use GraceUsage vocabulary for its usage topic.'
-Assert-Pattern $serviceBusModule 'graceUsageSubscriptionName' 'The Service Bus module must use GraceUsage vocabulary for its usage subscription.'
-Assert-PatternAbsent $serviceBusModule 'operationalFacts|OperationalFacts|operational-facts' 'The Service Bus template must not retain OperationalFacts vocabulary.'
-Assert-Pattern $labTemplate 'serviceBusGraceUsageTopic' 'The lab profile must expose the Grace usage topic output.'
-Assert-Pattern $productionTemplate 'serviceBusGraceUsageTopic' 'The production-shaped profile must expose the Grace usage topic output.'
+Assert-PatternAbsent $serviceBusModule '(?i)usage' 'The Service Bus module must not provision a usage topic or subscription.'
+Assert-PatternAbsent $containerAppModule 'operational_facts' 'The Grace Server container must not receive usage topic settings.'
 
 $partitionedTopicCount = ([regex]::Matches($serviceBusModule, 'enablePartitioning:\s*true')).Count
-if ($partitionedTopicCount -ne 2) {
-    throw "Both Service Bus topics must enable partitioning; found $partitionedTopicCount partitioned topic declarations."
+if ($partitionedTopicCount -ne 1) {
+    throw "The Grace event topic must enable partitioning; found $partitionedTopicCount partitioned topic declarations."
 }
 Assert-PatternAbsent $serviceBusModule 'enablePartitioning:\s*false' 'The Service Bus module must not create an unpartitioned topic.'
 Assert-Pattern $labRunner "DeploymentSuffix\s*=\s*\(Get-Date\s+-Format\s+'yyyyMMdd'\)" 'The lab runner must derive its default deployment suffix at runtime.'

@@ -31,7 +31,6 @@ module EndpointAuthorizationManifest =
     let definitions: EndpointSecurityDefinition list =
         [
             endpoint "GET" "/" AllowAnonymous
-            endpoint "GET" "/owner/usage/directory-version-observations/%s" (Authorized(OwnerAdmin, Owner))
             endpoint "POST" "/authorize/check-permission" Authenticated
             endpoint "POST" "/authorize/grant-role" (Authorized(SystemAdmin, System))
             endpoint "POST" "/authorize/list-path-permissions" (Authorized(RepositoryAdmin, Repository))
@@ -45,12 +44,6 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/manifest-contribution/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/directory-version-size/diagnose" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/admin/directory-version-size/observations/%s" (Authorized(SystemAdmin, System))
-            endpoint "GET" "/admin/directory-version-size/observations/%s" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/admin/text-content-size/observations/%s" (Authorized(SystemAdmin, System))
-            endpoint "GET" "/admin/text-content-size/observations/%s" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/admin/artifact-size/observations/%s" (Authorized(SystemAdmin, System))
-            endpoint "GET" "/admin/artifact-size/observations/%s" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/text-content-size/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/artifact-size/diagnose" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/library-content-size/diagnose" (Authorized(SystemAdmin, System))

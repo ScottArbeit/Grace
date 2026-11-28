@@ -36,10 +36,6 @@ public partial class Program
     private const string AspireResourceModeAzure = "Azure";
     private const string GraceEventTopicResourceName = "grace-event-topic";
     private const string GraceEventSubscriptionResourceName = "grace-event-subscription";
-    private const string OperationalFactsTopicResourceName = "grace-operational-facts-topic";
-    private const string GraceUsageCollectorSubscriptionName = "grace-usage-collector";
-    private const string GraceUsageCollectorSubscriptionResourceName = "grace-usage-collector-subscription";
-    private const string OperationalFactsProcessorSubscriptionSettingName = "grace__azure_service_bus__operational_facts_processor_subscription";
     private const string OperationsSqlConnectionStringSettingName = "grace__operations__sql__connectionstring";
     internal const string DebugAzureBootstrapModeEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_MODE";
     internal const string DebugAzureBootstrapUserIdEnvironmentVariable = "GRACE_DEBUGAZURE_BOOTSTRAP_USER_ID";
@@ -228,15 +224,9 @@ public partial class Program
                 var serviceBusTopicName =
                     ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic)
                     ?? Constants.GraceEventStreamTopic;
-                var operationalFactsTopicName =
-                    ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
-                    ?? Constants.GraceOperationalFactsTopic;
                 var serviceBusSubscriptionName =
                     ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription)
                     ?? "grace-server";
-                var graceUsageCollectorSubscriptionName =
-                    ResolveSetting(configuration, OperationalFactsProcessorSubscriptionSettingName)
-                    ?? GraceUsageCollectorSubscriptionName;
 
                 // Create Service Bus emulator config (when enabled for tests)
                 string? serviceBusConfigFile = null;
@@ -395,8 +385,6 @@ public partial class Program
                             )
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
 
                         graceServer.WithEnvironment(async context =>
@@ -407,39 +395,6 @@ public partial class Program
                             context.EnvironmentVariables[OperationsSqlConnectionStringSettingName] =
                                 $"Server={sqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;";
                         });
-
-                        _ = builder.AddDotnetProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
-                            .WithParentRelationship(serviceBusSql)
-                            .WithParentRelationship(serviceBusEmulator)
-                            .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
-                            .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
-                            .WithEnvironment(
-                                EnvironmentVariables.AzureServiceBusConnectionString,
-                                ReferenceExpression.Create(
-                                    $"Endpoint=sb://{serviceBusHostAndPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
-                                )
-                            )
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
-                            .WithEnvironment(async context =>
-                            {
-                                var sqlEndpoint = await serviceBusSqlEndpoint.GetValueAsync(context.CancellationToken);
-                                if (string.IsNullOrWhiteSpace(sqlEndpoint))
-                                {
-                                    throw new InvalidOperationException("Service Bus SQL endpoint was not allocated for operations worker configuration.");
-                                }
-
-                                var sqlEndpointUri = new Uri(sqlEndpoint);
-                                var sqlDataSource = BuildSqlTcpDataSource(sqlEndpointUri.Host, sqlEndpointUri.Port);
-                                context.Logger.LogInformation(
-                                    "Configured operations worker SQL data source {SqlDataSource}.",
-                                    sqlDataSource);
-                                context.EnvironmentVariables[OperationsSqlConnectionStringSettingName] =
-                                    $"Server={sqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;";
-                            })
-                            .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local")
-                            .WithOtlpExporter();
                     }
                     else
                     {
@@ -494,13 +449,9 @@ public partial class Program
                     if (string.IsNullOrWhiteSpace(serviceBusConnectionString) && string.IsNullOrWhiteSpace(serviceBusNamespace))
                     {
                         throw new InvalidOperationException(
-                            $"DebugAzure requires '{EnvironmentVariables.AzureServiceBusConnectionString}' or '{EnvironmentVariables.AzureServiceBusNamespace}' for operational usage ingestion.");
+                            $"DebugAzure requires '{EnvironmentVariables.AzureServiceBusConnectionString}' or '{EnvironmentVariables.AzureServiceBusNamespace}' for Grace events.");
                     }
                     var serviceBusTopic = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic);
-                    var operationalFactsTopic = GetRequiredSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic);
-                    EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic);
-                    var operationalFactsProcessorSubscription =
-                        GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
                     var operationsSqlConnectionString = GetRequiredSetting(configuration, OperationsSqlConnectionStringSettingName);
                     var redisHost = ResolveSetting(configuration, EnvironmentVariables.RedisHost);
@@ -534,8 +485,6 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
-                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
                         .WithEnvironment(EnvironmentVariables.RedisHost, redisHost ?? "127.0.0.1")
                         .WithEnvironment(EnvironmentVariables.RedisPort, redisPort ?? "6379")
@@ -546,17 +495,6 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
-                    _ = builder.AddDotnetProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
-                        .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
-                        .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
-                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)
-                        .WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)
-                        .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure")
-                        .WithOtlpExporter();
-
                     Console.WriteLine("Grace.Server DebugAzure environment configured (no emulators started):");
                     Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
@@ -564,7 +502,6 @@ public partial class Program
                     Console.WriteLine(string.IsNullOrWhiteSpace(redisHost)
                         ? "  - Redis: using the local unauthenticated container."
                         : "  - Redis: using the TLS-authenticated infrastructure lab endpoint.");
-                    Console.WriteLine($"  - Operational facts processor subscription: {operationalFactsProcessorSubscription}.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
                 }
@@ -593,29 +530,11 @@ public partial class Program
                 var serviceBusTopicName =
                     configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)]
                     ?? Constants.GraceEventStreamTopic;
-                var operationalFactsTopicName =
-                    configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)]
-                    ?? Constants.GraceOperationalFactsTopic;
-                EnsureDistinctServiceBusTopics(serviceBusTopicName, operationalFactsTopicName);
                 var graceEventSubscriptionName =
                     configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)]
                     ?? "grace-server";
-                var graceUsageCollectorSubscriptionName =
-                    configuration[getConfigKey(OperationalFactsProcessorSubscriptionSettingName)]
-                    ?? GraceUsageCollectorSubscriptionName;
                 _ = serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)
                     .AddServiceBusSubscription(GraceEventSubscriptionResourceName, graceEventSubscriptionName);
-                _ = serviceBus.AddServiceBusTopic(
-                        OperationalFactsTopicResourceName,
-                        operationalFactsTopicName)
-                    .WithProperties(topic =>
-                    {
-                        topic.RequiresDuplicateDetection = true;
-                        topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
-                    })
-                    .AddServiceBusSubscription(
-                        GraceUsageCollectorSubscriptionResourceName,
-                        graceUsageCollectorSubscriptionName);
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -644,8 +563,6 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
-                    .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
-                    .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, graceUsageCollectorSubscriptionName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])
@@ -743,20 +660,6 @@ public partial class Program
         var key = Shared::Grace.Shared.Utilities.getConfigKey(name);
         throw new InvalidOperationException(
             $"Missing required setting '{name}' (or '{key}') for DebugAzure.");
-    }
-
-    private static void EnsureDistinctServiceBusTopics(string? graceEventTopic, string? operationalFactsTopic)
-    {
-        if (string.IsNullOrWhiteSpace(graceEventTopic) || string.IsNullOrWhiteSpace(operationalFactsTopic))
-        {
-            return;
-        }
-
-        if (graceEventTopic.Trim().Equals(operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path.");
-        }
     }
 
     internal static string BuildSqlTcpDataSource(object host, object port)
@@ -921,16 +824,9 @@ public partial class Program
         var topicName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusTopic)
             ?? Constants.GraceEventStreamTopic;
-        var operationalFactsTopicName =
-            ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
-            ?? Constants.GraceOperationalFactsTopic;
-        EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName);
         var subscriptionName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusSubscription)
             ?? "grace-server";
-        var graceUsageCollectorSubscriptionName =
-            ResolveSetting(configuration, OperationalFactsProcessorSubscriptionSettingName)
-            ?? GraceUsageCollectorSubscriptionName;
         var testSubscriptionName = $"{subscriptionName}-tests";
 
         var config = new
@@ -974,34 +870,6 @@ public partial class Program
                                     new
                                     {
                                         Name = testSubscriptionName,
-                                        Properties = new
-                                        {
-                                            DeadLetteringOnMessageExpiration = false,
-                                            DefaultMessageTimeToLive = "PT1H",
-                                            LockDuration = "PT1M",
-                                            MaxDeliveryCount = 10,
-                                            ForwardDeadLetteredMessagesTo = "",
-                                            ForwardTo = "",
-                                            RequiresSession = false
-                                        },
-                                        Rules = Array.Empty<object>()
-                                    }
-                                }
-                            },
-                            new
-                            {
-                                Name = operationalFactsTopicName,
-                                Properties = new
-                                {
-                                    DefaultMessageTimeToLive = "PT1H",
-                                    DuplicateDetectionHistoryTimeWindow = "PT5M",
-                                    RequiresDuplicateDetection = true
-                                },
-                                Subscriptions = new[]
-                                {
-                                    new
-                                    {
-                                        Name = graceUsageCollectorSubscriptionName,
                                         Properties = new
                                         {
                                             DeadLetteringOnMessageExpiration = false,

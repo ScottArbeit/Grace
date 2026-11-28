@@ -7,10 +7,10 @@ open System
 open System.Collections.Generic
 open System.IO
 
-/// Covers Aspire AppHost wiring for the operational usage facts Service Bus topic.
+/// Covers how the Aspire AppHost wires Grace Server and its local and Azure resources.
 [<TestFixture>]
 [<NonParallelizable>]
-type OperationalFactsPublisherAppHostTests() =
+type AppHostWiringTests() =
 
     /// Reads the AppHost source so focused wiring assertions stay on the Aspire-facing test surface.
     let appHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs")))
@@ -125,85 +125,20 @@ type OperationalFactsPublisherAppHostTests() =
         withEnvironmentVariables [ settingName, "gracelab-fresh" ] (fun () ->
             Assert.That(Program.ResolveSetting(configuration, settingName), Is.EqualTo("gracelab-fresh")))
 
-    /// Verifies that AppHost provisions and forwards the same operational facts topic name.
-    [<Test>]
-    member _.AppHostConfiguresOperationalFactsTopicConsistently() =
-        let appHostSource = appHostSource ()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(appHostSource, Does.Contain("ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)"))
-
-                Assert.That(
-                    appHostSource,
-                    Does.Contain(".WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)")
-                )
-
-                Assert.That(
-                    appHostSource,
-                    Does.Contain("var operationalFactsTopic = GetRequiredSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic);")
-                )
-
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(serviceBusTopicName, operationalFactsTopicName);"))
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic)"))
-                Assert.That(appHostSource, Does.Contain("ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)"))
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName)"))
-                Assert.That(appHostSource, Does.Contain("GraceUsageCollectorSubscriptionName = \"grace-usage-collector\""))
-                Assert.That(appHostSource, Does.Not.Contain("var operationalFactsSubscriptionName = $\"{operationalFactsTopicName}-processor\";"))
-                Assert.That(appHostSource, Does.Contain("RequiresDuplicateDetection = true"))
-                Assert.That(appHostSource, Does.Contain("DuplicateDetectionHistoryTimeWindow = \"PT5M\""))
-
-                Assert.That(appHostSource, Does.Contain("graceUsageCollectorSubscriptionName"))
-                Assert.That(appHostSource, Does.Contain("Name = graceUsageCollectorSubscriptionName")))
-        )
-
     /// Verifies publish mode keeps Aspire resource identities independent from configurable Azure entity names.
     [<Test>]
-    member _.PublishModeUsesStableResourceNamesForOperationalFactEntities() =
+    member _.PublishModeUsesStableResourceNamesForGraceEventEntities() =
         let appHostSource = appHostSource ()
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(appHostSource, Does.Contain("GraceEventTopicResourceName = \"grace-event-topic\""))
                 Assert.That(appHostSource, Does.Contain("GraceEventSubscriptionResourceName = \"grace-event-subscription\""))
-                Assert.That(appHostSource, Does.Contain("OperationalFactsTopicResourceName = \"grace-operational-facts-topic\""))
-
-                Assert.That(appHostSource, Does.Contain("GraceUsageCollectorSubscriptionResourceName = \"grace-usage-collector-subscription\""))
-
                 Assert.That(appHostSource, Does.Contain("serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)"))
 
                 Assert.That(appHostSource, Does.Contain(".AddServiceBusSubscription(GraceEventSubscriptionResourceName, graceEventSubscriptionName)"))
 
-                Assert.That(appHostSource, Does.Contain("OperationalFactsTopicResourceName,"))
-                Assert.That(appHostSource, Does.Contain("operationalFactsTopicName)"))
-
-                Assert.That(appHostSource, Does.Contain("GraceUsageCollectorSubscriptionResourceName,"))
-
-                Assert.That(appHostSource, Does.Not.Contain("serviceBus.AddServiceBusTopic(serviceBusTopicName)"))
-                Assert.That(appHostSource, Does.Not.Contain("\"operational-facts\",\r\n                        operationalFactsTopicName"))
-                Assert.That(appHostSource, Does.Not.Contain(".AddServiceBusSubscription(GraceUsageCollectorSubscriptionName)")))
-        )
-
-    /// Verifies DebugAzure forwards the configured Grace usage collector subscription.
-    [<Test>]
-    member _.DebugAzureForwardsConfiguredGraceUsageCollectorSubscription() =
-        let appHostSource = appHostSource ()
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.That(
-                    appHostSource,
-                    Does.Contain("OperationalFactsProcessorSubscriptionSettingName = \"grace__azure_service_bus__operational_facts_processor_subscription\"")
-                )
-
-                Assert.That(appHostSource, Does.Contain("var operationalFactsProcessorSubscription ="))
-
-                Assert.That(appHostSource, Does.Contain("GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);"))
-
-                Assert.That(
-                    appHostSource,
-                    Does.Contain(".WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, operationalFactsProcessorSubscription)")
-                ))
+                Assert.That(appHostSource, Does.Not.Contain("serviceBus.AddServiceBusTopic(serviceBusTopicName)")))
         )
 
     /// Verifies wrapper startup suppresses retained principals and retry forwards only the authenticated user.
@@ -253,12 +188,25 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(directStart.Users, Is.EqualTo("configured-user"))
                 Assert.That(directStart.Groups, Is.EqualTo("configured-group")))
 
-    /// Verifies both server profiles forward the existing Operations SQL setting without logging its value.
+    /// Verifies both server profiles forward the Operations SQL setting without logging its value.
     [<Test>]
     member _.ServerReceivesOperationsSqlInBothProfiles() =
         let source = appHostSource ()
         Assert.That(source, Does.Contain("graceServer.WithEnvironment(async context =>"))
+        Assert.That(source, Does.Contain("Initial Catalog=GraceOperations;"))
         Assert.That(source, Does.Contain(".WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)"))
         Assert.That(source, Does.Not.Contain("Console.WriteLine(operationsSqlConnectionString"))
         Assert.That(source, Does.Not.Contain("LogInformation(operationsSqlConnectionString"))
-        Assert.That(source, Does.Contain("builder.AddDotnetProject(\"grace-operations-worker\""))
+
+    /// Verifies the AppHost runs no Operations worker and provisions only the Grace event topic.
+    [<Test>]
+    member _.AppHostHasNoOperationsWorkerOrUsageTopic() =
+        let source = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(source, Does.Not.Contain("grace-operations-worker"))
+                Assert.That(source, Does.Not.Contain("Grace.Operations.Worker"))
+                Assert.That(source, Does.Not.Contain("usage-collector"))
+                Assert.That(source, Does.Not.Contain("operational_facts")))
+        )

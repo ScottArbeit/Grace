@@ -31,7 +31,7 @@ module Library =
     /// Binds one complete committed Library declaration scan to its repository, committed cursor and non-interval read window.
     type LibraryContentSizeDiagnostic =
         {
-            Scope: UsageFactScope
+            Scope: UsageScope
             DeclaredLogicalBytes: int64
             DistinctManifestCount: int64
             CommittedCursor: int64

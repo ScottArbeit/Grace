@@ -2707,7 +2707,7 @@ module WorkItem =
     /// Keeps TextContent-specific quantities attached to their verified repository scope and non-atomic read window.
     type TextContentSizeDiagnostic =
         {
-            Scope: UsageFactScope
+            Scope: UsageScope
             DeclaredTextContentUtf8Bytes: int64
             DistinctTextContentCount: int64
             EnumerationStartedAt: Instant

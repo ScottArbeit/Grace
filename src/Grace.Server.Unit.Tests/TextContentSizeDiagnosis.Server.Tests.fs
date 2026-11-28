@@ -22,7 +22,7 @@ open NUnit.Framework
 /// Exercises retained-event declaration meaning and bounded failures without a provider or HTTP host.
 [<Parallelizable(ParallelScope.All)>]
 type TextContentSizeDiagnosisTests() =
-    let scope: UsageFactScope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
+    let scope: UsageScope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
     let workItemId = Guid.NewGuid()
 
     /// Creates immutable references with the actual current TextContent producer helper.

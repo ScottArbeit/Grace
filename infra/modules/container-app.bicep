@@ -56,12 +56,6 @@ param serviceBusEventTopic string
 @description('Grace Server event stream subscription name.')
 param serviceBusEventSubscription string
 
-@description('Grace usage topic name.')
-param serviceBusGraceUsageTopic string
-
-@description('Grace usage processor subscription name.')
-param serviceBusGraceUsageSubscription string
-
 @description('Microsoft Entra Azure SQL connection string.')
 param sqlConnectionString string
 
@@ -125,11 +119,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'grace__azure_service_bus__namespace', value: serviceBusNamespace }
             { name: 'grace__azure_service_bus__topic', value: serviceBusEventTopic }
             { name: 'grace__azure_service_bus__subscription', value: serviceBusEventSubscription }
-            { name: 'grace__azure_service_bus__operational_facts_topic', value: serviceBusGraceUsageTopic }
-            {
-              name: 'grace__azure_service_bus__operational_facts_processor_subscription'
-              value: serviceBusGraceUsageSubscription
-            }
             { name: 'grace__operations__sql__connectionstring', value: sqlConnectionString }
             { name: 'grace__redis__authentication_mode', value: 'MicrosoftEntra' }
             { name: 'grace__redis__host', value: redisHost }

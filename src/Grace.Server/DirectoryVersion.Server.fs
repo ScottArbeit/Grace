@@ -604,7 +604,7 @@ module DirectoryVersion =
     /// Binds a completed declaration count to the requested repository and its non-atomic read window.
     type DirectoryVersionSizeDiagnostic =
         {
-            Scope: UsageFactScope
+            Scope: UsageScope
             DeclaredLogicalBytes: int64
             DistinctContentCount: int64
             EnumerationStartedAt: Instant
