@@ -3632,6 +3632,62 @@ paths:
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
+  /usage/storage:
+    get:
+      tags:
+        - Usage
+      operationId: GetStorageUsage
+      summary: Read the logical bytes Grace keeps for one repository, by content class.
+      description: Requires OwnerAdmin on the given owner, including system-role inheritance. Supply all three IDs; names are not accepted. Permission is checked on the OwnerId before anything is read, so a caller without it gets the same 403 for a repository that exists and one that does not. The answer states its coverage; while it is partial, classes Grace does not count yet have no number and there is no total.
+      parameters:
+        - name: OwnerId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Non-empty owner GUID.
+        - name: OrganizationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Non-empty organization GUID.
+        - name: RepositoryId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Non-empty repository GUID. A deleted repository still answers until Grace reclaims its content.
+      responses:
+        '200':
+          description: Retained logical bytes by content class, with coverage stated. Zero is a reading, not missing data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryStorageUsageReturnValue'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          description: Authentication required before any input is read.
+        '403':
+          description: The caller lacks OwnerAdmin on the owner. Says nothing about whether the repository exists.
+        '404':
+          description: The repository does not exist, or it belongs to a different owner or organization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraceError'
+        '500':
+          $ref: '#/components/responses/500'
+        '503':
+          description: The storage meter could not be read. Retry the read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraceError'
 components:
   schemas:
     ApprovalPolicyParameters:
@@ -8917,6 +8973,88 @@ components:
         Payload:
           type: string
           format: byte
+    StorageContentClassUsage:
+      type: object
+      required:
+        - ContentClass
+        - Counted
+        - RetainedLogicalBytes
+      properties:
+        ContentClass:
+          type: string
+          enum:
+            - manifestBackedFiles
+            - wholeFiles
+            - workItemText
+            - artifactPayloads
+          description: manifestBackedFiles includes Library content.
+        Counted:
+          type: boolean
+          description: Whether Grace counts this class yet.
+        RetainedLogicalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: Logical bytes Grace keeps for this class. Null when the class is not counted yet; zero is a reading.
+          example: 2765
+    RepositoryStorageUsage:
+      type: object
+      description: The logical bytes Grace keeps for one repository, by content class. There is no total while coverage is partial.
+      required:
+        - Scope
+        - MeasuredAt
+        - Coverage
+        - ContentClasses
+      properties:
+        Scope:
+          type: object
+          required:
+            - OwnerId
+            - OrganizationId
+            - RepositoryId
+          properties:
+            OwnerId:
+              type: string
+              format: uuid
+            OrganizationId:
+              type: string
+              format: uuid
+            RepositoryId:
+              type: string
+              format: uuid
+        MeasuredAt:
+          type: string
+          description: When the storage meter answered, in UTC, using NodaTime Instant ISO serialization.
+          example: '2026-11-28T18:04:11.123Z'
+        Coverage:
+          type: string
+          enum:
+            - partial
+            - complete
+          description: complete only when every content class is counted.
+        ContentClasses:
+          type: array
+          description: Every content class Grace keeps, in a fixed order, whether it is counted yet or not.
+          items:
+            $ref: '#/components/schemas/StorageContentClassUsage'
+    RepositoryStorageUsageReturnValue:
+      type: object
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/RepositoryStorageUsage'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties: {}
     PromotionSetApprovalState:
       type: string
       enum:

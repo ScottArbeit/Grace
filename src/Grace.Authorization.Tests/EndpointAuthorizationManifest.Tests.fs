@@ -379,6 +379,7 @@ type EndpointAuthorizationManifestTests() =
     member _.MetricsAndManualRoutesUseExpectedPolicies() =
         assertRouteSecurity "GET" "/metrics" (Authorized(Operation.SystemAdmin, ResourceKind.System))
         assertRouteSecurity "GET" "/notifications" Authenticated
+        assertRouteSecurity "GET" "/usage/storage" (Authorized(Operation.OwnerAdmin, ResourceKind.Owner))
 
     /// Verifies that storage routes use expected path and repository policies.
     [<Test>]

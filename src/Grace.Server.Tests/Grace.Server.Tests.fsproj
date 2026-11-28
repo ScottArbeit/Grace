@@ -47,6 +47,7 @@
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
     <Compile Include="RestartDurability.Server.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
+    <Compile Include="StorageUsage.Server.Tests.fs" />
     <Compile Include="ManifestContributionGroupedRuntime.fs" />
     <Compile Include="ManifestContributionBaseline.Measurement.Tests.fs" />
     <Compile Include="ManifestContributionDeadLetter.Measurement.Tests.fs" />

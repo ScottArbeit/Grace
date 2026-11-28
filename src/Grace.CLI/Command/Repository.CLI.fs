@@ -894,6 +894,89 @@ module Repository =
             }
 
 
+    /// Names a content class the way people read it, for the usage table.
+    let internal contentClassLabel contentClass =
+        match contentClass with
+        | Grace.Types.Usage.StorageContentClass.ManifestBackedFiles -> "Manifest-backed files"
+        | Grace.Types.Usage.StorageContentClass.WholeFiles -> "Whole files"
+        | Grace.Types.Usage.StorageContentClass.WorkItemText -> "Work item text"
+        | Grace.Types.Usage.StorageContentClass.ArtifactPayloads -> "Artifacts"
+
+    /// Builds the usage table rows and the coverage line, so a partial answer never reads as a total.
+    let internal storageUsageLines (usage: Grace.Types.Usage.RepositoryStorageUsage) =
+        let counted =
+            usage.ContentClasses
+            |> List.filter (fun item -> item.Counted)
+            |> List.length
+
+        let coverage =
+            match usage.Coverage with
+            | Grace.Types.Usage.StorageUsageCoverage.Partial ->
+                $"Coverage: partial ({counted} of {usage.ContentClasses.Length} content classes counted). This is not a total."
+            | Grace.Types.Usage.StorageUsageCoverage.Complete -> "Coverage: complete (every content class counted)."
+
+        let rows =
+            usage.ContentClasses
+            |> List.map (fun item ->
+                contentClassLabel item.ContentClass,
+                match item.RetainedLogicalBytes with
+                | Some bytes -> bytes.ToString("N0", Globalization.CultureInfo.InvariantCulture)
+                | None -> "not counted yet")
+
+        rows, coverage
+
+    /// Repository.Usage subcommand: the retained logical bytes Grace keeps for the repository, by content class.
+    type StorageUsage() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs the usage read when System.CommandLine dispatches the parsed command.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    let parameters =
+                        Parameters.Repository.GetRepositoryParameters(
+                            OwnerId = graceIds.OwnerIdString,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            CorrelationId = getCorrelationId parseResult
+                        )
+
+                    match! Usage.GetStorage(parameters) with
+                    | Ok graceReturnValue ->
+                        if parseResult |> hasOutput then
+                            let rows, coverage = storageUsageLines graceReturnValue.ReturnValue
+                            let table = Table(Border = TableBorder.DoubleEdge)
+
+                            table.AddColumns(
+                                [|
+                                    TableColumn($"[{Colors.Important}]Content class[/]")
+                                    TableColumn($"[{Colors.Important}]Retained logical bytes[/]")
+                                        .RightAligned()
+                                |]
+                            )
+                            |> ignore
+
+                            rows
+                            |> List.iter (fun (label, bytes) ->
+                                table.AddRow(Markup.Escape label, Markup.Escape bytes)
+                                |> ignore)
+
+                            AnsiConsole.Write(table)
+                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{Markup.Escape coverage}[/]")
+
+                        return Ok graceReturnValue |> renderOutput parseResult
+                    | Error graceError -> return Error graceError |> renderOutput parseResult
+                with
+                | ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
     /// Repository.Get subcommand definition
     type Get() =
         inherit AsynchronousCommandLineAction()
@@ -2072,6 +2155,19 @@ module Repository =
 
         repositoryGetCommand.Action <- new Get()
         repositoryCommand.Subcommands.Add(repositoryGetCommand)
+
+        let repositoryUsageCommand =
+            new Command(
+                "usage",
+                Description =
+                    "Shows the logical bytes Grace keeps for a repository, by content class, and which classes are counted yet. Needs OwnerAdmin on the owner. Takes IDs, not names; IDs you leave out come from graceconfig.json."
+            )
+            |> addOption Options.ownerId
+            |> addOption Options.organizationId
+            |> addOption Options.repositoryId
+
+        repositoryUsageCommand.Action <- new StorageUsage()
+        repositoryCommand.Subcommands.Add(repositoryUsageCommand)
 
         let repositoryInitCommand =
             new Command("init", Description = "Initializes a new repository with the contents of a directory.")

@@ -1,0 +1,56 @@
+RepositoryStorageUsage:
+  type: object
+  description: The logical bytes Grace keeps for one repository, by content class. There is no total while coverage is partial.
+  required: [Scope, MeasuredAt, Coverage, ContentClasses]
+  properties:
+    Scope:
+      type: object
+      required: [OwnerId, OrganizationId, RepositoryId]
+      properties:
+        OwnerId: { type: string, format: uuid }
+        OrganizationId: { type: string, format: uuid }
+        RepositoryId: { type: string, format: uuid }
+    MeasuredAt:
+      type: string
+      description: When the storage meter answered, in UTC, using NodaTime Instant ISO serialization.
+      example: '2026-11-28T18:04:11.123Z'
+    Coverage:
+      type: string
+      enum: [partial, complete]
+      description: complete only when every content class is counted.
+    ContentClasses:
+      type: array
+      description: Every content class Grace keeps, in a fixed order, whether it is counted yet or not.
+      items:
+        $ref: '#/StorageContentClassUsage'
+StorageContentClassUsage:
+  type: object
+  required: [ContentClass, Counted, RetainedLogicalBytes]
+  properties:
+    ContentClass:
+      type: string
+      enum: [manifestBackedFiles, wholeFiles, workItemText, artifactPayloads]
+      description: manifestBackedFiles includes Library content.
+    Counted:
+      type: boolean
+      description: Whether Grace counts this class yet.
+    RetainedLogicalBytes:
+      type: integer
+      format: int64
+      minimum: 0
+      nullable: true
+      description: Logical bytes Grace keeps for this class. Null when the class is not counted yet; zero is a reading.
+      example: 2765
+RepositoryStorageUsageReturnValue:
+  type: object
+  required: [ReturnValue, EventTime, CorrelationId, Properties]
+  properties:
+    ReturnValue:
+      $ref: '#/RepositoryStorageUsage'
+    EventTime:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    CorrelationId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+    Properties:
+      type: object
+      additionalProperties: {}

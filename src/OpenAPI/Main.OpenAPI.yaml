@@ -317,6 +317,9 @@ paths:
   /libraries/status/get:
     $ref: './Libraries.Paths.OpenAPI.yaml#/~1libraries~1status~1get'
 
+  /usage/storage:
+    $ref: './Usage.Paths.OpenAPI.yaml#/~1usage~1storage'
+
 components:
   schemas:
     ApprovalPolicyParameters:

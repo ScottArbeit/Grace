@@ -146,12 +146,13 @@ type StorageUsageReadTests() =
             let! hiddenStatus, hiddenBody, hiddenReads = invoke true role query "exists" "success"
             let! missingStatus, missingBody, missingReads = invoke true role query "missing" "success"
 
+            // Authorization runs on the explicit OwnerId before anything is read.
+            Assert.That(hiddenReads, Is.Zero, "A hidden repository was read before authorization.")
+            Assert.That(missingReads, Is.Zero, "A missing repository was looked up before authorization.")
             Assert.That(hiddenStatus, Is.EqualTo 403)
             Assert.That(missingStatus, Is.EqualTo hiddenStatus)
             Assert.That(missingBody, Is.EqualTo hiddenBody)
             Assert.That(hiddenBody, Does.Not.Contain "2765")
-            Assert.That(hiddenReads, Is.Zero)
-            Assert.That(missingReads, Is.Zero)
         }
 
     /// OwnerAdmin and the system roles read the answer: manifest-backed bytes counted, the rest not counted yet.

@@ -555,7 +555,7 @@ module GraceCommand =
     let private repositoryHelpSections =
         [
             { Heading = "Create and initialize"; CommandNames = [ "create"; "init" ] }
-            { Heading = "Inspect"; CommandNames = [ "get"; "get-branches" ] }
+            { Heading = "Inspect"; CommandNames = [ "get"; "get-branches"; "usage" ] }
             {
                 Heading = "Configuration"
                 CommandNames =

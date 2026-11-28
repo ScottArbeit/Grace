@@ -29,6 +29,7 @@
 		<Compile Include="Owner.SDK.fs" />
 		<Compile Include="Organization.SDK.fs" />
 		<Compile Include="Repository.SDK.fs" />
+    <Compile Include="Usage.SDK.fs" />
 		<Compile Include="DirectoryVersion.SDK.fs" />
 		<Compile Include="Cache.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />

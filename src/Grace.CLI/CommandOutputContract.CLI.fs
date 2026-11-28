@@ -649,6 +649,7 @@ module CommandOutputContract =
             "repository.undelete", typeof<string>
             "repository.get", typeof<Grace.Types.Repository.RepositoryDto>
             "repository.get-branches", typeof<IEnumerable<Grace.Types.Branch.BranchDto>>
+            "repository.usage", typeof<Grace.Types.Usage.RepositoryStorageUsage>
             "repository.init", typeof<Grace.CLI.Common.LocalOutputDto.RepositoryInitDto>
             "library.get", typeof<Grace.Types.Library.LibraryCatalogDto>
             "library.list", typeof<Grace.Types.Library.LibraryCatalogDto>
