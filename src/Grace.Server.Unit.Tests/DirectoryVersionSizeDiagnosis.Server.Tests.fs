@@ -394,7 +394,7 @@ type DirectoryVersionSizeDiagnosisTests() =
         let parameters =
             GetRepositoryParameters(OwnerId = string scope.OwnerId, OrganizationId = string scope.OrganizationId, RepositoryId = string scope.RepositoryId)
 
-        Assert.That(validateSizeDiagnosticParameters parameters, Is.EqualTo(Ok scope: Result<UsageFactScope, string>))
+        Assert.That(validateSizeDiagnosticParameters parameters, Is.EqualTo(Ok scope: Result<UsageScope, string>))
         parameters.RepositoryName <- "ignored-name"
 
         Assert.That(

@@ -734,25 +734,6 @@ module CommandOutputContract =
                 "ReturnValue schema and example are derived from the declared result type and Grace's configured JSON serializer policy."
             ]
 
-    /// Describes the owner observation projection, whose exact decimal and UTC fields are emitted as strings by its route.
-    let private directoryVersionObservationContract =
-        supportedReturnValueContract
-            "DirectoryVersionSizeObservation"
-            "Existing observation with route-local exact decimal and UTC strings."
-            (box (
-                JsonSerializer.Deserialize<JsonElement>(
-                    """{"type":"object","required":["ObservationId","Scope","DeclaredLogicalBytes","DistinctContentCount","EnumerationStartedAt","EnumerationFinishedAt"],"properties":{"ObservationId":{"type":"string","format":"uuid"},"Scope":{"type":"object","required":["OwnerId","OrganizationId","RepositoryId"],"properties":{"OwnerId":{"type":"string","format":"uuid"},"OrganizationId":{"type":"string","format":"uuid"},"RepositoryId":{"type":"string","format":"uuid"}}},"DeclaredLogicalBytes":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Declared logical bytes, in [0,9223372036854775807]."},"DistinctContentCount":{"type":"string","pattern":"^(0|[1-9][0-9]*)$","description":"Distinct content declarations, in [0,9223372036854775807]."},"EnumerationStartedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."},"EnumerationFinishedAt":{"type":"string","description":"Exact UTC Instant, retaining up to nine fractional digits."}}}"""
-                )
-            ))
-            (box (
-                JsonSerializer.Deserialize<JsonElement>(
-                    """{"ObservationId":"11111111-1111-1111-1111-111111111111","Scope":{"OwnerId":"22222222-2222-2222-2222-222222222222","OrganizationId":"33333333-3333-3333-3333-333333333333","RepositoryId":"44444444-4444-4444-4444-444444444444"},"DeclaredLogicalBytes":"9007199254740993","DistinctContentCount":"0","EnumerationStartedAt":"2026-09-07T01:02:03.123456789Z","EnumerationFinishedAt":"2026-09-07T01:02:04.987654321Z"}"""
-                )
-            ))
-            [
-                "Retained metadata declarations; not complete storage, interval accounting or a charge. All four IDs are required; no current configuration fallback."
-            ]
-
     /// Explains why a migration-required command cannot publish a `ReturnValue` schema or example yet.
     let private migrationRequiredContract =
         incompleteReturnValueContract
@@ -967,12 +948,6 @@ module CommandOutputContract =
     /// Lists the output contract of every live leaf command.
     let entries =
         [
-            {
-                Identity = identityOfCommandId "owner.get-directory-version-observation"
-                JsonOutput = Supported
-                ReturnValueContract = directoryVersionObservationContract
-            }
-
             for commandId, resultType in declaredResultTypes do
                 {
                     Identity = identityOfCommandId commandId

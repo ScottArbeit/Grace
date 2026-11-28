@@ -189,8 +189,6 @@ module graceServer 'modules/container-app.bicep' = {
     redisPort: redis.outputs.port
     serviceBusEventSubscription: serviceBus.outputs.eventSubscriptionName
     serviceBusEventTopic: serviceBus.outputs.eventTopicName
-    serviceBusGraceUsageSubscription: serviceBus.outputs.graceUsageSubscriptionName
-    serviceBusGraceUsageTopic: serviceBus.outputs.graceUsageTopicName
     serviceBusNamespace: '${serviceBus.outputs.namespaceName}.servicebus.windows.net'
     sqlConnectionString: sql.outputs.entraConnectionString
     storageAccountName: storage.outputs.accountName
@@ -206,8 +204,6 @@ output cosmosContainerName string = cosmos.outputs.containerName
 output serviceBusNamespace string = serviceBus.outputs.namespaceName
 output serviceBusEventTopic string = serviceBus.outputs.eventTopicName
 output serviceBusEventSubscription string = serviceBus.outputs.eventSubscriptionName
-output serviceBusGraceUsageTopic string = serviceBus.outputs.graceUsageTopicName
-output serviceBusGraceUsageSubscription string = serviceBus.outputs.graceUsageSubscriptionName
 output sqlConnectionString string = sql.outputs.entraConnectionString
 output redisHostName string = redis.outputs.hostName
 output redisPort int = redis.outputs.port

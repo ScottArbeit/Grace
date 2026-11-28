@@ -1741,7 +1741,7 @@ module Services =
     /// Checks each retained document and returns direct content identities using the current storage layout.
     let private directoryVersionDeclarations
         (validateManifest: CorrelationId -> FileVersion -> FileManifest -> Result<unit, GraceError>)
-        (scope: UsageFactScope)
+        (scope: UsageScope)
         correlationId
         (row: DirectoryVersionEventValue)
         =
@@ -1802,7 +1802,7 @@ module Services =
     let internal enumerateDirectoryVersionSizeWith
         validateManifest
         (readPage: CancellationToken -> Task<DirectoryVersionEventValue array * bool>)
-        (scope: UsageFactScope)
+        (scope: UsageScope)
         correlationId
         (cancellationToken: CancellationToken)
         =
@@ -2033,7 +2033,7 @@ module Services =
         | :? JsonException as error -> raise (InvalidDataException("WorkItem source could not be decoded.", error))
 
     /// Validates the document's Created authority and returns all retained description references, including superseded content.
-    let private textContentDeclarations (scope: UsageFactScope) (events: Grace.Types.WorkItem.WorkItemEvent array) =
+    let private textContentDeclarations (scope: UsageScope) (events: Grace.Types.WorkItem.WorkItemEvent array) =
         if isNull events || events.Length = 0 then
             raise (InvalidDataException "WorkItem source is missing Created data.")
 
@@ -2084,7 +2084,7 @@ module Services =
     /// Produces a quantity only after every scoped event page is exhausted; cancellation discards the attempt.
     let internal enumerateTextContentSizeWith
         (readPage: CancellationToken -> Task<Grace.Types.WorkItem.WorkItemEvent array array * bool>)
-        (scope: UsageFactScope)
+        (scope: UsageScope)
         (cancellationToken: CancellationToken)
         =
         task {
@@ -2138,7 +2138,7 @@ module Services =
         }
 
     /// Reads the configured WorkItem partition without provisioning storage, reading blobs or materializing content.
-    let internal readTextContentSizeFromContainer (container: Container) (scope: UsageFactScope) cancellationToken =
+    let internal readTextContentSizeFromContainer (container: Container) (scope: UsageScope) cancellationToken =
         task {
             let query =
                 QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey")
@@ -2237,7 +2237,7 @@ module Services =
         | :? JsonException as error -> raise (InvalidDataException("Artifact source could not be decoded.", error))
 
     /// Projects one surviving stream and rejects a change of identity or scope inside it.
-    let internal projectArtifactSize (scope: UsageFactScope) (events: Grace.Types.Artifact.ArtifactEvent array) =
+    let internal projectArtifactSize (scope: UsageScope) (events: Grace.Types.Artifact.ArtifactEvent array) =
         if isNull events then raise (InvalidDataException "Artifact State is missing.")
 
         if events.Length = 0 then
@@ -2293,7 +2293,7 @@ module Services =
     /// Reads to exhaustion and returns no partial quantity when a provider or cancellation fails.
     let internal enumerateArtifactSizeWith
         (readPage: CancellationToken -> Task<Grace.Types.Artifact.ArtifactEvent array array * bool>)
-        (scope: UsageFactScope)
+        (scope: UsageScope)
         (token: CancellationToken)
         =
         task {
@@ -2332,7 +2332,7 @@ module Services =
         }
 
     /// Queries every Artifact document in the existing repository partition, including empty State shells.
-    let internal readArtifactSizeFromContainer (container: Container) (scope: UsageFactScope) cancellationToken =
+    let internal readArtifactSizeFromContainer (container: Container) (scope: UsageScope) cancellationToken =
         task {
             let query =
                 QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey")

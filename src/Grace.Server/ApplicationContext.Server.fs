@@ -43,10 +43,6 @@ open Microsoft.AspNetCore.SignalR
 /// Contains Grace Server application context behavior and supporting helpers.
 module ApplicationContext =
 
-    /// Environment variable that acknowledges the durable operational facts processor subscription exists.
-    [<Literal>]
-    let private AzureServiceBusOperationalFactsProcessorSubscription = "grace__azure_service_bus__operational_facts_processor_subscription"
-
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
@@ -267,25 +263,6 @@ module ApplicationContext =
                 if String.IsNullOrWhiteSpace(topic) then
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
-
-                let operationalFactsTopic = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusOperationalFactsTopic
-
-                if String.IsNullOrWhiteSpace(operationalFactsTopic) then
-                    invalidOp
-                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
-
-                if String.Equals(topic.Trim(), operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase) then
-                    invalidOp
-                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path."
-
-                let operationalFactsProcessorSubscription =
-                    match Environment.GetEnvironmentVariable AzureServiceBusOperationalFactsProcessorSubscription with
-                    | null -> String.Empty
-                    | value -> value.Trim()
-
-                if String.IsNullOrWhiteSpace operationalFactsProcessorSubscription then
-                    invalidOp
-                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must name the durable usage collector subscription on topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 

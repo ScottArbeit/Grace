@@ -127,7 +127,7 @@ The lab profile creates these top-level billable resources in one disposable res
 
 - Standard LRS StorageV2 account and Grace blob containers
 - Cosmos DB for NoSQL serverless account, database, and `/PartitionKey` container
-- Service Bus Standard namespace with partitioned Grace event and operational-usage topics and subscriptions
+- Service Bus Standard namespace with a partitioned Grace event topic and subscription
 - Azure SQL Database General Purpose serverless database with Microsoft Entra-only administration
 - Public TLS-only Azure Container Instances group running `redis:7.4-alpine`
 

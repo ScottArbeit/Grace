@@ -15,7 +15,6 @@ open Grace.Shared.Utilities
 open Grace.Types.Artifact
 open Grace.Types.Common
 open Microsoft.Azure.Cosmos
-open Microsoft.Data.SqlClient
 open NUnit.Framework
 
 /// Exercises public Artifact creation and the internal diagnostic against actual hosted actor persistence.
@@ -234,32 +233,6 @@ type ArtifactSizeDiagnosisHttpTests() =
             Assert.That(positiveBlobBefore.Value, Is.False)
             Assert.That(zeroBlobBefore.Value, Is.False)
 
-            /// Independently counts the existing usage and observation SQL tables for this isolated repository.
-            let sqlCounts () =
-                task {
-                    use connection = new SqlConnection(HostState.Value.OperationsSqlConnectionString)
-                    do! connection.OpenAsync()
-                    let counts = ResizeArray<int>()
-
-                    for table in
-                        [
-                            "ops.RawUsageFact"
-                            "ops.UsageAggregateMinute"
-                            "ops.DirectoryVersionSizeObservation"
-                            "ops.TextContentSizeObservation"
-                        ] do
-                        use command = new SqlCommand($"SELECT COUNT(*) FROM {table} WHERE RepositoryId=@repository", connection)
-
-                        command.Parameters.AddWithValue("@repository", repository)
-                        |> ignore
-
-                        let! count = command.ExecuteScalarAsync()
-                        counts.Add(unbox<int> count)
-
-                    return counts.ToArray()
-                }
-
-            let! sqlBefore = sqlCounts ()
             let! before, pages = stored ()
             Assert.That(pages, Is.GreaterThan 1, "The source exceeds the production page hint.")
             let! result, wire = diagnose parameters
@@ -278,8 +251,6 @@ type ArtifactSizeDiagnosisHttpTests() =
                 |> Array.sort
 
             Assert.That(wires after, Is.EqualTo(box (wires before)), "Diagnostic must not mutate source, usage or counter documents.")
-            let! sqlAfter = sqlCounts ()
-            Assert.That(sqlAfter, Is.EqualTo(box sqlBefore))
 
             let! positiveBlobAfter =
                 blobs

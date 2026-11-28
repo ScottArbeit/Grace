@@ -19,7 +19,7 @@ open NUnit.Framework
 /// Checks retained Artifact declaration projection, complete enumeration and repository revalidation without hosting.
 [<Parallelizable(ParallelScope.All)>]
 type ArtifactSizeDiagnosisTests() =
-    let scope: UsageFactScope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
+    let scope: UsageScope = { OwnerId = Guid.NewGuid(); OrganizationId = Guid.NewGuid(); RepositoryId = Guid.NewGuid() }
 
     let metadata =
         { ArtifactMetadata.Default with
