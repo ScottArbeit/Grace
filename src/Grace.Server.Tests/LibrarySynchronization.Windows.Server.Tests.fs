@@ -3497,20 +3497,42 @@ module LibrarySynchronizationWindowsServerTests =
             let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "same-name-freed"
             use proxy = createdProxy
             File.WriteAllText(Path.Combine(copyB, "Library", "notes.txt"), "created on B")
+            let freed = ref None
 
             proxy.BeforeNextSubmit (fun () ->
                 task {
                     let! held = createFileOverHttpAsync repositoryId "notes.txt" "held briefly elsewhere"
-                    let! _ = changeNamespaceAsync repositoryId held true
+                    let! deleted = changeNamespaceAsync repositoryId held true
+                    freed.Value <- Some deleted
                     return raise (InvalidOperationException("Injected submit failure."))
                 }
                 :> Task)
 
             let! failed = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
             Assert.That(failed.ExitCode, Is.Not.Zero, failed.StandardOutput + failed.StandardError)
+
+            // The name really was taken and given up while B's create waited.
+            Assert.That(
+                freed.Value
+                |> Option.exists (fun deleted -> deleted.Item.Tombstone.IsSome),
+                Is.True,
+                "The other copy's create and delete didn't commit."
+            )
+
+            let createB = localCreateId copyB repositoryId "Library/notes.txt"
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
             let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
             do! requireConvergedAsync proxy.BaseAddress [| copyA; copyB |] [| "notes.txt", "created on B" |] [||]
+
+            // The file at the name is B's own frozen create, not a new one.
+            let liveAtName copy =
+                Grace.CLI.LibraryLocalState.readItems (localDb copy) repositoryId
+                |> Array.filter (fun item -> item.Tombstone.IsNone)
+                |> Array.map (fun item -> item.ItemId)
+
+            let createdByB = Grace.Actors.LibraryDecision.deterministicGuid repositoryId createB "item"
+            Assert.That(liveAtName copyA, Is.EqualTo<Guid array>([| createdByB |]))
+            Assert.That(liveAtName copyB, Is.EqualTo<Guid array>([| createdByB |]))
         }
 
     /// #1127: A and B both create Photos. A adds a.txt, B adds b.txt, and both add cover.txt with different bytes. Every

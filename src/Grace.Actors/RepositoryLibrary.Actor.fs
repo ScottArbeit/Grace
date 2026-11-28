@@ -1074,37 +1074,44 @@ type RepositoryLibraryActor
                                             let! receipt = reject repositoryId operationId requestHash reason control.Catalog
                                             return Ok receipt
                                         | None ->
+                                            let! recorded, occupantId = readOccupant repositoryId parent name
+
+                                            let! occupant =
+                                                match occupantId with
+                                                | None -> Task.FromResult None
+                                                | Some occupantId ->
+                                                    task {
+                                                        match! readItem repositoryId occupantId with
+                                                        | Some (record, _) when
+                                                            record.Item.Tombstone.IsNone
+                                                            && record.Item.Namespace.IsSome
+                                                            ->
+                                                            return Some record.Item
+                                                        | _ -> return invalidOp "A Library slot names an item that isn't live."
+                                                    }
+
+                                            // A free name over the record limit is refused before the upload is resolved,
+                                            // so a refused create never writes a content location.
+                                            let freeNameAtCapacity =
+                                                occupant.IsNone
+                                                && LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true (not recorded)
+
                                             let! content =
                                                 match uploadSessionId with
-                                                | None -> Task.FromResult(Ok None)
-                                                | Some uploadSessionId ->
+                                                | Some uploadSessionId when not freeNameAtCapacity ->
                                                     task {
                                                         match! resolveUpload repositoryId operationId principalId uploadSessionId correlationId with
                                                         | Ok location -> return Ok(Some location.Content)
                                                         | Error reason -> return Error reason
                                                     }
+                                                | _ -> Task.FromResult(Ok None)
 
-                                            match content with
-                                            | Error reason ->
+                                            match freeNameAtCapacity, content with
+                                            | true, _ -> return Error "The Library current-record capacity has been reached."
+                                            | false, Error reason ->
                                                 let! receipt = reject repositoryId operationId requestHash reason control.Catalog
                                                 return Ok receipt
-                                            | Ok content ->
-                                                let! recorded, occupantId = readOccupant repositoryId parent name
-
-                                                let! occupant =
-                                                    match occupantId with
-                                                    | None -> Task.FromResult None
-                                                    | Some occupantId ->
-                                                        task {
-                                                            match! readItem repositoryId occupantId with
-                                                            | Some (record, _) when
-                                                                record.Item.Tombstone.IsNone
-                                                                && record.Item.Namespace.IsSome
-                                                                ->
-                                                                return Some record.Item
-                                                            | _ -> return invalidOp "A Library slot names an item that isn't live."
-                                                        }
-
+                                            | false, Ok content ->
                                                 let newItem itemName =
                                                     {
                                                         ItemId = LibraryDecision.deterministicGuid repositoryId operationId "item"
@@ -1128,15 +1135,12 @@ type RepositoryLibraryActor
 
                                                 match occupant with
                                                 | None ->
-                                                    if LibraryDecision.exceedsRecordCapacity control.ItemRecordCount control.SlotRecordCount true (not recorded) then
-                                                        return Error "The Library current-record capacity has been reached."
-                                                    else
-                                                        let change =
-                                                            acceptedChange operationId changeKind now principalId control.Catalog.Version (newItem name) None
+                                                    let change =
+                                                        acceptedChange operationId changeKind now principalId control.Catalog.Version (newItem name) None
 
-                                                        return!
-                                                            acceptedRecord cursor requestHash correlationId change None true (not recorded)
-                                                            |> submit
+                                                    return!
+                                                        acceptedRecord cursor requestHash correlationId change None true (not recorded)
+                                                        |> submit
                                                 | Some existing when
                                                     existing.ItemKind = itemKind
                                                     && (itemKind = ItemKind.Directory

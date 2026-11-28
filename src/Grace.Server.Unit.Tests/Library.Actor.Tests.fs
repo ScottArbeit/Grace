@@ -1021,6 +1021,73 @@ type LibraryActorTests() =
             )
         }
 
+    /// #1127: a merge saved by Submit but never finished, as after a crash right after the decision was reserved, is
+    /// finished by the next turn exactly as the first turn would have finished it: the same receipt, the folder's slot
+    /// left alone, and no record added. The saved decision is the one a real merge produced.
+    [<Test>]
+    member _.SavedMergeIsFinishedByRepairWithTheSameResult() =
+        task {
+            let folder = liveItem (Guid.NewGuid()) ItemKind.Directory longRootParent "Photos" (Guid.NewGuid())
+            let operation = Guid.NewGuid()
+            let firstActor, firstStorage, firstProvider = memoryActor (controlWith longRootCatalog 1L 1 1) (fun storage -> seedOccupant storage folder)
+            use _firstProvider = firstProvider
+            let! first = firstActor.Submit (createDirectory operation "Photos") "user:test" authorization "corr-merge"
+            let expected = receiptOf first
+
+            let saved =
+                firstStorage
+                    .TryGet<LibraryAcceptedChangeRecord>(
+                        LibraryRecords.changeType,
+                        LibraryRecords.changeKey repositoryId 2L
+                    )
+                    .Value
+
+            let crashed = { controlWith longRootCatalog 1L 1 1 with Pending = Some(LibraryPendingDecision.ItemChange saved) }
+            let actor, storage, provider = memoryActor crashed (fun storage -> seedOccupant storage folder)
+            use _provider = provider
+            let! repaired = actor.Submit (createDirectory operation "Photos") "user:test" authorization "corr-merge-retry"
+            let control = storedControl storage
+
+            let slot =
+                storage
+                    .TryGet<LibraryCurrentSlotDocument>(
+                        "Grace.Library.Slot.v2",
+                        LibraryRecords.key [ repositoryId.ToString("D")
+                                             "slot"
+                                             LibraryDecision.slotKey longRootParent "Photos" ]
+                    )
+                    .Value
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(receiptOf repaired, Is.EqualTo(expected))
+                    Assert.That(control.Pending, Is.EqualTo(None: LibraryPendingDecision option))
+                    Assert.That(control.CommittedCursor, Is.EqualTo(2L))
+                    Assert.That(control.ItemRecordCount, Is.EqualTo(1))
+                    Assert.That(control.SlotRecordCount, Is.EqualTo(1))
+                    Assert.That(slot.LastCursor, Is.EqualTo(1L), "The merge doesn't rewrite the slot the folder already holds.")
+                    Assert.That(slot.Slot.OccupantItemId, Is.EqualTo(Some folder.ItemId)))
+            )
+        }
+
+    /// A file create at a free name past the record limit is refused before its upload is read, so a refused create
+    /// never writes a content location. This test actor has no upload sessions, so reading one would fail the turn.
+    [<Test>]
+    member _.FreeNameCreateAtCapacityIsRefusedBeforeItsUploadIsRead() =
+        task {
+            let full = LibraryDecision.MaximumRecordCount
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 0L full 0) ignore
+            use _provider = provider
+            let operation = Guid.NewGuid()
+            let create = LibraryChangeCommand.CreateFile(operation, $"create-file-{operation:N}", longRootParent, "new.txt", Guid.NewGuid())
+
+            let! result = actor.Submit create "user:test" authorization "corr-file-capacity"
+
+            match result with
+            | Error reason -> Assert.That(reason, Does.Contain("capacity"))
+            | Ok receipt -> Assert.Fail($"A create past the record limit was answered: {receipt.Outcome}.")
+        }
+
     /// #1127: a free name takes the create, whatever it held before. A name another item once used and gave up is free.
     [<Test>]
     member _.CreateTakesANameThatWasUsedAndFreed() =
