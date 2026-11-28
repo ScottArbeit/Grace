@@ -3658,3 +3658,186 @@ module LibrarySynchronizationWindowsServerTests =
                     |]
                     [||]
         }
+
+    /// The composed (NFC) and decomposed spellings of 'café', written as escapes so an editor can't normalize either.
+    let private composedCafe, decomposedCafe = "café", "café"
+
+    /// #1133: B creates a folder or a file whose name is decomposed, as names from macOS often are. Every copy ends with
+    /// it under the composed name the server stores, and nothing is left under the decomposed one.
+    [<TestCase(true); TestCase(false)>]
+    let ``a decomposed Library name syncs under its composed spelling`` folder =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, _, createdProxy = enableCopiesAsync (if folder then "nfd-folder" else "nfd-file")
+            use proxy = createdProxy
+            let libraryB = Path.Combine(copyB, "Library")
+
+            if folder then
+                Directory.CreateDirectory(Path.Combine(libraryB, decomposedCafe))
+                |> ignore
+
+                File.WriteAllText(Path.Combine(libraryB, decomposedCafe, "cover.txt"), "cover from B")
+            else
+                File.WriteAllText(Path.Combine(libraryB, decomposedCafe + ".txt"), "notes from B")
+
+            // A copy captures a folder's files once the folder has synced, so B needs two runs.
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            if folder then
+                do!
+                    requireConvergedAsync
+                        proxy.BaseAddress
+                        [| copyA; copyB |]
+                        [|
+                            composedCafe + "/cover.txt", "cover from B"
+                        |]
+                        [| composedCafe |]
+            else
+                do!
+                    requireConvergedAsync
+                        proxy.BaseAddress
+                        [| copyA; copyB |]
+                        [|
+                            composedCafe + ".txt", "notes from B"
+                        |]
+                        [||]
+        }
+
+    /// #1133: A creates 'café' and B creates its decomposed spelling, each with a file inside, before either syncs. B's
+    /// folder takes the composed name, the server merges the two folders, and every copy ends with one folder holding
+    /// both files.
+    [<Test>]
+    let ``a composed folder and a decomposed folder made on two copies end as one folder`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, _, createdProxy = enableCopiesAsync "nfd-two-copies"
+            use proxy = createdProxy
+            let folderA = Path.Combine(copyA, "Library", composedCafe)
+            let folderB = Path.Combine(copyB, "Library", decomposedCafe)
+            Directory.CreateDirectory(folderA) |> ignore
+            Directory.CreateDirectory(folderB) |> ignore
+            File.WriteAllText(Path.Combine(folderA, "a.txt"), "only on A")
+            File.WriteAllText(Path.Combine(folderB, "b.txt"), "only on B")
+
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        composedCafe + "/a.txt", "only on A"
+                        composedCafe + "/b.txt", "only on B"
+                    |]
+                    [| composedCafe |]
+        }
+
+    /// #1133: a copy that holds both spellings side by side can't tell which one the person means, so sync stops with a
+    /// message naming both and renames or loses nothing. Once the person keeps one, sync carries on.
+    [<Test>]
+    let ``a copy holding both spellings of one name stops and changes neither`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, repositoryId, createdProxy = enableCopiesAsync "nfd-both-spellings"
+            use proxy = createdProxy
+            let composedA = Path.Combine(copyA, "Library", composedCafe)
+            Directory.CreateDirectory(composedA) |> ignore
+            File.WriteAllText(Path.Combine(composedA, "a.txt"), "only on A")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let composedB = Path.Combine(copyB, "Library", composedCafe)
+            let decomposedB = Path.Combine(copyB, "Library", decomposedCafe)
+            Directory.CreateDirectory(decomposedB) |> ignore
+            File.WriteAllText(Path.Combine(decomposedB, "b.txt"), "only on B")
+
+            let! stopped = runGraceAsync copyB proxy.BaseAddress (syncCommand "run")
+            Assert.That(stopped.ExitCode, Is.Not.Zero, stopped.StandardOutput + stopped.StandardError)
+
+            let failure =
+                (Grace.CLI.LibraryLocalState.readHealth (localDb copyB) repositoryId)
+                    .LastFailure
+
+            Assert.That(failure.IsSome, Is.True, stopped.StandardOutput + stopped.StandardError)
+            let message = failure.Value.Message
+            Assert.That(message.Contains($"'{composedCafe}'", StringComparison.Ordinal), Is.True, message)
+            Assert.That(message.Contains("'cafe' + U+0301", StringComparison.Ordinal), Is.True, message)
+            Assert.That(failure.Value.Path, Is.EqualTo(Some $"Library/{decomposedCafe}"))
+            Assert.That(failure.Value.NextStep, Is.EqualTo(LibrarySynchronization.twoSpellingsNextStep))
+
+            // Nothing was renamed, moved, or lost.
+            Assert.That(
+                libraryContents copyB,
+                Is.EqualTo<(string * string) array>(
+                    sortContents [| composedCafe + "/a.txt", "only on A"
+                                    decomposedCafe + "/b.txt", "only on B" |]
+                )
+            )
+
+            // The person keeps the composed folder, and sync carries on.
+            File.Move(Path.Combine(decomposedB, "b.txt"), Path.Combine(composedB, "b.txt"))
+            Directory.Delete(decomposedB)
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        composedCafe + "/a.txt", "only on A"
+                        composedCafe + "/b.txt", "only on B"
+                    |]
+                    [| composedCafe |]
+        }
+
+    /// #1133: B's saved edit inside 'café' is waiting to submit when the folder's name turns decomposed on disk, as when a
+    /// tool from macOS rewrites it. Capture gives the folder its composed name back before applying anything, so the
+    /// edit's recorded path still names the file, the edit lands, and nothing is captured twice.
+    [<Test>]
+    let ``a pending edit inside a folder whose name turns decomposed still lands`` () =
+        task {
+            if not (OperatingSystem.IsWindows()) then
+                Assert.Ignore("Windows filesystem contract.")
+
+            let! copyA, copyB, _, createdProxy = enableCopiesAsync "nfd-pending-edit"
+            use proxy = createdProxy
+            let composedA = Path.Combine(copyA, "Library", composedCafe)
+            Directory.CreateDirectory(composedA) |> ignore
+            File.WriteAllText(Path.Combine(composedA, "cover.txt"), "first version")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+
+            let composedB = Path.Combine(copyB, "Library", composedCafe)
+            File.WriteAllText(Path.Combine(composedB, "cover.txt"), "edited on B")
+
+            proxy.BeforeNextSubmit (fun () ->
+                Directory.Move(composedB, Path.Combine(copyB, "Library", decomposedCafe))
+                Task.CompletedTask)
+
+            let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
+            let! _ = requireGraceSuccessAsync copyA proxy.BaseAddress (syncCommand "run")
+
+            do!
+                requireConvergedAsync
+                    proxy.BaseAddress
+                    [| copyA; copyB |]
+                    [|
+                        composedCafe + "/cover.txt", "edited on B"
+                    |]
+                    [| composedCafe |]
+        }
