@@ -245,7 +245,7 @@ module Artifact =
     /// Keeps declared bytes and distinct identities attached to verified scope and the non-atomic read window.
     type ArtifactSizeDiagnostic =
         {
-            Scope: UsageFactScope
+            Scope: UsageScope
             DeclaredArtifactBytes: int64
             DistinctArtifactCount: int64
             EnumerationStartedAt: Instant
@@ -292,7 +292,7 @@ module Artifact =
         }
 
     /// Requires a present, nondeleted repository bound to the three requested identifiers.
-    let private checkArtifactSizeRepository (scope: UsageFactScope) correlationId (token: CancellationToken) =
+    let private checkArtifactSizeRepository (scope: UsageScope) correlationId (token: CancellationToken) =
         task {
             let repositoryActor = Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
 

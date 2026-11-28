@@ -493,14 +493,6 @@ module StartBannerTests =
                 .SetName("examples draws no bar")
             TestCaseData([| "doctor" |], NoStartBanner)
                 .SetName("doctor draws no bar")
-            TestCaseData(
-                [|
-                    "repository"
-                    "get-directory-version-observation"
-                |],
-                NoStartBanner
-            )
-                .SetName("observation lookup draws no bar")
             TestCaseData([| "brnch"; "status" |], NoStartBanner)
                 .SetName("unknown command draws no early bar")
             TestCaseData(Array.empty<string>, NoStartBanner)

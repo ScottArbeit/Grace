@@ -640,15 +640,7 @@ module GraceCommand =
 
     let private ownerHelpSections =
         [
-            {
-                Heading = "Create and inspect"
-                CommandNames =
-                    [
-                        "create"
-                        "get"
-                        "get-directory-version-observation"
-                    ]
-            }
+            { Heading = "Create and inspect"; CommandNames = [ "create"; "get" ] }
             {
                 Heading = "Settings"
                 CommandNames =
@@ -1014,7 +1006,6 @@ module GraceCommand =
                 || token.StartsWith(OptionName.Schema, StringComparison.OrdinalIgnoreCase)
                 || token.StartsWith(OptionName.Examples, StringComparison.OrdinalIgnoreCase)
                 || token.StartsWith(OptionName.Select, StringComparison.OrdinalIgnoreCase)
-                || token.Equals("get-directory-version-observation", StringComparison.OrdinalIgnoreCase)
                 // A response file (`@file`) can supply any option, including --output Json.
                 || token.StartsWith("@", StringComparison.Ordinal))
 
@@ -1576,9 +1567,6 @@ module GraceCommand =
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
-                    else if parseResult.CommandResult.Command.Name = "get-directory-version-observation" then
-                        // Historical observation selectors are explicit and do not require a local repository.
-                        returnValue <- parseResult.Invoke()
                     else if configurationFileExists () then
                         match tryGetJsonConfigurationError parseResult with
                         | Some error ->

@@ -68,7 +68,6 @@ type OpenApiRouteCoverageTests() =
     let openApiComparablePath path =
         match path with
         | "/libraries/content/%s" -> "/libraries/content/{readToken}"
-        | "/owner/usage/directory-version-observations/%s" -> "/owner/usage/directory-version-observations/{observationId}"
         | _ -> path
 
     /// Asserts bundled schema is unique.

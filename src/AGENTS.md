@@ -46,7 +46,7 @@ materializing content or revealing that a resource exists.
 | Server helpers and contracts that need no HTTP host, emulators, or Aspire | `Grace.Server.Unit.Tests` |
 | HTTP flows, Aspire resources, storage routes, actor behavior through the server | `Grace.Server.Tests` |
 | CLI parsing, command routing, local config and history | `Grace.CLI.Tests` |
-| Operations boundary, data, and worker | `Grace.Operations.Tests` |
+| Operations SQL connection and schema setup | `Grace.Operations.Tests` |
 | Cache read boundary (C# endpoint tests) | `Grace.Cache.Tests` |
 | Cache artifact storage | `Grace.Cache.Storage.Tests` |
 

@@ -217,25 +217,13 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 - `grace__azure_service_bus__connectionstring`: Service Bus connection string.
 - `grace__azure_service_bus__namespace`: Service Bus namespace.
 - `grace__azure_service_bus__topic`: Service Bus topic name.
-- `grace__azure_service_bus__operational_facts_topic`: Service Bus topic for operational usage facts. Defaults to
-  `grace-operational-facts` in Aspire-managed local and publish configurations.
-- `grace__azure_service_bus__operational_facts_processor_subscription`: Required Azure Service Bus startup
-  acknowledgement naming the durable usage collector subscription. The infrastructure lab uses `grace-usage-collector`.
 - `grace__azure_service_bus__subscription`: Service Bus subscription name.
 
-### Operations Worker
+### Operations SQL
 
-- `grace__operations__sql__connectionstring`: SQL Server connection string used by `Grace.Operations.Worker` for raw
-  usage facts and minute aggregates. Aspire local run mode points this at the local SQL Server container and database
-  `GraceOperations`.
-- `grace__operations_worker__max_concurrent_calls`: Optional Service Bus processor concurrency override. Defaults to
-  `4`.
-- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `16`.
-
-The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and consumes the durable
-subscription named by `grace__azure_service_bus__operational_facts_processor_subscription`.
-Malformed or unsupported usage fact messages are dead-lettered; transient storage failures are abandoned for retry.
-Messages are completed only after SQL processing succeeds or the durable usage fact identity is already present.
+- `grace__operations__sql__connectionstring`: SQL Server connection string for the `GraceOperations` database. Aspire
+  and the infrastructure lab pass it to Grace Server. Local run mode points it at the SQL Server container that also
+  backs the Service Bus emulator; DebugAzure and the infrastructure lab point it at Azure SQL.
 
 ### Redis
 

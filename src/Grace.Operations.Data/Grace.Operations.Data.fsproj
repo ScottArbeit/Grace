@@ -12,14 +12,10 @@
 
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
-    <Compile Include="DirectoryVersionSizeObservation.fs" />
-    <Compile Include="TextContentSizeObservation.fs" />
-    <Compile Include="ArtifactSizeObservation.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Grace.Operations\Grace.Operations.fsproj" />
     <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
   </ItemGroup>
 
