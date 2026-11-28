@@ -3797,20 +3797,6 @@ module LibraryRestartScenarios =
             Assert.That(addReplay, Is.EqualTo(configuredCatalogResult))
 
             let parent = { Kind = "root"; LibraryPath = Some libraryPath; ItemId = None }
-            let getSlot = Parameters.Library.GetLibraryNamespaceSlotParameters()
-            getSlot.OwnerId <- ownerId
-            getSlot.OrganizationId <- organizationId
-            getSlot.RepositoryId <- repositoryId
-            getSlot.Parent <- Some parent
-            getSlot.Name <- fileName
-            getSlot.CorrelationId <- correlationId
-            use! slotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent getSlot)
-            let! slotBody = slotResponse.Content.ReadAsStringAsync()
-            Assert.That(slotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), slotBody)
-
-            let slot =
-                (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> slotBody)
-                    .ReturnValue
 
             let prepare = Parameters.Library.PrepareLibraryContentParameters()
             prepare.OwnerId <- ownerId
@@ -3886,7 +3872,8 @@ module LibraryRestartScenarios =
             submit.ChangeKind <- ChangeKind.CreateFile
             submit.ItemKind <- ItemKind.File
             submit.UploadSessionId <- Nullable prepared.UploadSessionId
-            submit.CreationSlotExpectation <- Some { Parent = parent; Name = fileName; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+            submit.DestinationParent <- Some parent
+            submit.DestinationName <- fileName
             submit.CorrelationId <- correlationId
 
             /// Submits Library changes through HTTP and includes server logs on failure.
@@ -4023,15 +4010,8 @@ module LibraryRestartScenarios =
                 expiredSubmit.ItemKind <- ItemKind.File
                 expiredSubmit.UploadSessionId <- Nullable expiredPreparation.UploadSessionId
 
-                expiredSubmit.CreationSlotExpectation <-
-                    Some
-                        {
-                            Parent = parent
-                            Name = "expired.bin"
-                            ExpectedSlotVersion = Grace.Actors.LibraryDecision.initialSlotVersion (Guid.Parse repositoryId) parent "expired.bin"
-                            ExpectedState = "vacant"
-                        }
-
+                expiredSubmit.DestinationParent <- Some parent
+                expiredSubmit.DestinationName <- "expired.bin"
                 expiredSubmit.CorrelationId <- correlationId
                 let state = HostState.Value
 
@@ -4419,20 +4399,6 @@ module LibraryRestartScenarios =
                     let! deleteReceipt = submitAsync delete
 
                     let directoryName = "paged-directory"
-                    let directorySlotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters()
-                    directorySlotRequest.OwnerId <- ownerId
-                    directorySlotRequest.OrganizationId <- organizationId
-                    directorySlotRequest.RepositoryId <- repositoryId
-                    directorySlotRequest.Parent <- Some parent
-                    directorySlotRequest.Name <- directoryName
-                    directorySlotRequest.CorrelationId <- correlationId
-                    use! directorySlotResponse = Client.PostAsync("/libraries/namespace/get-slot", createJsonContent directorySlotRequest)
-                    let! directorySlotBody = directorySlotResponse.Content.ReadAsStringAsync()
-                    Assert.That(directorySlotResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), directorySlotBody)
-
-                    let directorySlot =
-                        (deserialize<GraceReturnValue<LibraryNamespaceSlotDto>> directorySlotBody)
-                            .ReturnValue
 
                     let createDirectory = Parameters.Library.SubmitLibraryChangeParameters()
                     createDirectory.OwnerId <- ownerId
@@ -4442,9 +4408,8 @@ module LibraryRestartScenarios =
                     createDirectory.ChangeKind <- ChangeKind.CreateDirectory
                     createDirectory.ItemKind <- ItemKind.Directory
 
-                    createDirectory.CreationSlotExpectation <-
-                        Some { Parent = parent; Name = directoryName; ExpectedSlotVersion = directorySlot.SlotVersion; ExpectedState = "vacant" }
-
+                    createDirectory.DestinationParent <- Some parent
+                    createDirectory.DestinationName <- directoryName
                     createDirectory.CorrelationId <- correlationId
                     let! directoryReceipt = submitAsync createDirectory
                     let! historicalDescriptor = readAsync firstReceipt payload
@@ -4824,15 +4789,8 @@ module LibraryRestartScenarios =
                 createPagedDirectory.ChangeKind <- ChangeKind.CreateDirectory
                 createPagedDirectory.ItemKind <- ItemKind.Directory
 
-                createPagedDirectory.CreationSlotExpectation <-
-                    Some
-                        {
-                            Parent = parent
-                            Name = name
-                            ExpectedSlotVersion = Grace.Actors.LibraryDecision.initialSlotVersion (Guid.Parse repositoryId) parent name
-                            ExpectedState = "vacant"
-                        }
-
+                createPagedDirectory.DestinationParent <- Some parent
+                createPagedDirectory.DestinationName <- name
                 createPagedDirectory.CorrelationId <- generateCorrelationId ()
                 let! receipt = submitAsync createPagedDirectory
 

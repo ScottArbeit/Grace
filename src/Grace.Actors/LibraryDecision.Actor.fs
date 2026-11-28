@@ -25,8 +25,8 @@ module LibraryDecision =
     /// Returns the operation identity embedded in a validated command.
     let operationId =
         function
-        | LibraryChangeCommand.CreateFile (value, _, _, _)
-        | LibraryChangeCommand.CreateDirectory (value, _, _)
+        | LibraryChangeCommand.CreateFile (value, _, _, _, _)
+        | LibraryChangeCommand.CreateDirectory (value, _, _, _)
         | LibraryChangeCommand.UpdateContent (value, _, _, _, _, _)
         | LibraryChangeCommand.Rename (value, _, _, _, _)
         | LibraryChangeCommand.Move (value, _, _, _, _)
@@ -35,8 +35,8 @@ module LibraryDecision =
     /// Returns the normalized request hash embedded in a validated command.
     let requestHash =
         function
-        | LibraryChangeCommand.CreateFile (_, value, _, _)
-        | LibraryChangeCommand.CreateDirectory (_, value, _)
+        | LibraryChangeCommand.CreateFile (_, value, _, _, _)
+        | LibraryChangeCommand.CreateDirectory (_, value, _, _)
         | LibraryChangeCommand.UpdateContent (_, value, _, _, _, _)
         | LibraryChangeCommand.Rename (_, value, _, _, _)
         | LibraryChangeCommand.Move (_, value, _, _, _)
@@ -48,8 +48,8 @@ module LibraryDecision =
     let namesRootOutside (catalog: LibraryCatalogDto) command =
         let parent =
             match command with
-            | LibraryChangeCommand.CreateFile (_, _, expectation, _) -> Some expectation.Parent
-            | LibraryChangeCommand.CreateDirectory (_, _, expectation) -> Some expectation.Parent
+            | LibraryChangeCommand.CreateFile (_, _, parent, _, _) -> Some parent
+            | LibraryChangeCommand.CreateDirectory (_, _, parent, _) -> Some parent
             | LibraryChangeCommand.Move (_, _, _, _, destination) -> Some destination
             | LibraryChangeCommand.UpdateContent _
             | LibraryChangeCommand.Rename _
@@ -114,9 +114,6 @@ module LibraryDecision =
         |> SHA256.HashData
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
-
-    /// Derives the initial generation observed for a previously unseen slot.
-    let initialSlotVersion repositoryId parent name = deterministicGuid repositoryId Guid.Empty ("slot:" + slotIdentity parent name)
 
     /// Reports whether a normalized path belongs to a configured Library root.
     let isInLibrary catalog path = Library.configurationOwnsPath catalog path

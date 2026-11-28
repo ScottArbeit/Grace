@@ -284,7 +284,6 @@ module Library =
         let hasItemId = parameters.ItemId.HasValue
         let hasNamespace = parameters.NamespacePrecondition.IsSome
         let hasContent = parameters.ContentPrecondition.IsSome
-        let hasSlot = parameters.CreationSlotExpectation.IsSome
         let hasParent = parameters.DestinationParent.IsSome
         let hasName = not (isNull parameters.DestinationName)
         let hasUpload = parameters.UploadSessionId.HasValue
@@ -295,22 +294,19 @@ module Library =
                 not hasItemId
                 && not hasNamespace
                 && not hasContent
-                && hasSlot
-                && not hasParent
-                && not hasName
+                && hasParent
+                && hasName
                 && hasUpload
             | ChangeKind.CreateDirectory ->
                 not hasItemId
                 && not hasNamespace
                 && not hasContent
-                && hasSlot
-                && not hasParent
-                && not hasName
+                && hasParent
+                && hasName
                 && not hasUpload
             | ChangeKind.UpdateContent ->
                 hasItemId
                 && hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && hasUpload
@@ -318,7 +314,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && not hasParent
                 && hasName
                 && not hasUpload
@@ -326,7 +321,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && hasParent
                 && not hasName
                 && not hasUpload
@@ -334,7 +328,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && not hasUpload
@@ -342,7 +335,6 @@ module Library =
                 hasItemId
                 && hasNamespace
                 && not hasContent
-                && not hasSlot
                 && not hasParent
                 && not hasName
                 && not hasUpload
@@ -356,7 +348,7 @@ module Library =
     /// Converts one valid public parameter object into the closed actor command union.
     let toChangeCommand repositoryId (parameters: SubmitLibraryChangeParameters) =
         let requestHashInput =
-            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.CreationSlotExpectation}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
+            $"{repositoryId:D}|{parameters.OperationId:D}|{parameters.ChangeKind}|{parameters.ItemKind}|{parameters.ItemId}|{parameters.NamespacePrecondition}|{parameters.ContentPrecondition}|{parameters.DestinationParent}|{parameters.DestinationName}|{parameters.UploadSessionId}"
 
         let requestHash =
             requestHashInput
@@ -367,8 +359,15 @@ module Library =
 
         match parameters.ChangeKind with
         | ChangeKind.CreateFile ->
-            LibraryChangeCommand.CreateFile(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value, parameters.UploadSessionId.Value)
-        | ChangeKind.CreateDirectory -> LibraryChangeCommand.CreateDirectory(parameters.OperationId, requestHash, parameters.CreationSlotExpectation.Value)
+            LibraryChangeCommand.CreateFile(
+                parameters.OperationId,
+                requestHash,
+                parameters.DestinationParent.Value,
+                parameters.DestinationName,
+                parameters.UploadSessionId.Value
+            )
+        | ChangeKind.CreateDirectory ->
+            LibraryChangeCommand.CreateDirectory(parameters.OperationId, requestHash, parameters.DestinationParent.Value, parameters.DestinationName)
         | ChangeKind.UpdateContent ->
             LibraryChangeCommand.UpdateContent(
                 parameters.OperationId,

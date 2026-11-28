@@ -778,9 +778,6 @@ module Interfaces =
             correlationId: CorrelationId ->
                 Task<Result<LibraryOperationReceiptDto, string>>
 
-        /// Returns one current Library namespace slot after repairing pending work.
-        abstract member GetSlot: parent: LibraryParentDto -> name: string -> correlationId: CorrelationId -> Task<LibraryNamespaceSlotDto>
-
         /// Returns the immutable accepted change at one repository-bound public revision.
         abstract member GetAcceptedChange: contentRevision: LibraryCursor -> correlationId: CorrelationId -> Task<LibraryChangeDto option>
 

@@ -1010,24 +1010,10 @@ module internal LibrarySynchronization =
                                     else
                                         ChangeKind.CreateFile
 
-                                let slotParameters = scoped configuration correlationId (GetLibraryNamespaceSlotParameters())
-                                slotParameters.Parent <- Some operation.Placement.Parent
-                                slotParameters.Name <- operation.Placement.Name
-                                let! result = Libraries.GetNamespaceSlot slotParameters
-                                let slot = value result
-
-                                if slot.OccupantItemId.IsSome then
-                                    raise (
-                                        LibrarySyncFailureException(
-                                            "Library creation slot is occupied; saved bytes are retained.",
-                                            Some operation.SourcePath,
-                                            Some operation.OperationId,
-                                            "Another working copy created a file with this name first. Your saved file is kept. Library sync on this copy can't continue until Grace can keep both files, which is planned. Version-control work isn't affected."
-                                        )
-                                    )
-
-                                request.CreationSlotExpectation <-
-                                    Some { Parent = slot.Parent; Name = slot.Name; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+                                // The server settles a name another copy took first: it merges the same bytes and keeps
+                                // different ones as a conflict copy, so a create never needs to look at the name first.
+                                request.DestinationParent <- Some operation.Placement.Parent
+                                request.DestinationName <- operation.Placement.Name
 
                             prepared
                             |> Option.iter (fun value -> request.UploadSessionId <- Nullable(value.UploadSessionId))
@@ -1064,8 +1050,8 @@ module internal LibrarySynchronization =
 
                 let expectedHash =
                     match toChangeCommand configuration.RepositoryId request with
-                    | LibraryChangeCommand.CreateFile (_, hash, _, _)
-                    | LibraryChangeCommand.CreateDirectory (_, hash, _)
+                    | LibraryChangeCommand.CreateFile (_, hash, _, _, _)
+                    | LibraryChangeCommand.CreateDirectory (_, hash, _, _)
                     | LibraryChangeCommand.UpdateContent (_, hash, _, _, _, _)
                     | LibraryChangeCommand.Rename (_, hash, _, _, _) -> hash
                     | _ -> invalidOp "Unexpected local Library request kind."

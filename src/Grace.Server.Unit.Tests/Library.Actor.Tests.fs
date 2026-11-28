@@ -358,24 +358,28 @@ type LibraryActorTests() =
             Tombstone = None
         }
 
-    /// Builds a create-directory command that expects the slot's first vacancy.
-    let createDirectory operation (name: string) =
-        LibraryChangeCommand.CreateDirectory(
-            operation,
-            $"create-{name.Length}-{operation:N}",
-            {
-                Parent = longRootParent
-                Name = name
-                ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId longRootParent name
-                ExpectedState = "vacant"
-            }
-        )
+    /// Builds a create-directory command for one name under the long root.
+    let createDirectory operation (name: string) = LibraryChangeCommand.CreateDirectory(operation, $"create-{name.Length}-{operation:N}", longRootParent, name)
 
     /// Returns a successful receipt or fails the test with the actor's error.
     let receiptOf (result: Result<LibraryOperationReceiptDto, string>) =
         match result with
         | Ok receipt -> receipt
         | Error reason -> failwith $"Submit failed: {reason}"
+
+    /// Seeds one live item and the slot it occupies.
+    let seedOccupant (storage: LibraryMemoryTestStorage) (item: LibraryItemDto) =
+        seedItem storage item
+        seedSlot storage { Parent = item.Namespace.Value.Parent; Name = item.Namespace.Value.Name; OccupantItemId = Some item.ItemId }
+
+    /// Reads the actor's control record back for assertions.
+    let storedControl (storage: LibraryMemoryTestStorage) =
+        storage
+            .TryGet<LibraryControlDocument>(
+                "Grace.Library.Control.v2",
+                repositoryId.ToString("D")
+            )
+            .Value
 
     /// Verifies current denial prevents both permanent catalog and item receipt disclosure inside the actor turn.
     [<Test>]
@@ -438,12 +442,8 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    {
-                        Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
-                        Name = "denied"
-                        ExpectedSlotVersion = Guid.Empty
-                        ExpectedState = "vacant"
-                    }
+                    { Kind = "root"; LibraryPath = Some "Library"; ItemId = None },
+                    "denied"
                 )
 
             let submitActor, submitStorage, submitServices, submitAuthorizationCalls, _ = replayActor (Denied deniedReason) submitReceipt
@@ -518,12 +518,8 @@ type LibraryActorTests() =
                 LibraryChangeCommand.CreateDirectory(
                     operationId,
                     rejectedReceipt.RequestHash,
-                    {
-                        Parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
-                        Name = "allowed"
-                        ExpectedSlotVersion = Guid.Empty
-                        ExpectedState = "vacant"
-                    }
+                    { Kind = "root"; LibraryPath = Some "Library"; ItemId = None },
+                    "allowed"
                 )
 
             let submitActor, submitStorage, submitServices, submitAuthorizationCalls, _ = replayActor (Allowed "current") submitReceipt
@@ -815,17 +811,7 @@ type LibraryActorTests() =
             let callerParent = { Kind = "root"; LibraryPath = Some callerRoot; ItemId = None }
             let storedParent = { Kind = "root"; LibraryPath = Some catalogRoot; ItemId = None }
 
-            let create (name: string) =
-                LibraryChangeCommand.CreateDirectory(
-                    Guid.NewGuid(),
-                    $"create-{name}",
-                    {
-                        Parent = callerParent
-                        Name = name
-                        ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId storedParent name
-                        ExpectedState = "vacant"
-                    }
-                )
+            let create (name: string) = LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), $"create-{name}", callerParent, name)
 
             let! tooLong = actor.Submit (create (String.replicate 70 "n")) "user:test" authorization "corr-spelling-long"
             let! fits = actor.Submit (create "short") "user:test" authorization "corr-spelling-fits"
@@ -849,17 +835,7 @@ type LibraryActorTests() =
             let actor, _, provider = memoryActor (controlWith added 0L 0 0) ignore
             use _provider = provider
 
-            let create parent (name: string) =
-                LibraryChangeCommand.CreateDirectory(
-                    Guid.NewGuid(),
-                    $"create-{name}",
-                    {
-                        Parent = parent
-                        Name = name
-                        ExpectedSlotVersion = LibraryDecision.initialSlotVersion repositoryId parent name
-                        ExpectedState = "vacant"
-                    }
-                )
+            let create parent (name: string) = LibraryChangeCommand.CreateDirectory(Guid.NewGuid(), $"create-{name}", parent, name)
 
             let gone = { Kind = "root"; LibraryPath = Some "Gone"; ItemId = None }
             let! kept = actor.Submit (create longRootParent "captured-before-addition") "user:test" authorization "corr-kept"
@@ -882,7 +858,7 @@ type LibraryActorTests() =
 
             let seed storage =
                 seedItem storage file
-                seedSlot storage { Parent = longRootParent; Name = "short.txt"; SlotVersion = Guid.NewGuid(); OccupantItemId = Some fileId }
+                seedSlot storage { Parent = longRootParent; Name = "short.txt"; OccupantItemId = Some fileId }
 
             let actor, _, provider = memoryActor (controlWith longRootCatalog 1L 1 1) seed
             use _provider = provider
@@ -949,29 +925,134 @@ type LibraryActorTests() =
     member _.CreateAtSlotCapacityFollowsSharedRule() =
         task {
             let reusedName = "reused"
-            let reusedVersion = Guid.NewGuid()
 
-            let seed storage = seedSlot storage { Parent = longRootParent; Name = reusedName; SlotVersion = reusedVersion; OccupantItemId = None }
+            let seed storage = seedSlot storage { Parent = longRootParent; Name = reusedName; OccupantItemId = None }
 
             let actor, _, provider = memoryActor (controlWith longRootCatalog 0L 0 LibraryDecision.MaximumRecordCount) seed
             use _provider = provider
 
             let! newSlot = actor.Submit (createDirectory (Guid.NewGuid()) "fresh") "user:test" authorization "corr-fresh"
-
-            let reuse =
-                LibraryChangeCommand.CreateDirectory(
-                    Guid.NewGuid(),
-                    "create-reused",
-                    { Parent = longRootParent; Name = reusedName; ExpectedSlotVersion = reusedVersion; ExpectedState = "vacant" }
-                )
-
-            let! reused = actor.Submit reuse "user:test" authorization "corr-reused"
+            let! reused = actor.Submit (createDirectory (Guid.NewGuid()) reusedName) "user:test" authorization "corr-reused"
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(Result.isError newSlot, Is.True, "A new slot record past the limit must be refused.")
                     Assert.That((receiptOf reused).Outcome, Is.EqualTo(OutcomeKind.Accepted)))
             )
+        }
+
+
+    /// #1127: two copies that create the same folder end with one. The later create is accepted as a change of the folder
+    /// already there: same item, same namespace, only the last-change cursor moves, and no record is added, so it's
+    /// accepted even when the repository is at its record limit. Resubmitting it returns the same receipt.
+    [<Test>]
+    member _.SameNameFolderCreateMergesIntoTheFolderAlreadyThere() =
+        task {
+            let folderId = Guid.NewGuid()
+            let namespaceVersion = Guid.NewGuid()
+            let folder = liveItem folderId ItemKind.Directory longRootParent "Photos" namespaceVersion
+            let full = LibraryDecision.MaximumRecordCount
+            let actor, storage, provider = memoryActor (controlWith longRootCatalog 1L full full) (fun storage -> seedOccupant storage folder)
+            use _provider = provider
+            let operation = Guid.NewGuid()
+
+            let! first = actor.Submit (createDirectory operation "photos") "user:test" authorization "corr-merge"
+            let! again = actor.Submit (createDirectory operation "photos") "user:test" authorization "corr-merge-again"
+            let receipt = receiptOf first
+            let change = receipt.Change.Value
+            let control = storedControl storage
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(change.OperationId, Is.EqualTo(operation))
+                    Assert.That(change.ChangeKind, Is.EqualTo(ChangeKind.CreateDirectory))
+                    Assert.That(change.Conflict, Is.EqualTo(None: LibraryConflictProvenanceDto option))
+                    Assert.That(change.Item, Is.EqualTo({ folder with LastChangeCursor = LibraryTokens.cursor tokenKey repositoryId 2L }))
+                    Assert.That(control.CommittedCursor, Is.EqualTo(2L))
+                    Assert.That(control.ItemRecordCount, Is.EqualTo(full))
+                    Assert.That(control.SlotRecordCount, Is.EqualTo(full))
+                    Assert.That(receiptOf again, Is.EqualTo(receipt)))
+            )
+        }
+
+    /// #1127: a create whose name holds something it can't merge with keeps both. Here a folder meets a file of the same
+    /// name, and the first conflict-copy name is taken too, so the folder lands at the next attempt, named by its own
+    /// operation, with the file as its origin. Resubmitting returns the same receipt.
+    [<Test>]
+    member _.CreateWhereItCannotMergeKeepsBothAsAConflictCopy() =
+        task {
+            let fileId = Guid.NewGuid()
+            let file = liveItem fileId ItemKind.File longRootParent "Photos" (Guid.NewGuid())
+            let operation = Guid.NewGuid()
+            let firstChoice = Grace.Shared.Validation.Library.conflictName "Photos" operation 0
+            let taken = liveItem (Guid.NewGuid()) ItemKind.File longRootParent firstChoice (Guid.NewGuid())
+
+            let seed storage =
+                seedOccupant storage file
+                seedOccupant storage taken
+
+            let actor, storage, provider = memoryActor (controlWith longRootCatalog 2L 2 2) seed
+            use _provider = provider
+
+            let! first = actor.Submit (createDirectory operation "Photos") "user:test" authorization "corr-conflict"
+            let! again = actor.Submit (createDirectory operation "Photos") "user:test" authorization "corr-conflict-again"
+            let receipt = receiptOf first
+            let item = receipt.Change.Value.Item
+            let control = storedControl storage
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.ConflictCopy))
+                    Assert.That(receipt.Change.Value.ChangeKind, Is.EqualTo(ChangeKind.CreateDirectory))
+                    Assert.That(item.ItemKind, Is.EqualTo(ItemKind.Directory))
+                    Assert.That(item.ItemId, Is.EqualTo(LibraryDecision.deterministicGuid repositoryId operation "item"))
+                    Assert.That(item.Namespace.Value.Parent, Is.EqualTo(longRootParent))
+                    Assert.That(item.Namespace.Value.Name, Is.EqualTo(Grace.Shared.Validation.Library.conflictName "Photos" operation 1))
+
+                    Assert.That(
+                        receipt.Change.Value.Conflict,
+                        Is.EqualTo(Some { OriginalItemId = fileId; BaseContentVersionId = None; BaseContentRevision = None })
+                    )
+
+                    Assert.That(control.ItemRecordCount, Is.EqualTo(3))
+                    Assert.That(control.SlotRecordCount, Is.EqualTo(3))
+                    Assert.That(receiptOf again, Is.EqualTo(receipt)))
+            )
+        }
+
+    /// #1127: a free name takes the create, whatever it held before. A name another item once used and gave up is free.
+    [<Test>]
+    member _.CreateTakesANameThatWasUsedAndFreed() =
+        task {
+            let seed storage = seedSlot storage { Parent = longRootParent; Name = "Photos"; OccupantItemId = None }
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 1L 1 1) seed
+            use _provider = provider
+            let operation = Guid.NewGuid()
+
+            let! result = actor.Submit (createDirectory operation "Photos") "user:test" authorization "corr-freed"
+            let receipt = receiptOf result
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(receipt.Outcome, Is.EqualTo(OutcomeKind.Accepted))
+                    Assert.That(receipt.Change.Value.Item.ItemId, Is.EqualTo(LibraryDecision.deterministicGuid repositoryId operation "item"))
+                    Assert.That(receipt.Change.Value.Item.Namespace.Value.Name, Is.EqualTo("Photos")))
+            )
+        }
+
+    /// A conflict copy is held to the same 1,024-byte path limit as the name it came from. This name fits, but its
+    /// conflict-copy name doesn't.
+    [<Test>]
+    member _.ConflictCopyOfACreateRejectsAPathOverLimit() =
+        task {
+            let name = String.replicate 130 "n"
+            let file = liveItem (Guid.NewGuid()) ItemKind.File longRootParent name (Guid.NewGuid())
+            let actor, _, provider = memoryActor (controlWith longRootCatalog 1L 1 1) (fun storage -> seedOccupant storage file)
+            use _provider = provider
+
+            let! result = actor.Submit (createDirectory (Guid.NewGuid()) name) "user:test" authorization "corr-conflict-long"
+            Assert.That((receiptOf result).ReasonCode, Is.EqualTo(Some RejectionReason.PathTooLong))
         }
 
     /// Waiting for a committed item to become visible backs off on a fixed schedule, then gives up.

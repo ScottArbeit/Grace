@@ -233,7 +233,6 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/libraries/content/prepare" (Authorized(LibraryWrite, Repository))
             endpoint "POST" "/libraries/content/read" (Authorized(LibraryRead, Repository))
             endpoint "GET" "/libraries/content/%s" AllowAnonymous
-            endpoint "POST" "/libraries/namespace/get-slot" (Authorized(LibraryRead, Repository))
             endpoint "POST" "/libraries/status/get" (Authorized(LibraryRead, Repository))
             endpoint
                 "POST"

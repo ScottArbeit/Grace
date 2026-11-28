@@ -112,9 +112,6 @@ module LibrarySizeDiagnosisHttpTests =
             scope repository add
             let! configured, _ = post<LibraryCatalogChangeResultDto> "/libraries/add" add
             let parent = { Kind = "root"; LibraryPath = Some "Library"; ItemId = None }
-            let slotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters(Parent = Some parent, Name = "sample.bin")
-            scope repository slotRequest
-            let! slot, _ = post<LibraryNamespaceSlotDto> "/libraries/namespace/get-slot" slotRequest
             let payloadA = Encoding.UTF8.GetBytes("Library-size-A-" + Guid.NewGuid().ToString("N"))
 
             let payloadB =
@@ -132,7 +129,8 @@ module LibrarySizeDiagnosisHttpTests =
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable prepared.UploadSessionId,
-                    CreationSlotExpectation = Some { Parent = parent; Name = "sample.bin"; ExpectedSlotVersion = slot.SlotVersion; ExpectedState = "vacant" }
+                    DestinationParent = Some parent,
+                    DestinationName = "sample.bin"
                 )
 
             scope repository submit
@@ -170,9 +168,6 @@ module LibrarySizeDiagnosisHttpTests =
                 item <- changed.Change.Value.Item
                 stage <- stage + 1
 
-            let duplicateSlotRequest = Parameters.Library.GetLibraryNamespaceSlotParameters(Parent = Some parent, Name = "same-content.bin")
-            scope repository duplicateSlotRequest
-            let! duplicateSlot, _ = post<LibraryNamespaceSlotDto> "/libraries/namespace/get-slot" duplicateSlotRequest
             let duplicateOperation = Guid.NewGuid()
             let! duplicateUpload = prepare repository duplicateOperation payloadA
 
@@ -182,8 +177,8 @@ module LibrarySizeDiagnosisHttpTests =
                     ChangeKind = ChangeKind.CreateFile,
                     ItemKind = ItemKind.File,
                     UploadSessionId = Nullable duplicateUpload.UploadSessionId,
-                    CreationSlotExpectation =
-                        Some { Parent = parent; Name = "same-content.bin"; ExpectedSlotVersion = duplicateSlot.SlotVersion; ExpectedState = "vacant" }
+                    DestinationParent = Some parent,
+                    DestinationName = "same-content.bin"
                 )
 
             scope repository duplicate

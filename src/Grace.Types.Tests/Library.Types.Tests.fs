@@ -120,11 +120,23 @@ type LibraryTypesTests() =
     [<Test>]
     member _.``change validation enforces exact field combinations``() =
         let parent = { Kind = "root"; LibraryPath = Some "shared"; ItemId = None }
-        let slot = { Parent = parent; Name = "file.txt"; ExpectedSlotVersion = Guid.NewGuid(); ExpectedState = "vacant" }
 
         let createFile = change ChangeKind.CreateFile ItemKind.File
-        createFile.CreationSlotExpectation <- Some slot
+        createFile.DestinationParent <- Some parent
+        createFile.DestinationName <- "file.txt"
         createFile.UploadSessionId <- Nullable(Guid.NewGuid())
+
+        // A create names where it goes; the server decides what happens if that name is taken.
+        let createFileWithoutName = change ChangeKind.CreateFile ItemKind.File
+        createFileWithoutName.DestinationParent <- Some parent
+        createFileWithoutName.UploadSessionId <- Nullable(Guid.NewGuid())
+
+        let createDirectory = change ChangeKind.CreateDirectory ItemKind.Directory
+        createDirectory.DestinationParent <- Some parent
+        createDirectory.DestinationName <- "folder"
+
+        let createDirectoryWithoutParent = change ChangeKind.CreateDirectory ItemKind.Directory
+        createDirectoryWithoutParent.DestinationName <- "folder"
 
         let deleteDirectory = change ChangeKind.Delete ItemKind.Directory
         deleteDirectory.ItemId <- Nullable(Guid.NewGuid())
@@ -137,6 +149,9 @@ type LibraryTypesTests() =
         Assert.Multiple(
             Action (fun () ->
                 assertOk () (validateChangeShape createFile)
+                assertOk () (validateChangeShape createDirectory)
+                Assert.That(isError (validateChangeShape createFileWithoutName), Is.True)
+                Assert.That(isError (validateChangeShape createDirectoryWithoutParent), Is.True)
                 assertOk () (validateChangeShape deleteDirectory)
                 Assert.That(isError (validateChangeShape invalidRename), Is.True))
         )
