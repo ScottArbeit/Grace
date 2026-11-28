@@ -707,7 +707,7 @@ module internal LibrarySynchronization =
                     | Globalization.UnicodeCategory.SpacingCombiningMark
                     | Globalization.UnicodeCategory.EnclosingMark -> true
                     // Decomposed Hangul is a run of conjoining jamo.
-                    | _ -> character >= 'ᄀ' && character <= 'ᇿ'
+                    | _ -> int character >= 0x1100 && int character <= 0x11FF
 
                 if combining then
                     if inQuote then spelled.Append("'") |> ignore
@@ -769,13 +769,15 @@ module internal LibrarySynchronization =
 
                 while directories.Count > 0 do
                     let directory = directories.Pop()
-                    let entries = Directory.GetFileSystemEntries(directory)
+                    // The listing carries each entry's attributes, so the walk reads no file on its own.
+                    let entries = DirectoryInfo(directory).GetFileSystemInfos()
 
-                    for entry in entries do
-                        let attributes = File.GetAttributes(entry)
+                    for info in entries do
+                        let entry = info.FullName
+                        let attributes = info.Attributes
 
                         if not (attributes.HasFlag(FileAttributes.ReparsePoint)) then
-                            let name = Path.GetFileName(entry)
+                            let name = info.Name
 
                             let final =
                                 match composedSpelling name with
@@ -784,17 +786,17 @@ module internal LibrarySynchronization =
                                     let sibling =
                                         entries
                                         |> Array.tryFind (fun other ->
-                                            other <> entry
+                                            other.Name <> name
                                             && pathsEqual
-                                                (composedSpelling (Path.GetFileName(other))
-                                                 |> Option.defaultValue (Path.GetFileName(other)))
+                                                (composedSpelling other.Name
+                                                 |> Option.defaultValue other.Name)
                                                 composed)
 
                                     match sibling with
                                     | Some sibling ->
                                         raise (
                                             LibrarySyncFailureException(
-                                                $"'{relative directory}' holds two spellings of one name: {spellOut (Path.GetFileName(sibling))} and {spellOut name}. They look the same, but Windows keeps them apart, and Grace syncs only the composed spelling.",
+                                                $"'{relative directory}' holds two spellings of one name: {spellOut sibling.Name} and {spellOut name}. They look the same, but Windows keeps them apart, and Grace syncs only the composed spelling.",
                                                 Some(relative entry),
                                                 None,
                                                 twoSpellingsNextStep
