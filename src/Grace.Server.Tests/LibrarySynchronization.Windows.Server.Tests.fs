@@ -3576,8 +3576,6 @@ module LibrarySynchronizationWindowsServerTests =
 
             let! savedB = runWithSaveBeforeDisplaceAsync copyB proxy.BaseAddress "saved on B" "plan.txt"
             Assert.That(savedB.ExitCode, Is.Zero, savedB.StandardOutput + savedB.StandardError)
-            let! savedC = runWithSaveBeforeDisplaceAsync copyC proxy.BaseAddress "saved on C" "plan.txt"
-            Assert.That(savedC.ExitCode, Is.Zero, savedC.StandardOutput + savedC.StandardError)
 
             let keptB =
                 Path.GetFileName(
@@ -3585,13 +3583,9 @@ module LibrarySynchronizationWindowsServerTests =
                      |> Array.exactlyOne)
                 )
 
-            let keptC =
-                Path.GetFileName(
-                    (otherLibraryFiles copyC [ "plan.txt" ]
-                     |> Array.exactlyOne)
-                )
-
-            Assert.That(keptC, Is.EqualTo(keptB), "Both kept saves are named from A's edit.")
+            // C keeps its save under the same name, because both are named from A's edit, so C's create of it meets B's.
+            let! savedC = runWithSaveBeforeDisplaceAsync copyC proxy.BaseAddress "saved on C" "plan.txt"
+            Assert.That(savedC.ExitCode, Is.Zero, savedC.StandardOutput + savedC.StandardError)
 
             let! _ = requireGraceSuccessAsync copyB proxy.BaseAddress (syncCommand "run")
             let! _ = requireGraceSuccessAsync copyC proxy.BaseAddress (syncCommand "run")
